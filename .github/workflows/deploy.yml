@@ -50,11 +50,24 @@ jobs:
       - name: Build Lambda functions
         run: |
           cd lambda
-          # Build the API Lambda function
-          cargo lambda build --release --bin bootstrap --features "api" --target=x86_64-unknown-linux-gnu.2.26 --output-format zip --out-dir target/lambda/api --lambda-dir api
           
-          # Build the Worker Lambda function
-          cargo lambda build --release --bin bootstrap --features "worker" --target=x86_64-unknown-linux-gnu.2.26 --output-format zip --out-dir target/lambda/worker --lambda-dir worker
+          # Clean previous builds
+          rm -rf target/lambda/api
+          rm -rf target/lambda/worker
+          
+          # Build the API Lambda function
+          cargo lambda build --release --bin bootstrap --features "api" --output-format zip
+          mkdir -p target/lambda/api
+          cp target/lambda/bootstrap/bootstrap.zip target/lambda/api/bootstrap.zip
+          
+          # Build the Worker Lambda function 
+          cargo lambda build --release --bin bootstrap --features "worker" --output-format zip
+          mkdir -p target/lambda/worker
+          cp target/lambda/bootstrap/bootstrap.zip target/lambda/worker/bootstrap.zip
+          
+          # Verify the build artifacts exist
+          ls -la target/lambda/api || echo "API Lambda artifacts not found!"
+          ls -la target/lambda/worker || echo "Worker Lambda artifacts not found!"
 
       # Setup Node.js
       - name: Set up Node.js
