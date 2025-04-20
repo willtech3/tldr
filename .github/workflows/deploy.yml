@@ -1,0 +1,78 @@
+name: Deploy Slack Message Summarizer
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  AWS_REGION: us-east-2  # Change to your preferred region
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      # Set up Rust toolchain
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      # Install cargo-lambda
+      - name: Install cargo-lambda
+        run: |
+          pip install cargo-lambda
+          cargo lambda --version
+
+      # Build the Lambda function
+      - name: Build Lambda function
+        run: |
+          cd lambda
+          cargo lambda build --release
+
+      # Setup Node.js
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: './cdk/package-lock.json'
+
+      # Install CDK dependencies
+      - name: Install CDK dependencies
+        run: |
+          cd cdk
+          npm ci
+
+      # Build CDK TypeScript
+      - name: Build CDK TypeScript
+        run: |
+          cd cdk
+          npm run build
+
+      # Configure AWS credentials for CDK deployment
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+
+      # Deploy with CDK
+      - name: Deploy with CDK
+        run: |
+          cd cdk
+          npm run cdk deploy -- --require-approval never
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
