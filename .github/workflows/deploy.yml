@@ -33,7 +33,7 @@ jobs:
 
       # Build the Lambda functions using a specific cargo-lambda version
       - name: Build Lambda functions
-        uses: docker://ghcr.io/cargo-lambda/cargo-lambda:1.8.2
+        uses: docker://ghcr.io/cargo-lambda/cargo-lambda:1.7.0
         with:
           entrypoint: /bin/bash
           args: |
