@@ -59,10 +59,10 @@ jobs:
           mkdir -p target/lambda/worker
           
           # Build the API Lambda function directly to the target directory
-          cargo lambda build --release --bin bootstrap --features "api" --output-format binary --lambda-dir target/lambda/api
+          cargo lambda build --release --bin bootstrap --features "api" --output-format binary --out-dir target/lambda/api
           
           # Build the Worker Lambda function directly to the target directory
-          cargo lambda build --release --bin bootstrap --features "worker" --output-format binary --lambda-dir target/lambda/worker
+          cargo lambda build --release --bin bootstrap --features "worker" --output-format binary --out-dir target/lambda/worker
           
           # Verify the build artifacts exist
           ls -la target/lambda/api || echo "API Lambda artifacts not found!"
