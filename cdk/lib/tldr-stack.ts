@@ -69,7 +69,7 @@ export class TldrStack extends cdk.Stack {
     const tldrApiFunction = new lambda.Function(this, 'TldrApiFunction', {
       runtime: lambda.Runtime.PROVIDED_AL2,
       handler: 'bootstrap', // Fixed handler name for Rust Lambdas
-      code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/target/lambda/api')),
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/target/lambda/api/bootstrap')),
       environment: commonEnvironment,
       timeout: cdk.Duration.seconds(10), // Short timeout for immediate responses
       memorySize: 256,
@@ -87,7 +87,7 @@ export class TldrStack extends cdk.Stack {
     const tldrWorkerFunction = new lambda.Function(this, 'TldrWorkerFunction', {
       runtime: lambda.Runtime.PROVIDED_AL2,
       handler: 'bootstrap', // Fixed handler name for Rust Lambdas
-      code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/target/lambda/worker')),
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/target/lambda/worker/bootstrap')),
       environment: commonEnvironment,
       timeout: cdk.Duration.seconds(300), // Longer timeout for processing
       memorySize: 1024, // More memory for processing

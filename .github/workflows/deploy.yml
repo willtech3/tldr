@@ -49,23 +49,26 @@ jobs:
       # Build the Lambda functions
       - name: Build Lambda functions
         run: |
-          # Create output directories relative to repo root
+          cd lambda
+          
+          # Create output directories relative to lambda dir
           mkdir -p target/lambda/api
           mkdir -p target/lambda/worker
 
-          # Build API Lambda function
-          echo "--- Building API Lambda ---"
-          cargo lambda build --release --manifest-path lambda/Cargo.toml --bin bootstrap --features "api" --output-format zip --output-path target/lambda/api/bootstrap.zip
+          # Build API Lambda function binary
+          echo "--- Building API Lambda Binary ---"
+          cargo lambda build --release --bin bootstrap --features "api" --output-format binary --out-dir target/lambda/api
           
-          # Build Worker Lambda function
-          echo "--- Building Worker Lambda ---"
-          cargo lambda build --release --manifest-path lambda/Cargo.toml --bin bootstrap --features "worker" --output-format zip --output-path target/lambda/worker/bootstrap.zip
+          # Build Worker Lambda function binary
+          echo "--- Building Worker Lambda Binary ---"
+          cargo lambda build --release --bin bootstrap --features "worker" --output-format binary --out-dir target/lambda/worker
+          cd .. # Go back to repo root
 
           # Verify the build artifacts exist and are non-empty
           echo "--- Verifying API Lambda artifact ---"
-          ls -l target/lambda/api/bootstrap.zip || (echo "API bootstrap.zip not found!" && exit 1)
+          ls -l lambda/target/lambda/api/bootstrap || (echo "API bootstrap binary not found!" && exit 1)
           echo "--- Verifying Worker Lambda artifact ---"
-          ls -l target/lambda/worker/bootstrap.zip || (echo "Worker bootstrap.zip not found!" && exit 1)
+          ls -l lambda/target/lambda/worker/bootstrap || (echo "Worker bootstrap binary not found!" && exit 1)
 
       # Setup Node.js
       - name: Set up Node.js
