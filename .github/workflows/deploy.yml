@@ -49,21 +49,24 @@ jobs:
       # Build the Lambda functions
       - name: Build Lambda functions
         run: |
-          cd lambda
-          
-          # Clean previous builds
-          rm -rf target/lambda
-          
-          # Create directories for CDK deployment
+          # Create output directories relative to repo root
           mkdir -p target/lambda/api
           mkdir -p target/lambda/worker
+
+          # Build and package API Lambda
+          cd lambda
+          echo "--- Building API Lambda ---"
+          cargo lambda build --release --bin bootstrap --features "api"
+          echo "--- Packaging API Lambda ---"
+          cargo lambda package --bin bootstrap --output-path ../target/lambda/api/bootstrap.zip
           
-          # Build the API Lambda function directly to the target directory
-          cargo lambda build --release --bin bootstrap --features "api" --output-format zip --output-path target/lambda/api/bootstrap.zip
-          
-          # Build the Worker Lambda function directly to the target directory
-          cargo lambda build --release --bin bootstrap --features "worker" --output-format zip --output-path target/lambda/worker/bootstrap.zip
-          
+          # Build and package Worker Lambda
+          echo "--- Building Worker Lambda ---"
+          cargo lambda build --release --bin bootstrap --features "worker"
+          echo "--- Packaging Worker Lambda ---"
+          cargo lambda package --bin bootstrap --output-path ../target/lambda/worker/bootstrap.zip
+          cd .. # Go back to repo root
+
           # Verify the build artifacts exist and are non-empty
           echo "--- Verifying API Lambda artifact ---"
           ls -l target/lambda/api/bootstrap.zip || (echo "API bootstrap.zip not found!" && exit 1)
