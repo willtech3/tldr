@@ -19,21 +19,23 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      # Cache cargo-lambda binary
-      - name: Cache cargo-lambda
-        id: cache-cargo-lambda
+      # Cache cargo registry for faster cargo install
+      - name: Cache cargo registry
         uses: actions/cache@v3
         with:
-          path: ~/.cargo/bin/cargo-lambda
-          key: cargo-lambda-v1.3.1
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install cargo-lambda from prebuilt binary if not cached
-        if: steps.cache-cargo-lambda.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p ~/.cargo/bin
-          curl -Ls https://github.com/cargo-lambda/cargo-lambda/releases/download/v1.3.1/cargo-lambda-x86_64-unknown-linux-musl.tar.gz | tar xz
-          mv cargo-lambda-x86_64-unknown-linux-musl/cargo-lambda ~/.cargo/bin/
-          chmod +x ~/.cargo/bin/cargo-lambda
+      # Cache cargo bin for faster cargo-lambda reuse
+      - name: Cache cargo bin
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/bin
+          key: ${{ runner.os }}-cargo-bin-cargo-lambda
+
+      # Install cargo-lambda from crates.io
+      - name: Install cargo-lambda
+        run: cargo install cargo-lambda
 
       # Diagnostic step: print cargo/rust config and env
       - name: Print Cargo and Rust config
