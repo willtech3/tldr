@@ -50,7 +50,7 @@ jobs:
       - name: Build Lambda function
         run: |
           cd lambda
-          cargo lambda build --release --target=x86_64-unknown-linux-gnu.2.26 --output-format zip
+          cargo lambda build --release --bin bootstrap --target=x86_64-unknown-linux-gnu.2.26 --output-format zip
 
       # Setup Node.js
       - name: Set up Node.js
