@@ -27,3 +27,6 @@ openai-api-rs = "0.1.7"
 anyhow = "1.0"
 thiserror = "1.0"
 openssl = { version = "0.10", features = ["vendored"] }
+hmac = "0.12.1"
+sha2 = "0.10.6"
+hex = "0.4.3"

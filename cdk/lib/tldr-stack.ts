@@ -117,6 +117,9 @@ export class TldrStack extends cdk.Stack {
       description: 'API for Tldr Slack bot integration',
       deployOptions: {
         stageName: 'prod',
+        loggingLevel: apigateway.MethodLoggingLevel.INFO,
+        dataTraceEnabled: true,
+        metricsEnabled: true,
       },
     });
 

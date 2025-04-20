@@ -15,7 +15,7 @@ use openai_api_rs::v1::{
 use anyhow::Result;
 use std::env;
 use tracing::error;
-use reqwest::{Client, header::{HeaderMap, HeaderValue, CONTENT_TYPE}};
+use reqwest::Client;
 
 pub mod slack_parser;
 
