@@ -5,7 +5,7 @@ edition = "2021"
 
 [[bin]]
 name = "tldr-api"
-path = "src/bin/bootstrap.rs"
+path = "src/bin/api.rs"
 required-features = ["api"]
 
 [[bin]]
