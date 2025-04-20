@@ -17,13 +17,28 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      # Diagnostic step: print cargo/rust config and env
+      - name: Print Cargo and Rust config
+        run: |
+          echo "---- ~/.cargo/config ----"
+          cat ~/.cargo/config || echo "No ~/.cargo/config"
+          echo "---- ~/.cargo/config.toml ----"
+          cat ~/.cargo/config.toml || echo "No ~/.cargo/config.toml"
+          echo "---- RUSTFLAGS ----"
+          echo "${RUSTFLAGS:-not set}"
+          echo "---- rustc version ----"
+          rustc --version
+          echo "---- cargo version ----"
+          cargo --version
+
       # Build the Lambda functions using a specific cargo-lambda version
       - name: Build Lambda functions
         uses: docker://ghcr.io/cargo-lambda/cargo-lambda:1.8.3
         with:
           entrypoint: /bin/bash
           args: |
-            -c "cd lambda && \
+            -c "unset RUSTFLAGS && \
+            cd lambda && \
             echo '--- Building API Lambda Binary ---' && \
             cargo lambda build --release --bin tldr-api --features api --target x86_64-unknown-linux-musl --output-format zip && \
             echo '--- Building Worker Lambda Binary ---' && \
