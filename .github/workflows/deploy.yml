@@ -53,19 +53,13 @@ jobs:
           mkdir -p target/lambda/api
           mkdir -p target/lambda/worker
 
-          # Build and package API Lambda
-          cd lambda
+          # Build API Lambda function
           echo "--- Building API Lambda ---"
-          cargo lambda build --release --bin bootstrap --features "api"
-          echo "--- Packaging API Lambda ---"
-          cargo lambda package --bin bootstrap --output-path ../target/lambda/api/bootstrap.zip
+          cargo lambda build --release --manifest-path lambda/Cargo.toml --bin bootstrap --features "api" --output-format zip --output-path target/lambda/api/bootstrap.zip
           
-          # Build and package Worker Lambda
+          # Build Worker Lambda function
           echo "--- Building Worker Lambda ---"
-          cargo lambda build --release --bin bootstrap --features "worker"
-          echo "--- Packaging Worker Lambda ---"
-          cargo lambda package --bin bootstrap --output-path ../target/lambda/worker/bootstrap.zip
-          cd .. # Go back to repo root
+          cargo lambda build --release --manifest-path lambda/Cargo.toml --bin bootstrap --features "worker" --output-format zip --output-path target/lambda/worker/bootstrap.zip
 
           # Verify the build artifacts exist and are non-empty
           echo "--- Verifying API Lambda artifact ---"
