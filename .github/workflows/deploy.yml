@@ -31,11 +31,11 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ~/.cargo/bin
-          key: ${{ runner.os }}-cargo-bin-cargo-lambda-1.3.1
+          key: ${{ runner.os }}-cargo-bin-cargo-lambda-1.8.3
 
       # Install cargo-lambda from crates.io (will skip if already present)
       - name: Install cargo-lambda
-        run: cargo install cargo-lambda --version 1.3.1 --locked
+        run: cargo install cargo-lambda --version 1.8.3 --locked
 
       # Diagnostic step: print cargo/rust config and env
       - name: Print Cargo and Rust config
