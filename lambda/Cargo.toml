@@ -11,9 +11,16 @@ path = "src/bin/api.rs"
 name = "tldr-worker"
 path = "src/bin/worker.rs"
 
+# AWS Lambda requires the binary name to be "bootstrap"
+# This is our shared Lambda entry point - we use features to determine which function to build
 [[bin]]
 name = "bootstrap"
-path = "src/bin/api.rs"
+path = "src/bin/bootstrap.rs"
+
+[features]
+default = []
+api = []
+worker = []
 
 [dependencies]
 lambda_runtime = "0.7.0"
