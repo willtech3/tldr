@@ -31,8 +31,8 @@ jobs:
         if: steps.cache-cargo-lambda.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/.cargo/bin
-          curl -Ls https://github.com/cargo-lambda/cargo-lambda/releases/download/v1.3.1/cargo-lambda-x86_64-unknown-linux-gnu.tar.gz | tar xz
-          mv cargo-lambda ~/.cargo/bin/
+          curl -Ls https://github.com/cargo-lambda/cargo-lambda/releases/download/v1.3.1/cargo-lambda-x86_64-unknown-linux-musl.tar.gz | tar xz
+          mv cargo-lambda-x86_64-unknown-linux-musl/cargo-lambda ~/.cargo/bin/
           chmod +x ~/.cargo/bin/cargo-lambda
 
       # Diagnostic step: print cargo/rust config and env
