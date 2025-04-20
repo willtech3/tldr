@@ -43,7 +43,7 @@ jobs:
       # Install cargo-lambda
       - name: Install cargo-lambda
         run: |
-          pip install cargo-lambda
+          pip install --upgrade cargo-lambda
           cargo lambda --version
 
       # Build the Lambda functions
