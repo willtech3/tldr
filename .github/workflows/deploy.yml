@@ -53,11 +53,11 @@ jobs:
 
           # Build API Lambda function binary
           echo "--- Building API Lambda Binary ---"
-          cargo lambda build --release --bin tldr-api
+          cargo lambda build --release --bin tldr-api --features api
 
           # Build Worker Lambda function binary
           echo "--- Building Worker Lambda Binary ---"
-          cargo lambda build --release --bin tldr-worker
+          cargo lambda build --release --bin tldr-worker --features worker
 
           cd .. # Go back to repo root
 
