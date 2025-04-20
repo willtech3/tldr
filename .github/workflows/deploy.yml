@@ -17,56 +17,21 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      # Set up Rust toolchain
-      - name: Set up Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-
-      # Install Zig compiler for cross-compilation (needed for musl target)
-      - name: Install Zig
-        run: |
-          ZIG_VERSION="0.11.0"
-          wget -c https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz
-          tar -xf zig-linux-x86_64-${ZIG_VERSION}.tar.xz
-          sudo mv zig-linux-x86_64-${ZIG_VERSION} /usr/local/zig
-          echo "/usr/local/zig" >> $GITHUB_PATH
-
-      # Install cargo-lambda only if not in cache
-      - name: Install cargo-lambda
-        run: |
-          if ! command -v cargo-lambda &> /dev/null; then
-            cargo install cargo-lambda
-            echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-            echo "Installed cargo-lambda version: $(cargo-lambda --version)"
-            echo "Using cargo-lambda executable at: $(which cargo-lambda)"
-            echo "Current PATH: $PATH"
-          else
-            echo "cargo-lambda is already installed, skipping installation"
-          fi
-
-      # Build the Lambda functions using cross-compilation
+      # Build the Lambda functions using Docker container with cargo-lambda
       - name: Build Lambda functions
-        run: |
-          cd lambda
-
-          # Build API Lambda function binary
-          echo "--- Building API Lambda Binary ---"
-          cargo lambda build --target x86_64-unknown-linux-musl --release --bin tldr-api --features api --output-format zip
-
-          # Build Worker Lambda function binary
-          echo "--- Building Worker Lambda Binary ---"
-          cargo lambda build --target x86_64-unknown-linux-musl --release --bin tldr-worker --features worker --output-format zip
-
-          cd .. # Go back to repo root
-
-          # Verify the build artifacts exist and are non-empty
-          echo "--- Verifying API Lambda artifact ---"
-          ls -l lambda/target/lambda/tldr-api/bootstrap.zip || (echo "API bootstrap.zip not found!" && exit 1)
-          echo "--- Verifying Worker Lambda artifact ---"
-          ls -l lambda/target/lambda/tldr-worker/bootstrap.zip || (echo "Worker bootstrap.zip not found!" && exit 1)
+        uses: docker://ghcr.io/cargo-lambda/cargo-lambda:latest
+        with:
+          entrypoint: /bin/bash
+          args: |
+            -c "cd lambda && \
+            echo '--- Building API Lambda Binary ---' && \
+            cargo lambda build --target x86_64-unknown-linux-musl --release --bin tldr-api --features api --output-format zip && \
+            echo '--- Building Worker Lambda Binary ---' && \
+            cargo lambda build --target x86_64-unknown-linux-musl --release --bin tldr-worker --features worker --output-format zip && \
+            echo '--- Verifying API Lambda artifact ---' && \
+            ls -l target/lambda/tldr-api/bootstrap.zip || (echo 'API bootstrap.zip not found!' && exit 1) && \
+            echo '--- Verifying Worker Lambda artifact ---' && \
+            ls -l target/lambda/tldr-worker/bootstrap.zip || (echo 'Worker bootstrap.zip not found!' && exit 1)"
 
       # Setup Node.js
       - name: Set up Node.js
