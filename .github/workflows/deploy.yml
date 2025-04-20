@@ -46,11 +46,15 @@ jobs:
           pip install cargo-lambda
           cargo lambda --version
 
-      # Build the Lambda function
-      - name: Build Lambda function
+      # Build the Lambda functions
+      - name: Build Lambda functions
         run: |
           cd lambda
+          # Build the API Lambda function
           cargo lambda build --release --bin bootstrap --target=x86_64-unknown-linux-gnu.2.26 --output-format zip
+          
+          # Build the Worker Lambda function
+          cargo lambda build --release --bin bootstrap --target=x86_64-unknown-linux-gnu.2.26 --output-format zip --output-dir target/lambda/tldr-worker --lambda-name tldr-worker
 
       # Setup Node.js
       - name: Set up Node.js
