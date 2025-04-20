@@ -104,6 +104,8 @@ fn verify_slack_signature(request_body: &str, timestamp: &str, signature: &str) 
     }
 }
 
+pub use self::function_handler as handler;
+
 pub async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<impl Serialize, Error> {
     // Initialize tracing
     tracing_subscriber::fmt::init();
@@ -222,5 +224,5 @@ pub async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<i
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     // Run the Lambda function
-    run(service_fn(function_handler)).await
+    run(service_fn(handler)).await
 }

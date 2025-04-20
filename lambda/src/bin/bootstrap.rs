@@ -20,12 +20,12 @@ async fn main() -> Result<(), Error> {
     // Run the appropriate function handler based on features
     #[cfg(feature = "api")]
     {
-        return run(service_fn(api::function_handler)).await;
+        return run(service_fn(api::handler)).await;
     }
 
     #[cfg(feature = "worker")]
     {
-        return run(service_fn(worker::function_handler)).await;
+        return run(service_fn(worker::handler)).await;
     }
 
     // This code path will only be hit if neither feature is enabled
