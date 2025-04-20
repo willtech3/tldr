@@ -52,18 +52,13 @@ jobs:
           cd lambda
           
           # Clean previous builds
-          rm -rf target/lambda/api
-          rm -rf target/lambda/worker
+          rm -rf target/lambda
           
           # Build the API Lambda function
-          cargo lambda build --release --bin bootstrap --features "api" --output-format zip
-          mkdir -p target/lambda/api
-          cp target/lambda/bootstrap/bootstrap.zip target/lambda/api/bootstrap.zip
+          cargo lambda build --release --bin bootstrap --features "api" --out-dir target/lambda/api
           
           # Build the Worker Lambda function 
-          cargo lambda build --release --bin bootstrap --features "worker" --output-format zip
-          mkdir -p target/lambda/worker
-          cp target/lambda/bootstrap/bootstrap.zip target/lambda/worker/bootstrap.zip
+          cargo lambda build --release --bin bootstrap --features "worker" --out-dir target/lambda/worker
           
           # Verify the build artifacts exist
           ls -la target/lambda/api || echo "API Lambda artifacts not found!"
