@@ -1,0 +1,35 @@
+# Rust
+target/
+**/*.rs.bk
+Cargo.lock
+
+# CDK
+cdk.out/
+dist/
+node_modules/
+*.js
+!jest.config.js
+*.d.ts
+.env
+.env.*
+
+# AWS SAM
+.aws-sam/
+samconfig.toml
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+
+# Deployment
+.cdk.staging/
