@@ -31,6 +31,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config libssl-dev
 
+      # Install Zig compiler for cross-compilation
+      - name: Install Zig
+        run: |
+          ZIG_VERSION="0.11.0"
+          wget -c https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz
+          tar -xf zig-linux-x86_64-${ZIG_VERSION}.tar.xz
+          sudo mv zig-linux-x86_64-${ZIG_VERSION} /usr/local/zig
+          echo "/usr/local/zig" >> $GITHUB_PATH
+
       # Install cargo-lambda
       - name: Install cargo-lambda
         run: |
@@ -41,7 +50,7 @@ jobs:
       - name: Build Lambda function
         run: |
           cd lambda
-          cargo lambda build --release
+          cargo lambda build --release --target=x86_64-unknown-linux-gnu.2.26 --output-format zip
 
       # Setup Node.js
       - name: Set up Node.js
