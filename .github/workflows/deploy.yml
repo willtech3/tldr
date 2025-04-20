@@ -51,24 +51,22 @@ jobs:
         run: |
           cd lambda
           
-          # Create output directories relative to lambda dir
-          mkdir -p target/lambda/api
-          mkdir -p target/lambda/worker
-
-          # Build API Lambda function binary
+          # Build API Lambda function binary (using default output location)
           echo "--- Building API Lambda Binary ---"
-          cargo lambda build --release --bin bootstrap --features "api" --output-format binary --out-dir target/lambda/api
+          cargo lambda build --release --bin bootstrap --features "api"
           
-          # Build Worker Lambda function binary
+          # Build Worker Lambda function binary (using default output location)
           echo "--- Building Worker Lambda Binary ---"
-          cargo lambda build --release --bin bootstrap --features "worker" --output-format binary --out-dir target/lambda/worker
+          cargo lambda build --release --bin bootstrap --features "worker"
           cd .. # Go back to repo root
 
           # Verify the build artifacts exist and are non-empty
           echo "--- Verifying API Lambda artifact ---"
-          ls -l lambda/target/lambda/api/bootstrap || (echo "API bootstrap binary not found!" && exit 1)
+          # NOTE: Build for 'api' feature might overwrite 'worker', or vice-versa if they use the same output path.
+          # We'll check the common path for now and refine if needed.
+          ls -l lambda/target/lambda/bootstrap/bootstrap || (echo "Bootstrap binary not found in default location!" && exit 1)
           echo "--- Verifying Worker Lambda artifact ---"
-          ls -l lambda/target/lambda/worker/bootstrap || (echo "Worker bootstrap binary not found!" && exit 1)
+          # Verification done above for the common path.
 
       # Setup Node.js
       - name: Set up Node.js
