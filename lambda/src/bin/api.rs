@@ -18,10 +18,10 @@ struct ProcessingTask {
     text: String,
 }
 
-async fn send_to_sqs(task: &ProcessingTask) -> Result<(), Error> {
+async fn send_to_sqs(task: &ProcessingTask) -> Result<(), SlackError> {
     // Get queue URL from environment
     let queue_url = env::var("PROCESSING_QUEUE_URL")
-        .map_err(|_| Error::from("PROCESSING_QUEUE_URL environment variable not set"))?;
+        .map_err(|_| SlackError::AwsError("PROCESSING_QUEUE_URL environment variable not set".to_string()))?;
     
     // Set up AWS SDK
     let region_provider = RegionProviderChain::default_provider().or_else("us-east-1");
@@ -30,7 +30,7 @@ async fn send_to_sqs(task: &ProcessingTask) -> Result<(), Error> {
     
     // Serialize task to JSON string
     let message_body = serde_json::to_string(task)
-        .map_err(|e| Error::from(format!("Failed to serialize task: {}", e)))?;
+        .map_err(|e| SlackError::ApiError(format!("Failed to serialize task: {}", e)))?;
     
     // Use the builder pattern correctly for SQS client
     client.send_message()
@@ -38,7 +38,7 @@ async fn send_to_sqs(task: &ProcessingTask) -> Result<(), Error> {
         .message_body(message_body)
         .send()
         .await
-        .map_err(|e| Error::from(format!("Failed to send message to SQS: {}", e)))?;
+        .map_err(|e| SlackError::AwsError(format!("Failed to send message to SQS: {}", e)))?;
     
     Ok(())
 }
@@ -50,6 +50,9 @@ fn parse_slack_event(payload: &str) -> Result<SlackCommandEvent, SlackError> {
 }
 
 async fn function_handler(event: LambdaEvent<String>) -> Result<impl Serialize, Error> {
+    // Initialize tracing
+    tracing_subscriber::fmt::init();
+    
     let payload = event.payload;
     info!("API Lambda received request: {:?}", payload);
 
@@ -86,9 +89,6 @@ async fn function_handler(event: LambdaEvent<String>) -> Result<impl Serialize, 
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    // Initialize tracing
-    tracing_subscriber::fmt::init();
-    
     // Run the Lambda function
     run(service_fn(function_handler)).await
 }

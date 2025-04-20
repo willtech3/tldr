@@ -16,19 +16,53 @@ pub struct SlackCommandEvent {
     pub trigger_id: String,
 }
 
+/// Decodes URL encoded string
+fn decode_url_component(input: &str) -> Result<String, String> {
+    let mut result = String::with_capacity(input.len());
+    let mut i = 0;
+    let bytes = input.as_bytes();
+
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' => {
+                if i + 2 >= bytes.len() {
+                    return Err("Invalid percent encoding".to_string());
+                }
+                
+                let hex_str = std::str::from_utf8(&bytes[i+1..i+3])
+                    .map_err(|_| "Invalid UTF-8 in percent encoding".to_string())?;
+                    
+                let byte = u8::from_str_radix(hex_str, 16)
+                    .map_err(|_| "Invalid hex in percent encoding".to_string())?;
+                    
+                result.push(byte as char);
+                i += 3;
+            },
+            b'+' => {
+                result.push(' ');
+                i += 1;
+            },
+            b => {
+                result.push(b as char);
+                i += 1;
+            }
+        }
+    }
+    
+    Ok(result)
+}
+
 pub fn parse_form_data(form_data: &str) -> Result<SlackCommandEvent, String> {
     let mut map: HashMap<String, String> = HashMap::new();
     
     // Parse the form data
     for pair in form_data.split('&') {
         if let Some(idx) = pair.find('=') {
-            let key = urlencoding::decode(&pair[..idx])
-                .map_err(|e| format!("Failed to decode key: {}", e))?
-                .into_owned();
+            let key = decode_url_component(&pair[..idx])
+                .map_err(|e| format!("Failed to decode key: {}", e))?;
                 
-            let value = urlencoding::decode(&pair[idx + 1..])
-                .map_err(|e| format!("Failed to decode value: {}", e))?
-                .into_owned();
+            let value = decode_url_component(&pair[idx + 1..])
+                .map_err(|e| format!("Failed to decode value: {}", e))?;
                 
             map.insert(key, value);
         }

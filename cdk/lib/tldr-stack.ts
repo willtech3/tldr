@@ -5,6 +5,7 @@ import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import * as path from 'path';
 
 interface TldrStackProps extends cdk.StackProps {
@@ -72,6 +73,14 @@ export class TldrStack extends cdk.Stack {
       environment: commonEnvironment,
       timeout: cdk.Duration.seconds(10), // Short timeout for immediate responses
       memorySize: 256,
+      logRetention: logs.RetentionDays.ONE_WEEK, // Add CloudWatch logs retention
+    });
+
+    // Create CloudWatch log group with custom settings for API function
+    new logs.LogGroup(this, 'TldrApiFunctionLogGroup', {
+      logGroupName: `/aws/lambda/${tldrApiFunction.functionName}`,
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY
     });
 
     // Create the worker Lambda function for background processing
@@ -82,6 +91,14 @@ export class TldrStack extends cdk.Stack {
       environment: commonEnvironment,
       timeout: cdk.Duration.seconds(300), // Longer timeout for processing
       memorySize: 1024, // More memory for processing
+      logRetention: logs.RetentionDays.ONE_WEEK, // Add CloudWatch logs retention
+    });
+
+    // Create CloudWatch log group with custom settings for Worker function
+    new logs.LogGroup(this, 'TldrWorkerFunctionLogGroup', {
+      logGroupName: `/aws/lambda/${tldrWorkerFunction.functionName}`,
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY
     });
 
     // Add SQS as an event source for the worker Lambda
