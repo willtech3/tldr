@@ -3,6 +3,8 @@ import { Construct } from 'constructs';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as path from 'path';
 
 interface TldrStackProps extends cdk.StackProps {
@@ -41,20 +43,56 @@ export class TldrStack extends cdk.Stack {
     deploymentUser.addManagedPolicy(
       iam.ManagedPolicy.fromAwsManagedPolicyName('IAMFullAccess')
     );
+    deploymentUser.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSQSFullAccess')
+    );
+    deploymentUser.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMFullAccess')
+    );
 
-    // Create the Lambda function for the Slack bot using a simpler approach
-    const tldrFunction = new lambda.Function(this, 'TldrFunction', {
+    // Create SQS queue for processing tasks
+    const processingQueue = new sqs.Queue(this, 'TldrProcessingQueue', {
+      visibilityTimeout: cdk.Duration.seconds(300), // 5 minutes
+      retentionPeriod: cdk.Duration.days(1),
+    });
+
+    // Common environment variables for both functions
+    const commonEnvironment = {
+      SLACK_BOT_TOKEN: props.slackBotToken,
+      SLACK_SIGNING_SECRET: props.slackSigningSecret,
+      OPENAI_API_KEY: props.openaiApiKey,
+      PROCESSING_QUEUE_URL: processingQueue.queueUrl,
+    };
+
+    // Create the Lambda function for immediate responses to Slack commands
+    const tldrApiFunction = new lambda.Function(this, 'TldrApiFunction', {
       runtime: lambda.Runtime.PROVIDED_AL2,
       handler: 'bootstrap', // Fixed handler name for Rust Lambdas
-      code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/target/lambda/tldr')),
-      environment: {
-        SLACK_BOT_TOKEN: props.slackBotToken,
-        SLACK_SIGNING_SECRET: props.slackSigningSecret,
-        OPENAI_API_KEY: props.openaiApiKey,
-      },
-      timeout: cdk.Duration.seconds(30),
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/target/lambda/tldr-api')),
+      environment: commonEnvironment,
+      timeout: cdk.Duration.seconds(10), // Short timeout for immediate responses
       memorySize: 256,
     });
+
+    // Create the worker Lambda function for background processing
+    const tldrWorkerFunction = new lambda.Function(this, 'TldrWorkerFunction', {
+      runtime: lambda.Runtime.PROVIDED_AL2,
+      handler: 'bootstrap', // Fixed handler name for Rust Lambdas
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/target/lambda/tldr-worker')),
+      environment: commonEnvironment,
+      timeout: cdk.Duration.seconds(300), // Longer timeout for processing
+      memorySize: 1024, // More memory for processing
+    });
+
+    // Add SQS as an event source for the worker Lambda
+    tldrWorkerFunction.addEventSource(
+      new lambdaEventSources.SqsEventSource(processingQueue, {
+        batchSize: 1, // Process one message at a time
+      })
+    );
+
+    // Grant the API function permission to send messages to the queue
+    processingQueue.grantSendMessages(tldrApiFunction);
 
     // Create an API Gateway to expose the Lambda function
     const api = new apigateway.RestApi(this, 'TldrApi', {
@@ -66,7 +104,7 @@ export class TldrStack extends cdk.Stack {
     });
 
     // Create a Lambda integration for the API Gateway
-    const tldrIntegration = new apigateway.LambdaIntegration(tldrFunction);
+    const tldrIntegration = new apigateway.LambdaIntegration(tldrApiFunction);
 
     // Add a resource and method for Slack events
     const events = api.root.addResource('events');
@@ -80,6 +118,12 @@ export class TldrStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ApiUrl', {
       value: api.url,
       description: 'URL of the API Gateway endpoint',
+    });
+
+    // Output the processing queue URL
+    new cdk.CfnOutput(this, 'ProcessingQueueUrl', {
+      value: processingQueue.queueUrl,
+      description: 'URL of the SQS processing queue',
     });
 
     // Output the deployment user ARN

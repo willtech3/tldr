@@ -191,7 +191,7 @@ impl SlackBot {
         });
 
         // Acknowledge command immediately using the stored count
-        Ok(format!("Processing {} unread messages. I'll DM you a summary shortly!", messages_count))
+        Ok(format!("Processing {} unread messages. I'll DM you a summary shortly, summarizing your latest unread messages!", messages_count))
     }
 }
 
