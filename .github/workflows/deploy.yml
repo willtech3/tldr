@@ -38,20 +38,20 @@ jobs:
         run: cargo install cargo-lambda --version 1.8.3 --locked
 
       # Diagnostic step: print cargo/rust config and env
-      - name: Print Cargo and Rust config
-        run: |
-          echo "---- ~/.cargo/config ----"
-          cat ~/.cargo/config || echo "No ~/.cargo/config"
-          echo "---- ~/.cargo/config.toml ----"
-          cat ~/.cargo/config.toml || echo "No ~/.cargo/config.toml"
-          echo "---- RUSTFLAGS ----"
-          echo "${RUSTFLAGS:-not set}"
-          echo "---- rustc version ----"
-          rustc --version
-          echo "---- cargo version ----"
-          cargo --version
-          echo "---- cargo-lambda version ----"
-          cargo lambda version
+      # - name: Print Cargo and Rust config
+      #   run: |
+      #     echo "---- ~/.cargo/config ----"
+      #     cat ~/.cargo/config || echo "No ~/.cargo/config"
+      #     echo "---- ~/.cargo/config.toml ----"
+      #     cat ~/.cargo/config.toml || echo "No ~/.cargo/config.toml"
+      #     echo "---- RUSTFLAGS ----"
+      #     echo "${RUSTFLAGS:-not set}"
+      #     echo "---- rustc version ----"
+      #     rustc --version
+      #     echo "---- cargo version ----"
+      #     cargo --version
+      #     echo "---- cargo-lambda version ----"
+      #     cargo lambda version
 
       # Build the Lambda functions
       - name: Build Lambda functions (manual)
