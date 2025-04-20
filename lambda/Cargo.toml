@@ -5,17 +5,13 @@ edition = "2021"
 
 [[bin]]
 name = "tldr-api"
-path = "src/bin/api.rs"
+path = "src/bin/bootstrap.rs"
+required-features = ["api"]
 
 [[bin]]
 name = "tldr-worker"
-path = "src/bin/worker.rs"
-
-# AWS Lambda requires the binary name to be "bootstrap"
-# This is our shared Lambda entry point - we use features to determine which function to build
-[[bin]]
-name = "bootstrap"
 path = "src/bin/bootstrap.rs"
+required-features = ["worker"]
 
 [features]
 default = []
