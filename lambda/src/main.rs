@@ -177,13 +177,13 @@ impl SlackBot {
             if let Ok(bot) = SlackBot::new().await {
                 // Pass the cloned Vec<SlackHistoryMessage>
                 if let Ok(summary) = bot.summarize_messages_with_chatgpt(&messages_vec).await { 
-                    if let Err(e) = bot.send_dm(user_id.as_ref(), &summary).await {
+                    if let Err(e) = bot.send_dm(&user_id, &summary).await {
                         error!("Failed to send DM: {}", e);
                     } else {
-                        info!("Summary DM sent successfully to {}", user_id.as_ref());
+                        info!("Summary DM sent successfully to {}", &user_id);
                     }
                 } else {
-                    error!("Failed to generate summary for user {}", user_id.as_ref());
+                    error!("Failed to generate summary for user {}", &user_id);
                 }
             } else {
                 error!("Failed to create bot instance for async task.");
