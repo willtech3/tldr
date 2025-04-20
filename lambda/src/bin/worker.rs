@@ -128,11 +128,4 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Error> {
-    // Initialize tracing
-    tracing_subscriber::fmt::init();
-    
-    // Run the Lambda function
-    run(service_fn(handler)).await
-}
+// Remove the unused main function - bootstrap.rs is the entry point

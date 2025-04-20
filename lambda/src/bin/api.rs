@@ -220,9 +220,3 @@ pub async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<i
         }).to_string()
     }))
 }
-
-#[tokio::main]
-async fn main() -> Result<(), Error> {
-    // Run the Lambda function
-    run(service_fn(handler)).await
-}
