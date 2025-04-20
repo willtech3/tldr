@@ -19,6 +19,22 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      # Cache cargo-lambda binary
+      - name: Cache cargo-lambda
+        id: cache-cargo-lambda
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/bin/cargo-lambda
+          key: cargo-lambda-v1.3.1
+
+      - name: Install cargo-lambda from prebuilt binary if not cached
+        if: steps.cache-cargo-lambda.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.cargo/bin
+          curl -Ls https://github.com/cargo-lambda/cargo-lambda/releases/download/v1.3.1/cargo-lambda-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          mv cargo-lambda ~/.cargo/bin/
+          chmod +x ~/.cargo/bin/cargo-lambda
+
       # Diagnostic step: print cargo/rust config and env
       - name: Print Cargo and Rust config
         run: |
@@ -32,19 +48,20 @@ jobs:
           rustc --version
           echo "---- cargo version ----"
           cargo --version
+          echo "---- cargo-lambda version ----"
+          cargo-lambda --version
 
-      # Build the Lambda functions using the official Rust Docker image and install cargo-lambda at runtime
+      # Build the Lambda functions
       - name: Build Lambda functions (manual)
         run: |
-          cargo install cargo-lambda && \
-          cd lambda && \
-          echo '--- Building API Lambda Binary ---' && \
-          cargo lambda build --release --bin tldr-api --features api --target x86_64-unknown-linux-musl --output-format zip && \
-          echo '--- Building Worker Lambda Binary ---' && \
-          cargo lambda build --release --bin tldr-worker --features worker --target x86_64-unknown-linux-musl --output-format zip && \
-          echo '--- Verifying API Lambda artifact ---' && \
-          ls -l target/lambda/tldr-api/bootstrap.zip || (echo 'API bootstrap.zip not found!' && exit 1) && \
-          echo '--- Verifying Worker Lambda artifact ---' && \
+          cd lambda
+          echo '--- Building API Lambda Binary ---'
+          cargo lambda build --release --bin tldr-api --features api --target x86_64-unknown-linux-musl --output-format zip
+          echo '--- Building Worker Lambda Binary ---'
+          cargo lambda build --release --bin tldr-worker --features worker --target x86_64-unknown-linux-musl --output-format zip
+          echo '--- Verifying API Lambda artifact ---'
+          ls -l target/lambda/tldr-api/bootstrap.zip || (echo 'API bootstrap.zip not found!' && exit 1)
+          echo '--- Verifying Worker Lambda artifact ---'
           ls -l target/lambda/tldr-worker/bootstrap.zip || (echo 'Worker bootstrap.zip not found!' && exit 1)
 
       # Setup Node.js
