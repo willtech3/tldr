@@ -104,7 +104,7 @@ fn verify_slack_signature(request_body: &str, timestamp: &str, signature: &str) 
     }
 }
 
-async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<impl Serialize, Error> {
+pub async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<impl Serialize, Error> {
     // Initialize tracing
     tracing_subscriber::fmt::init();
     

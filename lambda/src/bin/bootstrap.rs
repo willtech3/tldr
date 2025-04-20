@@ -11,8 +11,6 @@ mod api;
 mod worker;
 
 use lambda_runtime::{Error, run, service_fn};
-use serde_json::Value;
-use lambda_runtime::LambdaEvent;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {

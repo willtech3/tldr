@@ -104,7 +104,7 @@ impl BotHandler {
     }
 }
 
-async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
+pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
     // Initialize tracing
     tracing_subscriber::fmt::init();
     
