@@ -17,9 +17,9 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      # Build the Lambda functions using Docker container with cargo-lambda
+      # Build the Lambda functions using a specific cargo-lambda version
       - name: Build Lambda functions
-        uses: docker://ghcr.io/cargo-lambda/cargo-lambda:latest
+        uses: docker://ghcr.io/cargo-lambda/cargo-lambda:1.8.3
         with:
           entrypoint: /bin/bash
           args: |
