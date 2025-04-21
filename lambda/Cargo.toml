@@ -19,7 +19,7 @@ api = []
 worker = []
 
 [dependencies]
-lambda_runtime = "0.7.0"
+lambda_runtime = "0.13.0"
 tokio = { version = "1", features = ["macros"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

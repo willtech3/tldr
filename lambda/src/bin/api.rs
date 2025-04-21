@@ -220,3 +220,13 @@ pub async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<i
         }).to_string()
     }))
 }
+
+#[tokio::main]
+async fn main() -> Result<(), Error> {
+    // Initialize tracing (can be done once, either here or in handler)
+    // tracing_subscriber::fmt::init(); 
+
+    let func = service_fn(function_handler);
+    run(func).await?;
+    Ok(())
+}
