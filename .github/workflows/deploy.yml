@@ -14,41 +14,80 @@ env:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/cargo-lambda/cargo-lambda:builder-rust1.86-al2
     steps:
       - uses: actions/checkout@v3
 
-      # Cache cargo registry for faster cargo install
-      - name: Cache cargo registry
+      # Set up Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      # Cache Docker layers
+      - name: Cache Docker layers
         uses: actions/cache@v3
         with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
 
-      # Cache cargo bin for faster cargo-lambda reuse
-      - name: Cache cargo bin
-        uses: actions/cache@v3
+      # Rust code linting (PR only)
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
         with:
-          path: ~/.cargo/bin
-          key: ${{ runner.os }}-cargo-bin-cargo-lambda-latest
+          profile: minimal
+          toolchain: stable
+          components: rustfmt, clippy
+          override: true
+        if: github.event_name == 'pull_request'
 
-      # Install cargo-lambda from crates.io (will skip if already present)
-      - name: Install cargo-lambda
-        run: cargo install cargo-lambda
+      # Perform code formatting check
+      - name: Check code formatting
+        working-directory: ./lambda
+        run: cargo fmt -- --check
+        if: github.event_name == 'pull_request'
 
-      # Build the Lambda functions
-      - name: Build Lambda functions (manual)
+      # Run Clippy lints
+      - name: Run Clippy lints
+        working-directory: ./lambda
+        run: cargo clippy -- -D warnings
+        if: github.event_name == 'pull_request'
+
+      # Run Rust tests
+      - name: Run Rust tests
+        working-directory: ./lambda
+        run: cargo test --all-features
+        if: github.event_name == 'pull_request'
+
+      # Build Lambda functions using Docker
+      - name: Build Lambda functions
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: false
+          load: true
+          tags: tldr-lambda-builder:latest
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+
+      # Extract built Lambda artifacts from the container
+      - name: Extract Lambda artifacts
         run: |
-          cd lambda
-          echo '--- Building API Lambda Binary ---'
-          cargo lambda build --release --bin tldr-api --features api --target x86_64-unknown-linux-gnu --output-format zip
-          echo '--- Building Worker Lambda Binary ---'
-          cargo lambda build --release --bin tldr-worker --features worker --target x86_64-unknown-linux-gnu --output-format zip
+          mkdir -p lambda/target/lambda/tldr-api
+          mkdir -p lambda/target/lambda/tldr-worker
+          docker create --name lambda-builder tldr-lambda-builder:latest
+          docker cp lambda-builder:/tldr-api.zip lambda/target/lambda/tldr-api/bootstrap.zip
+          docker cp lambda-builder:/tldr-worker.zip lambda/target/lambda/tldr-worker/bootstrap.zip
+          docker rm lambda-builder
           echo '--- Verifying API Lambda artifact ---'
-          ls -l target/lambda/tldr-api/bootstrap.zip || (echo 'API bootstrap.zip not found!' && exit 1)
+          ls -l lambda/target/lambda/tldr-api/bootstrap.zip || (echo 'API bootstrap.zip not found!' && exit 1)
           echo '--- Verifying Worker Lambda artifact ---'
-          ls -l target/lambda/tldr-worker/bootstrap.zip || (echo 'Worker bootstrap.zip not found!' && exit 1)
+          ls -l lambda/target/lambda/tldr-worker/bootstrap.zip || (echo 'Worker bootstrap.zip not found!' && exit 1)
+
+      # Move cache
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
       # Setup Node.js
       - name: Set up Node.js
@@ -79,11 +118,22 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
-      # Deploy with CDK
+      # Deploy with CDK (ensuring environment variables are properly defined and accessed)
       - name: Deploy with CDK
         run: |
           cd cdk
+          # Create a temporary context file for secure parameter passing
+          cat > cdk.context.json << EOF
+          {
+            "slackBotToken": "$SLACK_BOT_TOKEN",
+            "slackSigningSecret": "$SLACK_SIGNING_SECRET",
+            "openaiApiKey": "$OPENAI_API_KEY"
+          }
+          EOF
+          # Deploy with the context file
           npm run cdk deploy -- --require-approval never
+          # Clean up the context file
+          rm cdk.context.json
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
