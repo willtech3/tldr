@@ -6,7 +6,7 @@ echo "======================================================"
 
 # Build the Docker image with verbosity for debugging
 echo "📦 Building Docker image (this may take several minutes)..."
-docker build -t tldr-lambda-builder:local . --progress=plain
+docker build --platform linux/amd64 -t tldr-lambda-builder:local . --progress=plain
 
 # Create directories for the Lambda artifacts
 echo "📋 Extracting Lambda artifacts..."
@@ -49,6 +49,14 @@ docker rm lambda-artifact-extractor
 # Verify artifacts were created successfully
 if [ -f "lambda/target/lambda/tldr-api/bootstrap" ] && [ -f "lambda/target/lambda/tldr-worker/bootstrap" ]; then
     echo "✅ Lambda artifacts built successfully!"
+
+    # Verify linkage type
+    echo "🔍 Verifying binary linkage..."
+    echo "API Bootstrap Type:" 
+    file lambda/target/lambda/tldr-api/bootstrap
+    echo "Worker Bootstrap Type:"
+    file lambda/target/lambda/tldr-worker/bootstrap
+
     echo "   - API Lambda: lambda/target/lambda/tldr-api/bootstrap"
     echo "   - Worker Lambda: lambda/target/lambda/tldr-worker/bootstrap"
     echo "   - API Lambda ZIP: lambda/target/lambda/tldr-api/function.zip"
