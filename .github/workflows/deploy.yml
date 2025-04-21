@@ -59,15 +59,10 @@ jobs:
         if: github.event_name == 'pull_request'
 
       # Build Lambda functions using Docker
-      - name: Build Lambda functions
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          push: false
-          load: true
-          tags: tldr-lambda-builder:latest
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+      - name: Build Lambda Functions
+        run: |
+          chmod +x build-local.sh
+          ./build-local.sh
 
       # Extract built Lambda artifacts from the container
       - name: Extract Lambda artifacts
@@ -122,12 +117,12 @@ jobs:
       - name: Deploy with CDK
         run: |
           cd cdk
-          # Create a temporary context file for secure parameter passing
+          # Create a secure cdk context file with secrets
           cat > cdk.context.json << EOF
           {
-            "slackBotToken": "$SLACK_BOT_TOKEN",
-            "slackSigningSecret": "$SLACK_SIGNING_SECRET",
-            "openaiApiKey": "$OPENAI_API_KEY"
+            "slackBotTokenSecretName": "SlackBotToken",
+            "slackSigningSecretSecretName": "SlackSigningSecret", 
+            "openAiApiKeySecretName": "OpenAiApiKey"
           }
           EOF
           # Deploy with the context file
@@ -135,7 +130,7 @@ jobs:
           # Clean up the context file
           rm cdk.context.json
         env:
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AWS_SECRET_SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          AWS_SECRET_SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+          AWS_SECRET_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'

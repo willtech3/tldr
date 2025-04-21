@@ -42,15 +42,18 @@ RUN sed -i 's/openssl = .*/openssl = { version = "0.10", features = ["vendored"]
 RUN cargo build --release --bin tldr-api --features api && \
     cargo build --release --bin tldr-worker --features worker
 
-# Create zip files for Lambda deployment
+# Create Lambda-compatible artifacts
+# Lambda expects an executable named 'bootstrap' (not zipped)
 RUN mkdir -p /lambda/target/lambda/tldr-api && \
     mkdir -p /lambda/target/lambda/tldr-worker && \
     cp /lambda/target/release/tldr-api /lambda/target/lambda/tldr-api/bootstrap && \
-    cp /lambda/target/release/tldr-worker /lambda/target/lambda/tldr-worker/bootstrap && \
-    cd /lambda/target/lambda/tldr-api && zip -j bootstrap.zip bootstrap && \
-    cd /lambda/target/lambda/tldr-worker && zip -j bootstrap.zip bootstrap
+    cp /lambda/target/release/tldr-worker /lambda/target/lambda/tldr-worker/bootstrap
 
-# Runtime image - just to copy artifacts
-FROM scratch as runtime
-COPY --from=builder /lambda/target/lambda/tldr-api/bootstrap.zip /tldr-api.zip
-COPY --from=builder /lambda/target/lambda/tldr-worker/bootstrap.zip /tldr-worker.zip
+# Using a proper runtime image instead of scratch so we can extract files more easily
+FROM amazonlinux:2 as artifacts
+COPY --from=builder /lambda/target/lambda/tldr-api/bootstrap /dist/tldr-api/bootstrap
+COPY --from=builder /lambda/target/lambda/tldr-worker/bootstrap /dist/tldr-worker/bootstrap
+WORKDIR /dist
+
+# Default command prevents the "no command specified" error
+CMD ["echo", "Lambda artifacts built successfully"]
