@@ -14,8 +14,10 @@ use lambda_runtime::{Error, run, service_fn};
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    // Initialize tracing
-    tracing_subscriber::fmt::init();
+    // Initialize tracing, explicitly setting the max level to INFO
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
     
     // Run the appropriate function handler based on features
     #[cfg(feature = "api")]

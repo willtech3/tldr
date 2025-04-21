@@ -7,6 +7,7 @@ use slack_morphism::{
     SlackMessageContent,
     SlackTs,
 };
+use slack_morphism::events::SlackMessageEventType;
 use slack_morphism::hyper_tokio::{SlackHyperClient, SlackClientHyperConnector};
 use openai_api_rs::v1::{
     api::Client as OpenAIClient, 
@@ -14,7 +15,7 @@ use openai_api_rs::v1::{
 };
 use anyhow::Result;
 use std::env;
-use tracing::error;
+use tracing::{error, info};
 use reqwest::Client;
 
 pub mod slack_parser;
@@ -128,7 +129,31 @@ impl SlackBot {
             .with_oldest(last_read_ts);
         
         let result = session.conversations_history(&request).await?;
-        Ok(result.messages)
+        
+        // Capture original length before moving
+        let original_message_count = result.messages.len();
+        
+        // Filter messages: Keep only those from users and exclude common system messages
+        let filtered_messages: Vec<SlackHistoryMessage> = result.messages.into_iter().filter(|msg| {
+            // Check if the sender is a user (not a bot or system)
+            let is_user_message = msg.sender.user.is_some();
+            
+            // Check for common system subtypes to exclude (add more as needed)
+            let is_system_message = match &msg.subtype {
+                Some(subtype) => matches!(
+                    subtype,
+                    SlackMessageEventType::ChannelJoin | SlackMessageEventType::ChannelLeave | SlackMessageEventType::BotMessage
+                    // Add other subtypes like SlackMessageEventType::FileShare etc. if desired
+                ),
+                None => false, // Regular message, no subtype
+            };
+            
+            is_user_message && !is_system_message
+        }).collect();
+        
+        info!("Fetched {} total messages, filtered down to {} user messages for summarization", original_message_count, filtered_messages.len());
+        
+        Ok(filtered_messages)
     }
     
     pub async fn summarize_messages_with_chatgpt(&self, messages: &[SlackHistoryMessage]) -> Result<String, SlackError> {
@@ -188,13 +213,25 @@ impl SlackBot {
     }
     
     pub async fn send_dm(&self, user_id: &str, message: &str) -> Result<(), SlackError> {
+        info!("Attempting to get/open IM channel for user: {}", user_id);
         let channel_id = self.get_user_im_channel(user_id).await?;
+        info!("Obtained IM channel ID: {} for user: {}", channel_id, user_id);
+        
         let session = self.client.open_session(&self.token);
         let post_req = SlackApiChatPostMessageRequest::new(
-            channel_id.into(), 
+            channel_id.clone().into(), 
             SlackMessageContent::new().with_text(message.to_string())
         );
-        session.chat_post_message(&post_req).await?;
+        
+        // Log before sending
+        info!(channel = %channel_id, message_preview = %message.chars().take(50).collect::<String>(), "Attempting to send DM");
+
+        // Use '?' to rely on SlackClientError conversion
+        let response = session.chat_post_message(&post_req).await?;
+
+        // Log after successful call (according to the library)
+        info!(channel = %channel_id, ts = %response.ts, "Successfully posted message to Slack API (ts: {})", response.ts);
+        
         Ok(())
     }
 }

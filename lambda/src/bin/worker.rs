@@ -107,15 +107,23 @@ impl BotHandler {
 pub use self::function_handler as handler;
 
 pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
-    // Initialize tracing
-    tracing_subscriber::fmt::init();
+    info!("Worker Lambda received SQS event payload: {:?}", event.payload);
     
-    info!("Worker Lambda received event");
+    // Extract and parse the message body from the SQS event
+    // SQS events contain a 'Records' array, each record has a 'body' field
+    let task: ProcessingTask = event.payload["Records"]
+        .as_array()
+        .and_then(|records| records.get(0)) // Get the first record
+        .and_then(|record| record.get("body")) // Get the body field
+        .and_then(|body| body.as_str())      // Get body as a string
+        .ok_or_else(|| Error::from("Failed to extract SQS message body"))
+        .and_then(|body_str| {
+            serde_json::from_str(body_str)
+                .map_err(|e| Error::from(format!("Failed to parse SQS message body into ProcessingTask: {}", e)))
+        })?;
     
-    // Parse the event body
-    let task: ProcessingTask = serde_json::from_value(event.payload)
-        .map_err(|e| Error::from(format!("Failed to parse event: {}", e)))?;
-    
+    info!("Successfully parsed ProcessingTask: {:?}", task);
+
     // Create bot handler and process task
     let handler = BotHandler::new().await
         .map_err(|e| Error::from(format!("Failed to initialize bot: {}", e)))?;

@@ -7,6 +7,7 @@ echo "======================================================"
 # Build the Docker image with verbosity for debugging
 echo "📦 Building Docker image (this may take several minutes)..."
 docker build --platform linux/amd64 -t tldr-lambda-builder:local . --progress=plain
+docker tag tldr-lambda-builder:local tldr-lambda-builder:latest # Add the :latest tag for CI
 
 # Create directories for the Lambda artifacts
 echo "📋 Extracting Lambda artifacts..."

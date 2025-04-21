@@ -107,9 +107,6 @@ fn verify_slack_signature(request_body: &str, timestamp: &str, signature: &str) 
 pub use self::function_handler as handler;
 
 pub async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<impl Serialize, Error> {
-    // Initialize tracing
-    tracing_subscriber::fmt::init();
-    
     info!("API Lambda received request: {:?}", event);
     
     // Extract headers and body from the Lambda event
