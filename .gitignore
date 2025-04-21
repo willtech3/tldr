@@ -31,5 +31,12 @@ Thumbs.db
 logs/
 *.log
 
-# Deployment
+# Deployment Outputs / Build Artifacts
 .cdk.staging/
+cdk-outputs.json
+lambda/target/
+lambda/zig-linux-*
+lambda/zig.tar.xz
+
+# Secrets
+secrets
