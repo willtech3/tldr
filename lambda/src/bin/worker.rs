@@ -51,7 +51,7 @@ impl BotHandler {
         Ok(())
     }
     
-    async fn process_task(&self, task: ProcessingTask) -> Result<(), SlackError> {
+    async fn process_task(&mut self, task: ProcessingTask) -> Result<(), SlackError> {
         info!("Processing task for user {} in channel {}", task.user_id, task.channel_id);
         
         // Get unread messages
@@ -64,7 +64,7 @@ impl BotHandler {
                 }
                 
                 // Generate summary
-                match self.slack_bot.summarize_messages_with_chatgpt(&messages).await {
+                match self.slack_bot.summarize_messages_with_chatgpt(&messages, &task.channel_id).await {
                     Ok(summary) => {
                         // Send summary as DM
                         if let Err(e) = self.slack_bot.send_dm(&task.user_id, &summary).await {
@@ -125,7 +125,7 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
     info!("Successfully parsed ProcessingTask: {:?}", task);
 
     // Create bot handler and process task
-    let handler = BotHandler::new().await
+    let mut handler = BotHandler::new().await
         .map_err(|e| Error::from(format!("Failed to initialize bot: {}", e)))?;
     
     if let Err(e) = handler.process_task(task).await {
@@ -136,4 +136,18 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
     Ok(())
 }
 
-// Remove the unused main function - bootstrap.rs is the entry point
+#[tokio::main]
+async fn main() -> Result<(), Error> {
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_target(false)
+        .without_time()
+        .init();
+    
+    // Start the Lambda runtime
+    // Use service_fn to convert our function into a Service
+    lambda_runtime::run(lambda_runtime::service_fn(function_handler)).await?;
+    
+    Ok(())
+}

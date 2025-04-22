@@ -30,7 +30,7 @@ reqwest = { version = "0.11", features = ["json"] }
 aws-config = "0.54.1"
 aws-sdk-sqs = "0.24.0"
 slack-morphism = { version = "1.17.0", features = ["hyper"] }
-openai-api-rs = "0.1.7"
+openai-api-rs = "6.0.3"
 anyhow = "1.0"
 thiserror = "1.0"
 openssl = { version = "0.10", features = ["vendored"] }

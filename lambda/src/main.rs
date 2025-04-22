@@ -4,13 +4,15 @@ use slack_morphism::prelude::*;
 use slack_morphism::{
     SlackApiToken, SlackApiTokenValue, 
     SlackChannelId, 
-    SlackMessageContent,
     SlackUserId,
-    SlackTs,
     SlackHistoryMessage,
 };
 use slack_morphism::hyper_tokio::{SlackHyperClient, SlackClientHyperConnector};
-use openai_api_rs::v1::{api::Client, chat_completion::{self, ChatCompletionRequest, ChatCompletionMessage, MessageRole}};
+use openai_api_rs::v1::{
+    api::OpenAIClient,
+    chat_completion::{self, ChatCompletionRequest, Content, MessageRole}
+};
+use openai_api_rs::v1::common::GPT4_O;
 use std::env;
 use anyhow::Result;
 use tracing::{info, error};
@@ -18,35 +20,55 @@ use tracing::{info, error};
 mod slack_parser;
 use slack_parser::{SlackCommandEvent, parse_form_data};
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 enum SlackError {
-    #[error("Failed to parse Slack event: {0}")]
+    #[allow(dead_code)]
     ParseError(String),
     
-    #[error("Failed to access Slack API: {0}")]
-    ApiError(String),
-    
-    #[error("Failed to access OpenAI API: {0}")]
     OpenAIError(String),
+    
+    #[allow(dead_code)]
+    HttpError(String),
+    
+    #[allow(dead_code)]
+    AwsError(String),
 }
+
+impl std::fmt::Display for SlackError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SlackError::ParseError(msg) => write!(f, "Failed to parse Slack event: {}", msg),
+            SlackError::OpenAIError(msg) => write!(f, "Failed to access OpenAI API: {}", msg),
+            SlackError::HttpError(msg) => write!(f, "Failed to send HTTP request: {}", msg),
+            SlackError::AwsError(msg) => write!(f, "Failed to interact with AWS services: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for SlackError {}
 
 struct SlackBot {
     client: SlackHyperClient,
     token: SlackApiToken,
-    openai_client: Client,
+    openai_client: OpenAIClient,
 }
 
 impl SlackBot {
     async fn new() -> Result<Self> {
-        let token = env::var("SLACK_BOT_TOKEN")
-            .map_err(|_| SlackError::ApiError("SLACK_BOT_TOKEN not found".to_string()))?;
-        let openai_api_key = env::var("OPENAI_API_KEY")
-            .map_err(|_| SlackError::OpenAIError("OPENAI_API_KEY not found".to_string()))?;
+        let token = env::var("SLACK_BOT_TOKEN")?;
+        let openai_api_key = env::var("OPENAI_API_KEY")?;
         
         // Initialize SlackHyperClient correctly using the connector
         let client = SlackHyperClient::new(SlackClientHyperConnector::new()); 
         let token = SlackApiToken::new(SlackApiTokenValue::new(token));
-        let openai_client = Client::new(openai_api_key.clone()); 
+        
+        // Use the builder pattern and handle errors explicitly to avoid issues with Send/Sync constraints
+        let openai_client = match OpenAIClient::builder()
+            .with_api_key(openai_api_key)
+            .build() {
+                Ok(client) => client,
+                Err(e) => return Err(anyhow::anyhow!("Failed to create OpenAI client: {}", e))
+            };
         
         Ok(Self { client, token, openai_client })
     }
@@ -87,13 +109,27 @@ impl SlackBot {
         Ok(result.messages)
     }
     
-    async fn summarize_messages_with_chatgpt(&self, messages: &[SlackHistoryMessage]) -> Result<String> {
+    async fn summarize_messages_with_chatgpt(
+        &mut self, 
+        messages: &[SlackHistoryMessage],
+        channel_id: &str
+    ) -> Result<String, SlackError> {
         if messages.is_empty() {
             return Ok("No messages to summarize.".to_string());
         }
         
         // Format messages for OpenAI using SlackHistoryMessage fields
         let mut formatted_messages = Vec::new();
+        
+        // Get channel name from channel_id
+        let channel_info = self.client.open_session(&self.token)
+            .conversations_info(&SlackApiConversationsInfoRequest::new(SlackChannelId::new(channel_id.to_string())))
+            .await
+            .map_err(|e| SlackError::OpenAIError(format!("Failed to get channel info: {}", e)))?;
+            
+        let channel_name = channel_info.channel.name
+            .unwrap_or_else(|| channel_id.to_string());
+            
         for msg in messages { 
             // Access user via sender field as hinted by compiler
             let author = msg.sender.user.as_ref()
@@ -111,43 +147,38 @@ impl SlackBot {
         }
         
         let prompt = format!(
-            "Summarize the following Slack messages concisely:\n\n{}",
+            "Summarize the following Slack messages from channel '{}' in a clear, readable format. Include links from inputs where applicable. Focus on key information and organize by topics or threads where appropriate:\n\n{}",
+            channel_name,
             formatted_messages.join("\n")
         );
 
-        // Use the openai-api-rs client
-        let chat_req = ChatCompletionRequest {
-            model: chat_completion::GPT3_5_TURBO.to_string(),
-            messages: vec![ChatCompletionMessage {
+        let chat_req = ChatCompletionRequest::new(
+            GPT4_O.to_string(),
+            vec![chat_completion::ChatCompletionMessage {
                 role: MessageRole::user,
-                content: prompt, 
+                content: Content::Text(prompt),
                 name: None,
-                function_call: None,
-            }],
-            functions: None,
-            function_call: None,
-            temperature: Some(0.3),
-            top_p: None,
-            n: None,
-            stream: None,
-            stop: None,
-            max_tokens: Some(2500),
-            presence_penalty: None,
-            frequency_penalty: None,
-            logit_bias: None,
-            user: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }]
+        )
+        .temperature(0.3)
+        .max_tokens(2500);
+
+        let result = match self.openai_client.chat_completion(chat_req).await {
+            Ok(result) => result,
+            Err(e) => return Err(SlackError::OpenAIError(format!("OpenAI API error: {}", e)))
         };
 
-        let result = self.openai_client.chat_completion(chat_req).await
-            .map_err(|e| SlackError::OpenAIError(format!("OpenAI API error: {}", e)))?;
-
-        // Extract the summary from the response
         let summary = result.choices
             .get(0)
             .and_then(|choice| choice.message.content.clone())
             .unwrap_or_else(|| "Could not generate summary.".to_string());
+            
+        // Include channel information in the final summary
+        let formatted_summary = format!("*Summary from #{}*\n\n{}", channel_name, summary);
 
-        Ok(summary)
+        Ok(formatted_summary)
     }
     
     async fn send_dm(&self, user_id: &str, message: &str) -> Result<()> {
@@ -174,9 +205,9 @@ impl SlackBot {
         let messages_vec = messages.to_vec(); // Clone messages for the async task if needed
 
         tokio::spawn(async move {
-            if let Ok(bot) = SlackBot::new().await {
+            if let Ok(mut bot) = SlackBot::new().await {
                 // Pass the cloned Vec<SlackHistoryMessage>
-                if let Ok(summary) = bot.summarize_messages_with_chatgpt(&messages_vec).await { 
+                if let Ok(summary) = bot.summarize_messages_with_chatgpt(&messages_vec, channel_id.as_ref()).await { 
                     if let Err(e) = bot.send_dm(&user_id, &summary).await {
                         error!("Failed to send DM: {}", e);
                     } else {
