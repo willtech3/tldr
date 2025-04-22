@@ -7,6 +7,9 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 # Explicitly add the musl target for the Rust standard library
 RUN rustup target add x86_64-unknown-linux-musl
 
+# Install zip utility
+RUN apt-get update && apt-get install -y zip
+
 # Set up the Lambda project
 WORKDIR /lambda
 COPY lambda /lambda/
@@ -28,10 +31,18 @@ RUN mkdir -p /lambda/target/lambda/tldr-api && \
     cp /lambda/target/x86_64-unknown-linux-musl/release/tldr-api /lambda/target/lambda/tldr-api/bootstrap && \
     cp /lambda/target/x86_64-unknown-linux-musl/release/tldr-worker /lambda/target/lambda/tldr-worker/bootstrap
 
+# Create ZIP files inside the container
+RUN cd /lambda/target/lambda/tldr-api && zip -j function.zip bootstrap && \
+    cd /lambda/target/lambda/tldr-worker && zip -j function.zip bootstrap && \
+    cp /lambda/target/lambda/tldr-api/function.zip /tldr-api.zip && \
+    cp /lambda/target/lambda/tldr-worker/function.zip /tldr-worker.zip
+
 # Using a proper runtime image instead of scratch so we can extract files more easily
 FROM amazonlinux:2 as artifacts
 COPY --from=builder /lambda/target/lambda/tldr-api/bootstrap /dist/tldr-api/bootstrap
 COPY --from=builder /lambda/target/lambda/tldr-worker/bootstrap /dist/tldr-worker/bootstrap
+COPY --from=builder /tldr-api.zip /tldr-api.zip
+COPY --from=builder /tldr-worker.zip /tldr-worker.zip
 WORKDIR /dist
 
 # Default command prevents the "no command specified" error

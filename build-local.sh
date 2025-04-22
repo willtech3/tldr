@@ -39,16 +39,26 @@ if ! docker cp lambda-artifact-extractor:/dist/tldr-worker/bootstrap lambda/targ
     exit 1
 fi
 
-# Create zip files for CDK deployment if needed
-echo "Creating ZIP files for CDK deployment..."
-(cd lambda/target/lambda/tldr-api && zip -j function.zip bootstrap)
-(cd lambda/target/lambda/tldr-worker && zip -j function.zip bootstrap)
+# Extract ZIP files directly from the container
+echo "Copying ZIP files from container..."
+if ! docker cp lambda-artifact-extractor:/tldr-api.zip lambda/target/lambda/tldr-api/function.zip; then
+    echo "❌ Failed to copy API Lambda ZIP from container"
+    docker rm lambda-artifact-extractor
+    exit 1
+fi
+
+if ! docker cp lambda-artifact-extractor:/tldr-worker.zip lambda/target/lambda/tldr-worker/function.zip; then
+    echo "❌ Failed to copy Worker Lambda ZIP from container"
+    docker rm lambda-artifact-extractor
+    exit 1
+fi
 
 # Clean up container
 docker rm lambda-artifact-extractor
 
 # Verify artifacts were created successfully
-if [ -f "lambda/target/lambda/tldr-api/bootstrap" ] && [ -f "lambda/target/lambda/tldr-worker/bootstrap" ]; then
+if [ -f "lambda/target/lambda/tldr-api/bootstrap" ] && [ -f "lambda/target/lambda/tldr-worker/bootstrap" ] && \
+   [ -f "lambda/target/lambda/tldr-api/function.zip" ] && [ -f "lambda/target/lambda/tldr-worker/function.zip" ]; then
     echo "✅ Lambda artifacts built successfully!"
 
     # Verify linkage type
