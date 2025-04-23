@@ -298,13 +298,12 @@ impl SlackBot {
 }
 
 /// List of disallowed patterns in custom prompts (prompt injection protection)
-pub const DISALLOWED_PATTERNS: [&str; 8] = [
-    "system:", "assistant:", "user:", "ignore previous", "ignore above", 
-    "forget", "disregard", "{{"
+pub const DISALLOWED_PATTERNS: [&str; 4] = [
+    "system:", "assistant:", "user:", "{{"
 ];
 
 /// Maximum length allowed for custom prompts for command parameters
-pub const MAX_CUSTOM_PROMPT_LENGTH: usize = 500;
+pub const MAX_CUSTOM_PROMPT_LENGTH: usize = 800;
 
 /// Max length for the custom field (after which we truncate in OpenAI prompt)
 pub const MAX_CUSTOM_LEN: usize = 800;
@@ -363,6 +362,7 @@ impl SlackBot {
 
         // 2. Assemble chat messages with the structured format
         let mut chat = vec![
+            // 0. Core policy & guardrails
             chat_completion::ChatCompletionMessage {
                 role: MessageRole::system,
                 content: Content::Text(
@@ -376,34 +376,40 @@ impl SlackBot {
                 tool_calls: None,
                 tool_call_id: None,
             },
-            chat_completion::ChatCompletionMessage {
-                role: MessageRole::assistant,
-                content: Content::Text("Developer note: Apply <<CUSTOM>> tone.".to_string()),
-                name: None,
-                tool_calls: None,
-                tool_call_id: None,
-            },
-            chat_completion::ChatCompletionMessage {
-                role: MessageRole::user,
+        ];
+        
+        // 1. OPTIONAL user style instructions – high priority
+        if !custom_block.is_empty() {
+            chat.push(chat_completion::ChatCompletionMessage {
+                role: MessageRole::system,  // Higher priority as system message
                 content: Content::Text(format!(
-                    "New messages from #{channel}:\n{messages_markdown}"
+                    "When writing the summary, obey **all** of these stylistic rules verbatim:\n{custom_block}"
                 )),
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
-            },
-        ];
-
-        // Add custom style instruction if provided
-        if !custom_block.is_empty() {
+            });
+            
+            // Add acknowledgment to reinforce the style instructions
             chat.push(chat_completion::ChatCompletionMessage {
-                role: MessageRole::user,
-                content: Content::Text(format!("<<CUSTOM>>\n{custom_block}")),
+                role: MessageRole::assistant,
+                content: Content::Text("Acknowledged. I will write the summary using the above stylistic rules.".to_string()),
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
             });
         }
+
+        // 3. Actual conversation payload
+        chat.push(chat_completion::ChatCompletionMessage {
+            role: MessageRole::user,
+            content: Content::Text(format!(
+                "New messages from #{channel}:\n{messages_markdown}"
+            )),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        });
 
         chat
     }
@@ -430,7 +436,7 @@ impl SlackBot {
         let mut user_ids = HashSet::new();
         for msg in messages {
             if let Some(user) = &msg.sender.user {
-                if user != "Unknown User" {
+                if user.as_ref() != "Unknown User" {
                     user_ids.insert(user.as_ref().to_string());
                 }
             }
@@ -515,12 +521,19 @@ impl SlackBot {
         // Use higher temperature (more creative) when custom style is requested
         let temperature = if has_custom_style { 0.7 } else { 0.3 };
         
-        let chat_req = ChatCompletionRequest::new(
+        let mut chat_req = ChatCompletionRequest::new(
             GPT4_O.to_string(),
             prompt
         )
         .temperature(temperature)
-        .max_tokens(max_output_tokens);
+        .max_tokens(max_output_tokens as i64);
+        
+        // Apply additional creativity settings when using custom style
+        if has_custom_style {
+            chat_req = chat_req
+                .top_p(1.0)           // More diverse outputs
+                .frequency_penalty(0.0); // Don't dampen repeated tokens (allows emojis and jokes)
+        }
 
         let result = match self.openai_client.chat_completion(chat_req).await {
             Ok(response) => response,
