@@ -307,7 +307,7 @@ pub async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<i
         "body": json!({
             "response_type": response_type,
             "text": if visible {
-                format!("<@{}> ran /tldr! {}\nProcessing request, I'll send them a summary of unread messages shortly.", 
+                format!("<@{}> ran /tldr! {}\nProcessing request, I'll send a summary of unread messages shortly.", 
                        slack_event.user_id, parameter_text)
             } else {
                 "Processing your request. I'll send you a summary of unread messages shortly!".to_string()
