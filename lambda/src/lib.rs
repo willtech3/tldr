@@ -257,27 +257,6 @@ impl SlackBot {
         Ok(filtered_messages)
     }
     
-    pub async fn get_user_info(&self, user_id: &str) -> Result<String, SlackError> {
-        let session = self.client.open_session(&self.token);
-        let user_info_req = SlackApiUsersInfoRequest::new(SlackUserId(user_id.to_string()));
-        
-        match session.users_info(&user_info_req).await {
-            Ok(info) => {
-                // Try to get real name first, then display name, then fallback to user ID
-                let name = info.user.real_name
-                    .or(info.user.profile.and_then(|p| p.display_name))
-                    .unwrap_or_else(|| user_id.to_string());
-                
-                Ok(if name.is_empty() { user_id.to_string() } else { name })
-            },
-            Err(e) => {
-                // Log the error but don't fail the entire operation
-                error!("Failed to get user info for {}: {}", user_id, e);
-                Ok(user_id.to_string())
-            }
-        }
-    }
-    
     /// Max length for the custom field (after which we truncate)
     const MAX_CUSTOM_LEN: usize = 800;
 
@@ -381,6 +360,9 @@ New Slack messages:
         
         // Use the new build_prompt method to create the prompt
         let prompt = self.build_prompt(&messages_text, custom_prompt);
+        
+        // Log the full prompt for debugging purposes
+        info!("Using ChatGPT prompt:\n{}", prompt);
         
         // Determine if we're using a custom prompt for temperature adjustment
         let has_custom_style = custom_prompt.is_some();
