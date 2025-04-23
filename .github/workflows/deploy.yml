@@ -112,24 +112,15 @@ jobs:
           role-duration-seconds: 3600
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
-      # Deploy with CDK (ensuring environment variables are properly defined and accessed)
-      - name: Deploy with CDK
-        run: |
-          cd cdk
-          # Create a secure cdk context file with secrets
-          cat > cdk.context.json << EOF
-          {
-            "slackBotTokenSecretName": "SlackBotToken",
-            "slackSigningSecretSecretName": "SlackSigningSecret", 
-            "openAiApiKeySecretName": "OpenAiApiKey"
-          }
-          EOF
-          # Deploy with the context file
-          npm run cdk deploy -- --require-approval never
-          # Clean up the context file
-          rm cdk.context.json
-        env:
-          AWS_SECRET_SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-          AWS_SECRET_SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
-          AWS_SECRET_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+# Deploy with CDK (ensuring environment variables are properly defined and accessed)
+- name: Deploy with CDK
+  run: |
+    cd cdk
+    # (context-file creation …)
+    npm run cdk deploy -- --require-approval never
+    rm cdk.context.json
+  env:
+    SLACK_BOT_TOKEN:      ${{ secrets.SLACK_BOT_TOKEN }}
+    SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+    OPENAI_API_KEY:       ${{ secrets.OPENAI_API_KEY }}
+  if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
