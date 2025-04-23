@@ -21,9 +21,19 @@ ENV OPENSSL_DIR=/usr
 # Update Cargo.toml to use vendored OpenSSL
 RUN sed -i 's/openssl = .*/openssl = { version = "0.10", features = ["vendored"] }/' Cargo.toml || echo "OpenSSL dependency not found in Cargo.toml"
 
+# Add build argument for debug logs
+ARG ENABLE_DEBUG_LOGS=true
+
 # Build for Lambda using MUSL target
-RUN cargo build --release --target x86_64-unknown-linux-musl --bin tldr-api --features api && \
-    cargo build --release --target x86_64-unknown-linux-musl --bin tldr-worker --features worker
+RUN if [ "$ENABLE_DEBUG_LOGS" = "true" ]; then \
+    echo "Building with debug logs enabled"; \
+    cargo build --release --target x86_64-unknown-linux-musl --bin tldr-api --features "api debug-logs" && \
+    cargo build --release --target x86_64-unknown-linux-musl --bin tldr-worker --features "worker debug-logs"; \
+else \
+    echo "Building with debug logs disabled"; \
+    cargo build --release --target x86_64-unknown-linux-musl --bin tldr-api --features api && \
+    cargo build --release --target x86_64-unknown-linux-musl --bin tldr-worker --features worker; \
+fi
 
 # Create Lambda-compatible artifacts
 RUN mkdir -p /lambda/target/lambda/tldr-api && \

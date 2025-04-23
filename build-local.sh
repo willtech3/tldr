@@ -1,12 +1,39 @@
 #!/bin/bash
 set -e
 
+# Default to not using debug logs
+DEBUG_LOGS=false
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+  key="$1"
+  case $key in
+    --debug-logs)
+      DEBUG_LOGS=true
+      shift
+      ;;
+    *)
+      # Unknown option
+      shift
+      ;;
+  esac
+done
+
 echo "🚀 Building SlackSummarizer Lambda functions locally"
 echo "======================================================"
 
+if [ "$DEBUG_LOGS" = true ]; then
+  echo "🐛 Debug logs enabled - full prompts will be visible in logs"
+  # Pass the feature flag as a build arg to Docker
+  BUILD_ARGS="--build-arg ENABLE_DEBUG_LOGS=true"
+else
+  echo "🔒 Debug logs disabled - prompts will be masked in logs"
+  BUILD_ARGS=""
+fi
+
 # Build the Docker image with verbosity for debugging
 echo "📦 Building Docker image (this may take several minutes)..."
-docker build --platform linux/amd64 -t tldr-lambda-builder:local . --progress=plain
+docker build --platform linux/amd64 -t tldr-lambda-builder:local . --progress=plain $BUILD_ARGS
 docker tag tldr-lambda-builder:local tldr-lambda-builder:latest # Add the :latest tag for CI
 
 # Create directories for the Lambda artifacts

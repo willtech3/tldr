@@ -481,8 +481,12 @@ impl SlackBot {
         // Use the new build_prompt method to create the prompt
         let prompt = self.build_prompt(&messages_text, custom_prompt);
         
-        // Log the full prompt for debugging purposes
+        // Log the prompt with different detail levels based on feature flag
+        #[cfg(feature = "debug-logs")]
         info!("Using ChatGPT prompt:\n{:?}", prompt);
+        
+        #[cfg(not(feature = "debug-logs"))]
+        info!("Using ChatGPT prompt: [... content masked, enable debug-logs feature to view full prompt ...]");
         
         // Estimate input tokens and calculate safe max output tokens
         let estimated_input_tokens = prompt.iter()

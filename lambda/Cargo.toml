@@ -17,6 +17,7 @@ required-features = ["worker"]
 default = []
 api = []
 worker = []
+debug-logs = []
 
 [dependencies]
 lambda_runtime = "0.13.0"
