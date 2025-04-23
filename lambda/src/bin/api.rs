@@ -278,12 +278,13 @@ pub async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<i
         } else if part.starts_with("custom=") {
             // Extract custom prompt which may be quoted
             if let Some(custom) = part.strip_prefix("custom=") {
-                let prompt = if custom.starts_with('"') && custom.ends_with('"') && custom.len() >= 2 {
-                    // Remove surrounding quotes
+                let prompt = if (custom.starts_with('"') && custom.ends_with('"') && custom.len() >= 2)
+                               || (custom.starts_with('\'') && custom.ends_with('\'') && custom.len() >= 2) {
+                    // Remove the quotes
                     &custom[1..custom.len()-1]
                 } else {
                     custom
-                };
+                }.trim();
                 
                 // Sanitize custom prompt
                 match sanitize_custom_prompt(prompt) {
