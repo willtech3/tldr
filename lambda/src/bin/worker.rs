@@ -15,6 +15,10 @@ struct ProcessingTask {
     channel_id: String,
     response_url: String,
     text: String,
+    message_count: Option<u32>,
+    target_channel_id: Option<String>,
+    custom_prompt: Option<String>,
+    visible: bool,
 }
 
 struct BotHandler {
@@ -54,19 +58,104 @@ impl BotHandler {
     async fn process_task(&mut self, task: ProcessingTask) -> Result<(), SlackError> {
         info!("Processing task for user {} in channel {}", task.user_id, task.channel_id);
         
-        // Get unread messages
-        match self.slack_bot.get_unread_messages(&task.channel_id).await {
-            Ok(messages) => {
-                if messages.is_empty() {
-                    // No unread messages to summarize
-                    self.send_response_url(&task.response_url, "No unread messages found in this channel.").await?;
-                    return Ok(());
-                }
-                
-                // Generate summary
-                match self.slack_bot.summarize_messages_with_chatgpt(&messages, &task.channel_id).await {
-                    Ok(summary) => {
-                        // Send summary as DM
+        // Determine channel to get messages from (always the original channel)
+        let source_channel_id = &task.channel_id;
+        
+        // Get messages based on the parameters
+        let mut messages = if let Some(count) = task.message_count {
+            // If count is specified, always get the last N messages regardless of read/unread status
+            self.slack_bot.get_last_n_messages(source_channel_id, count).await?
+        } else {
+            // If no count specified, default to unread messages (traditional behavior)
+            self.slack_bot.get_unread_messages(source_channel_id).await?
+        };
+        
+        // If visible/public flag is used, filter out the bot's own messages
+        // This prevents the bot's response from being included in the summary
+        if task.visible {
+            // Get the bot's own user ID
+            let bot_user_id = if let Ok(bot_info) = self.slack_bot.get_bot_user_id().await {
+                Some(bot_info)
+            } else {
+                None
+            };
+            
+            // Filter out messages from the bot
+            if let Some(bot_id) = bot_user_id {
+                messages.retain(|msg| {
+                    if let Some(user_id) = &msg.sender.user {
+                        // Extract the string value from SlackUserId for proper comparison
+                        user_id.0 != bot_id
+                    } else {
+                        true // Keep messages without user ID
+                    }
+                });
+            }
+        }
+        
+        if messages.is_empty() {
+            // No messages to summarize
+            self.send_response_url(&task.response_url, "No messages found to summarize.").await?;
+            return Ok(());
+        }
+        
+        // Generate summary
+        match self.slack_bot.summarize_messages_with_chatgpt(&messages, source_channel_id, task.custom_prompt.as_deref()).await {
+            Ok(summary) => {
+                // Determine where to send the summary
+                if let Some(target_channel) = &task.target_channel_id {
+                    // When visible flag is used with a target channel, always post to the specified channel
+                    // Send to the specified channel
+                    if let Err(e) = self.slack_bot.send_message_to_channel(target_channel, &summary).await {
+                        error!("Failed to send message to channel {}: {}", target_channel, e);
+                        // Fallback to sending as DM
+                        if let Err(dm_error) = self.slack_bot.send_dm(&task.user_id, &summary).await {
+                            error!("Failed to send DM as fallback: {}", dm_error);
+                            self.send_response_url(
+                                &task.response_url, 
+                                "I couldn't send the summary to the specified channel or as a DM. Please check permissions."
+                            ).await?;
+                        } else {
+                            self.send_response_url(
+                                &task.response_url, 
+                                "I couldn't post to the specified channel, so I've sent you the summary as a DM instead."
+                            ).await?;
+                        }
+                    } else {
+                        // Confirm summary was sent to the channel
+                        self.send_response_url(
+                            &task.response_url, 
+                            &format!("I've posted a summary to <#{}>.", target_channel)
+                        ).await?;
+                    }
+                } else {
+                    // Check if we should post publicly to the current channel
+                    if task.visible {
+                        // Post to the current channel (visible to all)
+                        if let Err(e) = self.slack_bot.send_message_to_channel(source_channel_id, &summary).await {
+                            error!("Failed to send public message to channel {}: {}", source_channel_id, e);
+                            // Fallback to sending as DM
+                            if let Err(dm_error) = self.slack_bot.send_dm(&task.user_id, &summary).await {
+                                error!("Failed to send DM as fallback: {}", dm_error);
+                                self.send_response_url(
+                                    &task.response_url, 
+                                    "I couldn't post to the channel or send a DM. Please check permissions."
+                                ).await?;
+                            } else {
+                                self.send_response_url(
+                                    &task.response_url, 
+                                    "I couldn't post to the channel, so I've sent you the summary as a DM instead."
+                                ).await?;
+                            }
+                        } else {
+                            // Confirm public summary was sent
+                            self.send_response_url(
+                                &task.response_url, 
+                                &format!("I've posted a summary to <#{}>.", source_channel_id)
+                            ).await?;
+                        }
+                    } else {
+                        // Send as DM to the user (original behavior)
                         if let Err(e) = self.slack_bot.send_dm(&task.user_id, &summary).await {
                             error!("Failed to send DM: {}", e);
                             // Try to notify the user via response_url as fallback
@@ -78,24 +167,17 @@ impl BotHandler {
                             // Confirm summary sent via response_url
                             self.send_response_url(
                                 &task.response_url, 
-                                "I've sent you a summary of the unread messages in this channel."
+                                "I've sent you a summary of the messages in this channel."
                             ).await?;
                         }
-                    },
-                    Err(e) => {
-                        error!("Failed to generate summary: {}", e);
-                        self.send_response_url(
-                            &task.response_url, 
-                            "Sorry, I couldn't generate a summary at this time. Please try again later."
-                        ).await?;
                     }
                 }
             },
             Err(e) => {
-                error!("Failed to get unread messages: {}", e);
+                error!("Failed to generate summary: {}", e);
                 self.send_response_url(
                     &task.response_url, 
-                    "Sorry, I couldn't retrieve unread messages. Please try again later."
+                    "Sorry, I couldn't generate a summary at this time. Please try again later."
                 ).await?;
             }
         }
