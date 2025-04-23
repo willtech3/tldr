@@ -10,6 +10,8 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use std::time::{SystemTime, UNIX_EPOCH};
 use hex;
+use regex::Regex;
+use lazy_static::lazy_static;
 
 // Import shared modules
 use tldr::{slack_parser::{SlackCommandEvent, parse_form_data}, SlackError, sanitize_custom_prompt, DISALLOWED_PATTERNS, MAX_CUSTOM_PROMPT_LENGTH};
@@ -203,70 +205,60 @@ pub async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<i
         .collect::<Vec<&str>>()
         .join(" ");
     
+    // Define regex for parsing key-value parameters with proper quote handling
+    lazy_static! {
+        static ref KV_RE: Regex =
+            Regex::new(r#"(\w+)\s*=\s*("[^"]*"|\S+)"#).unwrap();
+    }
+    
     // Parse parameters from filtered text
     let mut message_count: Option<u32> = None;
     let mut target_channel_id: Option<String> = None;
     let mut custom_prompt: Option<String> = None;
     
-    // Simple parser for key=value pairs and other patterns
-    for part in filtered_text.split_whitespace() {
-        if part.starts_with("count=") {
-            if let Some(count_str) = part.strip_prefix("count=") {
-                if let Ok(count) = count_str.parse::<u32>() {
+    // Use regex captures to properly handle quoted values
+    for cap in KV_RE.captures_iter(&filtered_text) {
+        let key = &cap[1].to_lowercase();
+        let raw = cap[2].trim_matches('"');  // strip quotes if present
+        
+        match key.as_str() {
+            "count" => {
+                if let Ok(count) = raw.parse::<u32>() {
                     message_count = Some(count);
                 }
-            }
-        } else if part.starts_with("channel=") {
-            if let Some(channel) = part.strip_prefix("channel=") {
-                // Strip quotes if present
-                let unquoted_channel = if (channel.starts_with('"') && channel.ends_with('"') && channel.len() >= 2) 
-                                      || (channel.starts_with('\'') && channel.ends_with('\'') && channel.len() >= 2) {
-                    &channel[1..channel.len()-1]
-                } else {
-                    channel
-                };
-                
+            },
+            "channel" => {
                 // Handle both #channel and channel formats
-                let channel_id = if unquoted_channel.starts_with("<#") && unquoted_channel.ends_with(">") {
+                let channel_id = if raw.starts_with("<#") && raw.ends_with(">") {
                     // Format: <#C12345|channel-name> or <#C12345>
-                    let channel_part = &unquoted_channel[2..unquoted_channel.len()-1];
+                    let channel_part = &raw[2..raw.len()-1];
                     if let Some(pipe_pos) = channel_part.find('|') {
                         channel_part[0..pipe_pos].to_string()
                     } else {
                         channel_part.to_string()
                     }
-                } else if unquoted_channel.starts_with('#') {
+                } else if raw.starts_with('#') {
                     // Format: #channel-name (we'll need to look it up by name)
-                    unquoted_channel[1..].to_string()
+                    raw[1..].to_string()
                 } else {
                     // Just the raw channel ID or name
-                    unquoted_channel.to_string()
+                    raw.to_string()
                 };
                 target_channel_id = Some(channel_id);
-            }
-        } else if part.starts_with("custom=") {
-            // Extract custom prompt which may be quoted
-            if let Some(custom) = part.strip_prefix("custom=") {
-                let prompt = if (custom.starts_with('"') && custom.ends_with('"') && custom.len() >= 2)
-                               || (custom.starts_with('\'') && custom.ends_with('\'') && custom.len() >= 2) {
-                    // Remove the quotes
-                    &custom[1..custom.len()-1]
-                } else {
-                    custom
-                }.trim();
-                
+            },
+            "custom" => {
                 // Sanitize custom prompt
-                match sanitize_custom_prompt(prompt) {
+                match sanitize_custom_prompt(raw) {
                     Ok(sanitized_prompt) => {
                         custom_prompt = Some(sanitized_prompt);
                     },
                     Err(e) => {
                         info!("Invalid custom prompt rejected: {}", e);
                         // We continue processing without a custom prompt
-                        // But could return an error to the user here
                     }
                 }
-            }
+            },
+            _ => {}
         }
     }
     
