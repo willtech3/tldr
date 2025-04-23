@@ -50,6 +50,10 @@ export class TldrStack extends cdk.Stack {
     deploymentUser.addManagedPolicy(
       iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMFullAccess')
     );
+    // Add Secrets Manager permissions needed for CDK synthesis
+    deploymentUser.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('SecretsManagerReadWrite')
+    );
 
     // Create SQS queue for processing tasks
     const processingQueue = new sqs.Queue(this, 'TldrProcessingQueue', {
