@@ -12,38 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use hex;
 
 // Import shared modules
-use tldr::{slack_parser::{SlackCommandEvent, parse_form_data}, SlackError};
-
-/// Maximum length allowed for custom prompts
-const MAX_CUSTOM_PROMPT_LENGTH: usize = 500;
-
-/// List of disallowed patterns in custom prompts
-const DISALLOWED_PATTERNS: [&str; 8] = [
-    "system:", "assistant:", "user:", "ignore previous", "ignore above", 
-    "forget", "disregard", "{{" 
-];
-
-/// Sanitizes a custom prompt to prevent prompt injection attacks
-fn sanitize_custom_prompt(prompt: &str) -> Result<String, String> {
-    // Check length
-    if prompt.len() > MAX_CUSTOM_PROMPT_LENGTH {
-        return Err(format!("Custom prompt exceeds maximum length of {} characters", MAX_CUSTOM_PROMPT_LENGTH));
-    }
-    
-    // Check for disallowed patterns
-    for pattern in DISALLOWED_PATTERNS.iter() {
-        if prompt.to_lowercase().contains(&pattern.to_lowercase()) {
-            return Err(format!("Custom prompt contains disallowed pattern: {}", pattern));
-        }
-    }
-    
-    // Remove any control characters
-    let sanitized = prompt.chars()
-        .filter(|&c| !c.is_control())
-        .collect::<String>();
-    
-    Ok(sanitized)
-}
+use tldr::{slack_parser::{SlackCommandEvent, parse_form_data}, SlackError, sanitize_custom_prompt, DISALLOWED_PATTERNS, MAX_CUSTOM_PROMPT_LENGTH};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ProcessingTask {
