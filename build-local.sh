@@ -19,7 +19,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-echo "🚀 Building SlackSummarizer Lambda functions locally"
+echo "🚀 Building TLDR Lambda functions locally"
 echo "======================================================"
 
 if [ "$DEBUG_LOGS" = true ]; then

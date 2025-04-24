@@ -154,21 +154,27 @@ impl SlackBot {
     pub async fn get_unread_messages(&self, channel_id: &str) -> Result<Vec<SlackHistoryMessage>, SlackError> {
         let session = self.client.open_session(&self.token);
         
-        let info_req = SlackApiConversationsInfoRequest::new(SlackChannelId(channel_id.to_string()));
+        // First get channel info to determine last_read timestamp
+        let info_req = SlackApiConversationsInfoRequest::new(SlackChannelId::new(channel_id.to_string()));
         let channel_info = session.conversations_info(&info_req).await?;
         let last_read_ts = channel_info.channel.last_state.last_read.unwrap_or_else(|| SlackTs::new("0.0".into()));
 
+        // Build request to get messages since last read
         let request = SlackApiConversationsHistoryRequest::new()
-            .with_channel(SlackChannelId(channel_id.to_string()))
+            .with_channel(SlackChannelId::new(channel_id.to_string()))
             .with_limit(1000)
             .with_oldest(last_read_ts);
         
+        // Get channel history
         let result = session.conversations_history(&request).await?;
         
         // Capture original length before moving
         let original_message_count = result.messages.len();
         
-        // Filter messages: Keep only those from users and exclude common system messages
+        // Try to get bot user ID for filtering - do this BEFORE the filter operation
+        let bot_user_id = self.get_bot_user_id().await.ok();
+        
+        // Filter messages: Keep only those from users, exclude system messages AND bot's own messages
         let filtered_messages: Vec<SlackHistoryMessage> = result.messages.into_iter().filter(|msg| {
             // Check if the sender is a user (not a bot or system)
             let is_user_message = msg.sender.user.is_some();
@@ -183,7 +189,19 @@ impl SlackBot {
                 None => false, // Regular message, no subtype
             };
             
-            is_user_message && !is_system_message
+            // Check if it's a message from this bot
+            let is_from_this_bot = if let Some(ref bot_id) = bot_user_id {
+                msg.sender.user.as_ref().map_or(false, |uid| uid.0 == *bot_id)
+            } else {
+                false
+            };
+            
+            // Check if the message contains "/tldr" (to exclude bot commands from summaries)
+            let contains_tldr_command = msg.content.text.as_deref()
+                .map(|text| text.contains("/tldr"))
+                .unwrap_or(false);
+            
+            is_user_message && !is_system_message && !is_from_this_bot && !contains_tldr_command
         }).collect();
         
         info!("Fetched {} total messages, filtered down to {} user messages for summarization", original_message_count, filtered_messages.len());
@@ -215,7 +233,7 @@ impl SlackBot {
     pub async fn get_last_n_messages(&self, channel_id: &str, count: u32) -> Result<Vec<SlackHistoryMessage>, SlackError> {
         let session = self.client.open_session(&self.token);
         
-        // Get the bot's own user ID to filter out its messages
+        // Get the bot's own user ID to filter out its messages - do this BEFORE filtering
         let bot_user_id = match self.get_bot_user_id().await {
             Ok(id) => Some(id),
             Err(e) => {
@@ -226,7 +244,7 @@ impl SlackBot {
         };
         
         let request = SlackApiConversationsHistoryRequest::new()
-            .with_channel(SlackChannelId(channel_id.to_string()))
+            .with_channel(SlackChannelId::new(channel_id.to_string()))
             .with_limit(std::cmp::min(count, 1000) as u16); // Ensuring count doesn't exceed API limits
         
         let result = session.conversations_history(&request).await?;
@@ -250,15 +268,19 @@ impl SlackBot {
                     None => false, // Regular message, no subtype
                 };
                 
-                // Check if it's a message from this bot
+                // Check if it's a message from this bot 
                 let is_from_this_bot = if let Some(ref bot_id) = bot_user_id {
                     msg.sender.user.as_ref().map_or(false, |uid| uid.0 == *bot_id)
                 } else {
                     false
                 };
                 
-                // Keep messages that are from users, not system messages, and not from this bot
-                is_user_message && !is_system_message && !is_from_this_bot
+                // Check if the message contains "/tldr" (to exclude bot commands from summaries)
+                let contains_tldr_command = msg.content.text.as_deref()
+                    .map(|text| text.contains("/tldr"))
+                    .unwrap_or(false);
+                
+                is_user_message && !is_system_message && !is_from_this_bot && !contains_tldr_command
             })
             .take(count as usize) // Limit to requested count after filtering
             .collect();

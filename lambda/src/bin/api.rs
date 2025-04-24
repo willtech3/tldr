@@ -306,6 +306,7 @@ pub async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<i
         "statusCode": 200,
         "body": json!({
             "response_type": response_type,
+            "delete_original": visible, // Delete the original command when using --visible
             "text": if visible {
                 format!("<@{}> ran /tldr! {}\nProcessing request, I'll send a summary of unread messages shortly.", 
                        slack_event.user_id, parameter_text)
