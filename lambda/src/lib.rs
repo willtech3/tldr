@@ -317,6 +317,28 @@ impl SlackBot {
         
         Ok(())
     }
+    
+    pub async fn delete_message(&self, channel_id: &str, ts: &str) -> Result<(), SlackError> {
+        let session = self.client.open_session(&self.token);
+        
+        // Create the delete message request
+        let delete_req = SlackApiChatDeleteRequest::new(
+            SlackChannelId::new(channel_id.to_string()),
+            SlackTs::new(ts.to_string())
+        );
+        
+        // Send the delete request
+        match session.chat_delete(&delete_req).await {
+            Ok(_) => {
+                info!("Successfully deleted message with ts {} from channel {}", ts, channel_id);
+                Ok(())
+            },
+            Err(e) => {
+                error!("Failed to delete message: {}", e);
+                Err(SlackError::ApiError(format!("Failed to delete message: {}", e)))
+            }
+        }
+    }
 }
 
 /// List of disallowed patterns in custom prompts (prompt injection protection)

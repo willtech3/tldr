@@ -19,6 +19,7 @@ struct ProcessingTask {
     target_channel_id: Option<String>,
     custom_prompt: Option<String>,
     visible: bool,
+    command_ts: Option<String>,
 }
 
 struct BotHandler {
@@ -131,6 +132,35 @@ impl BotHandler {
                 } else {
                     // Check if we should post publicly to the current channel
                     if task.visible {
+                        // First, try to delete the original command message if we have its timestamp
+                        if let Some(command_ts) = &task.command_ts {
+                            if !command_ts.is_empty() {
+                                if let Err(e) = self.slack_bot.delete_message(source_channel_id, command_ts).await {
+                                    // Just log the error, don't fail the overall operation
+                                    error!("Failed to delete original command message: {}", e);
+                                } else {
+                                    info!("Successfully deleted original command message with ts: {}", command_ts);
+                                }
+                            }
+                        }
+                        
+                        // Format parameters to show in the announcement message
+                        let mut parameter_text = format!("Channel: <#{}>", source_channel_id);
+                        
+                        // Add additional parameters if specified
+                        if !task.text.is_empty() {
+                            parameter_text = format!("{} | Parameters: {}", parameter_text, task.text);
+                        }
+                        
+                        // Post announcement message showing who ran the command
+                        let announcement = format!("<@{}> ran /tldr! {}\nProcessing request, I'll send a summary of unread messages shortly.", 
+                                                  task.user_id, parameter_text);
+                        
+                        if let Err(e) = self.slack_bot.send_message_to_channel(source_channel_id, &announcement).await {
+                            error!("Failed to send announcement message: {}", e);
+                            // Continue with the summary anyway
+                        }
+                        
                         // Post to the current channel (visible to all)
                         if let Err(e) = self.slack_bot.send_message_to_channel(source_channel_id, &summary).await {
                             error!("Failed to send public message to channel {}: {}", source_channel_id, e);
@@ -148,6 +178,19 @@ impl BotHandler {
                                 ).await?;
                             }
                         } else {
+                            // Try to delete the original command message if we have its timestamp
+                            // This will only work if the bot has proper permissions and the command timestamp was provided
+                            if let Some(command_ts) = &task.command_ts {
+                                if !command_ts.is_empty() {
+                                    if let Err(e) = self.slack_bot.delete_message(source_channel_id, command_ts).await {
+                                        // Just log the error, don't fail the overall operation
+                                        error!("Failed to delete original command message: {}", e);
+                                    } else {
+                                        info!("Successfully deleted original command message with ts: {}", command_ts);
+                                    }
+                                }
+                            }
+                            
                             // Confirm public summary was sent
                             self.send_response_url(
                                 &task.response_url, 

@@ -15,17 +15,19 @@ use lazy_static::lazy_static;
 
 // Import shared modules
 use tldr::{slack_parser::{SlackCommandEvent, parse_form_data}, SlackError, sanitize_custom_prompt, DISALLOWED_PATTERNS, MAX_CUSTOM_PROMPT_LENGTH};
+use tldr::SlackBot;
 
 #[derive(Debug, Serialize, Deserialize)]
-struct ProcessingTask {
-    user_id: String,
-    channel_id: String,
-    response_url: String,
-    text: String,
-    message_count: Option<u32>,
-    target_channel_id: Option<String>,
-    custom_prompt: Option<String>,
-    visible: bool,
+pub struct ProcessingTask {
+    pub user_id: String,
+    pub channel_id: String,
+    pub response_url: String,
+    pub text: String,
+    pub message_count: Option<u32>,
+    pub target_channel_id: Option<String>,
+    pub custom_prompt: Option<String>,
+    pub visible: bool,
+    pub command_ts: Option<String>,
 }
 
 async fn send_to_sqs(task: &ProcessingTask) -> Result<(), SlackError> {
@@ -51,6 +53,21 @@ async fn send_to_sqs(task: &ProcessingTask) -> Result<(), SlackError> {
         .map_err(|e| SlackError::AwsError(format!("Failed to send message to SQS: {}", e)))?;
     
     Ok(())
+}
+
+async fn get_latest_message_ts(channel_id: &str) -> Result<Option<String>, SlackError> {
+    // Initialize the SlackBot
+    let slack_bot = SlackBot::new()?;
+    
+    // Get the most recent message in the channel (limit to 1)
+    let messages = slack_bot.get_last_n_messages(channel_id, 1).await?;
+    
+    // Return the timestamp of the most recent message if available
+    if let Some(latest_msg) = messages.first() {
+        Ok(Some(latest_msg.origin.ts.to_string()))
+    } else {
+        Ok(None)
+    }
 }
 
 fn parse_slack_event(payload: &str) -> Result<SlackCommandEvent, SlackError> {
@@ -112,7 +129,7 @@ fn verify_slack_signature(request_body: &str, timestamp: &str, signature: &str) 
 
 pub use self::function_handler as handler;
 
-pub async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<impl Serialize, Error> {
+async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<impl Serialize, Error> {
     info!("API Lambda received request: {:?}", event);
     
     // Extract headers and body from the Lambda event
@@ -262,6 +279,25 @@ pub async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<i
         }
     }
     
+    // Send to SQS for async processing
+    let mut command_ts = None;
+    
+    // If visible flag is set, attempt to get the timestamp of the command message
+    if visible {
+        match get_latest_message_ts(&slack_event.channel_id).await {
+            Ok(Some(ts)) => {
+                info!("Found latest message timestamp: {}", ts);
+                command_ts = Some(ts);
+            },
+            Ok(None) => {
+                info!("No recent messages found in channel");
+            },
+            Err(e) => {
+                error!("Failed to get latest message timestamp: {}", e);
+            }
+        }
+    }
+    
     // Create processing task with all parsed parameters
     let task = ProcessingTask {
         user_id: slack_event.user_id.clone(),
@@ -272,6 +308,7 @@ pub async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<i
         target_channel_id,
         custom_prompt,
         visible,
+        command_ts,
     };
     
     // Send to SQS for async processing
@@ -289,29 +326,20 @@ pub async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<i
     // Return immediate response to Slack
     info!("Task sent to processing queue successfully");
     
-    // Format the parameters into a readable message
-    let parameter_text = format!("Channel: <#{}>", slack_event.channel_id);
-    
-    // Add message count if specified
-    let parameter_text = if !filtered_text.is_empty() {
-        format!("{} | Parameters: {}", parameter_text, filtered_text)
-    } else {
-        parameter_text
-    };
-    
-    // Set response type based on the visibility parameter
-    let response_type = if visible { "in_channel" } else { "ephemeral" };
+    // Always use ephemeral for the initial response since:
+    // 1. For regular (private) requests, we only want the invoker to see the response
+    // 2. For visible requests, we'll delete this and post a dedicated announcement from the worker
+    let response_type = "ephemeral";
     
     Ok(json!({
         "statusCode": 200,
         "body": json!({
             "response_type": response_type,
-            "delete_original": visible, // Delete the original command when using --visible
             "text": if visible {
-                format!("<@{}> ran /tldr! {}\nProcessing request, I'll send a summary of unread messages shortly.", 
-                       slack_event.user_id, parameter_text)
+                // For visible commands, we'll delete this initial response and post the proper announcement + summary from the worker
+                "Processing your request. The summary will be sent shortly."
             } else {
-                "Processing your request. I'll send you a summary of unread messages shortly!".to_string()
+                "Processing your request. I'll send you a summary of unread messages shortly!"
             }
         }).to_string()
     }))

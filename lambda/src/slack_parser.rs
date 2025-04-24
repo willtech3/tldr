@@ -14,6 +14,7 @@ pub struct SlackCommandEvent {
     pub text: String,
     pub response_url: String,
     pub trigger_id: String,
+    pub command_ts: String,
 }
 
 /// Decodes URL encoded string
@@ -81,6 +82,7 @@ pub fn parse_form_data(form_data: &str) -> Result<SlackCommandEvent, String> {
         text: map.get("text").cloned().unwrap_or_default(),
         response_url: map.get("response_url").cloned().unwrap_or_default(),
         trigger_id: map.get("trigger_id").cloned().unwrap_or_default(),
+        command_ts: map.get("command_ts").cloned().unwrap_or_default(),
     };
     
     Ok(event)
