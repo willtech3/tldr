@@ -14,7 +14,7 @@ use regex::Regex;
 use lazy_static::lazy_static;
 
 // Import shared modules
-use tldr::{slack_parser::{SlackCommandEvent, parse_form_data}, SlackError, sanitize_custom_prompt, DISALLOWED_PATTERNS, MAX_CUSTOM_PROMPT_LENGTH};
+use tldr::{slack_parser::{SlackCommandEvent, parse_form_data}, SlackError, sanitize_custom_prompt};
 use tldr::SlackBot;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -324,11 +324,10 @@ async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<impl 
     // Return immediate response to Slack
     info!("Task sent to processing queue successfully");
     
-    // Determine the response type based on visibility
     let response_type = if visible {
-        "in_channel"  // Make the response visible to everyone in the channel
+        "in_channel" 
     } else {
-        "ephemeral"   // Only visible to the command invoker
+        "ephemeral"   
     };
     
     Ok(json!({
@@ -336,7 +335,6 @@ async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<impl 
         "body": json!({
             "response_type": response_type,
             "text": if visible {
-                // For visible commands, we'll display a public message
                 "Processing your request. The summary will be sent shortly."
             } else {
                 "Processing your request. I'll send you a summary of unread messages shortly!"

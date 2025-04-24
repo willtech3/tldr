@@ -250,18 +250,6 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Error> {
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_target(false)
-        .without_time()
-        .init();
-    
-    // Start the Lambda runtime
-    // Use service_fn to convert our function into a Service
-    lambda_runtime::run(lambda_runtime::service_fn(function_handler)).await?;
-    
-    Ok(())
-}
+// The main function is removed as it's not needed
+// The handler is exposed through `pub use self::function_handler as handler;`
+// and is called by bootstrap.rs
