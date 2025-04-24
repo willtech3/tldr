@@ -123,25 +123,27 @@ impl BotHandler {
                             ).await?;
                         }
                     } else {
-                        // Confirm summary was sent to the channel
-                        self.send_response_url(
-                            &task.response_url, 
-                            &format!("I've posted a summary to <#{}>.", target_channel)
-                        ).await?;
+                        // Replace original command message using response_url when responding to a different channel
+                        if let Err(e) = self.slack_bot.replace_original_message(&task.response_url, Some(&format!("I've posted a summary to <#{}>.", target_channel))).await {
+                            error!("Failed to replace original command message: {}", e);
+                            // Fallback to response_url method
+                            self.send_response_url(
+                                &task.response_url, 
+                                &format!("I've posted a summary to <#{}>.", target_channel)
+                            ).await?;
+                        } else {
+                            info!("Successfully replaced original command message with confirmation message");
+                        }
                     }
                 } else {
                     // Check if we should post publicly to the current channel
                     if task.visible {
-                        // First, try to delete the original command message if we have its timestamp
-                        if let Some(command_ts) = &task.command_ts {
-                            if !command_ts.is_empty() {
-                                if let Err(e) = self.slack_bot.delete_message(source_channel_id, command_ts).await {
-                                    // Just log the error, don't fail the overall operation
-                                    error!("Failed to delete original command message: {}", e);
-                                } else {
-                                    info!("Successfully deleted original command message with ts: {}", command_ts);
-                                }
-                            }
+                        // Replace original command message using response_url (more reliable than deletion)
+                        if let Err(e) = self.slack_bot.replace_original_message(&task.response_url, None).await {
+                            // Just log the error, don't fail the overall operation
+                            error!("Failed to replace original command message: {}", e);
+                        } else {
+                            info!("Successfully replaced original command message with empty content");
                         }
                         
                         // Format parameters to show in the announcement message
@@ -178,19 +180,6 @@ impl BotHandler {
                                 ).await?;
                             }
                         } else {
-                            // Try to delete the original command message if we have its timestamp
-                            // This will only work if the bot has proper permissions and the command timestamp was provided
-                            if let Some(command_ts) = &task.command_ts {
-                                if !command_ts.is_empty() {
-                                    if let Err(e) = self.slack_bot.delete_message(source_channel_id, command_ts).await {
-                                        // Just log the error, don't fail the overall operation
-                                        error!("Failed to delete original command message: {}", e);
-                                    } else {
-                                        info!("Successfully deleted original command message with ts: {}", command_ts);
-                                    }
-                                }
-                            }
-                            
                             // Confirm public summary was sent
                             self.send_response_url(
                                 &task.response_url, 

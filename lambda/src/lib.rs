@@ -20,6 +20,7 @@ use std::env;
 use tracing::{error, info};
 use reqwest::Client;
 use std::collections::{HashMap, HashSet};
+use serde_json::json;
 
 // GPT-4o model context limits
 const GPT4O_MAX_CONTEXT_TOKENS: usize = 128_000; // 128K token context window
@@ -189,7 +190,7 @@ impl SlackBot {
                 None => false, // Regular message, no subtype
             };
             
-            // Check if it's a message from this bot
+            // Check if it's a message from this bot 
             let is_from_this_bot = if let Some(ref bot_id) = bot_user_id {
                 msg.sender.user.as_ref().map_or(false, |uid| uid.0 == *bot_id)
             } else {
@@ -338,6 +339,45 @@ impl SlackBot {
                 Err(SlackError::ApiError(format!("Failed to delete message: {}", e)))
             }
         }
+    }
+    
+    /// Hides a slash command invocation by replacing it with an empty message
+    /// Uses Slack's response_url mechanism which allows modifying the original message
+    pub async fn replace_original_message(&self, response_url: &str, text: Option<&str>) -> Result<(), SlackError> {
+        // Create an HTTP client for the request
+        let client = Client::new();
+        
+        // Build the payload
+        // If text is None or empty, we'll just send a blank message (effectively hiding the command)
+        let payload = if let Some(t) = text.filter(|t| !t.is_empty()) {
+            json!({
+                "replace_original": true,
+                "text": t
+            })
+        } else {
+            json!({
+                "replace_original": true,
+                "text": " " // Use a single space to effectively hide the message while maintaining its place
+            })
+        };
+        
+        // Send the request
+        let response = client.post(response_url)
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| SlackError::HttpError(format!("Failed to replace message: {}", e)))?;
+            
+        // Check for errors
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_else(|_| String::from("Unable to read response body"));
+            return Err(SlackError::ApiError(format!("Failed to replace message: HTTP {} - {}", status, body)));
+        }
+        
+        info!("Successfully replaced original message via response_url");
+        Ok(())
     }
 }
 
