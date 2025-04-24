@@ -27,7 +27,6 @@ pub struct ProcessingTask {
     pub target_channel_id: Option<String>,
     pub custom_prompt: Option<String>,
     pub visible: bool,
-    pub command_ts: Option<String>,
 }
 
 async fn send_to_sqs(task: &ProcessingTask) -> Result<(), SlackError> {
@@ -278,23 +277,6 @@ async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<impl 
     }
     
     // Send to SQS for async processing
-    let mut command_ts = None;
-    
-    // If visible flag is set, attempt to get the timestamp of the command message
-    if visible {
-        match get_latest_message_ts(&slack_event.channel_id).await {
-            Ok(Some(ts)) => {
-                info!("Found latest message timestamp: {}", ts);
-                command_ts = Some(ts);
-            },
-            Ok(None) => {
-                info!("No recent messages found in channel");
-            },
-            Err(e) => {
-                error!("Failed to get latest message timestamp: {}", e);
-            }
-        }
-    }
     
     // Create processing task with all parsed parameters
     let task = ProcessingTask {
@@ -306,7 +288,6 @@ async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<impl 
         target_channel_id,
         custom_prompt,
         visible,
-        command_ts,
     };
     
     // Send to SQS for async processing

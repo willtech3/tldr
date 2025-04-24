@@ -19,7 +19,6 @@ struct ProcessingTask {
     target_channel_id: Option<String>,
     custom_prompt: Option<String>,
     visible: bool,
-    command_ts: Option<String>,
 }
 
 struct BotHandler {
@@ -123,28 +122,17 @@ impl BotHandler {
                             ).await?;
                         }
                     } else {
-                        // Replace original command message using response_url when responding to a different channel
-                        if let Err(e) = self.slack_bot.replace_original_message(&task.response_url, Some(&format!("I've posted a summary to <#{}>.", target_channel))).await {
-                            error!("Failed to replace original command message: {}", e);
-                            // Fallback to response_url method
-                            self.send_response_url(
-                                &task.response_url, 
-                                &format!("I've posted a summary to <#{}>.", target_channel)
-                            ).await?;
-                        } else {
-                            info!("Successfully replaced original command message with confirmation message");
-                        }
+                        // Confirm public summary was sent
+                        self.send_response_url(
+                            &task.response_url, 
+                            &format!("I've posted a summary to <#{}>.", target_channel)
+                        ).await?;
                     }
                 } else {
                     // Check if we should post publicly to the current channel
                     if task.visible {
-                        // Replace original command message using response_url (more reliable than deletion)
-                        if let Err(e) = self.slack_bot.replace_original_message(&task.response_url, None).await {
-                            // Just log the error, don't fail the overall operation
-                            error!("Failed to replace original command message: {}", e);
-                        } else {
-                            info!("Successfully replaced original command message with empty content");
-                        }
+                        // No longer attempt to replace the original message since it's not working properly
+                        // The initial response will already be visible to the channel from the API Lambda
                         
                         // Format parameters to show in the announcement message
                         let mut parameter_text = format!("Channel: <#{}>", source_channel_id);
@@ -154,17 +142,8 @@ impl BotHandler {
                             parameter_text = format!("{} | Parameters: {}", parameter_text, task.text);
                         }
                         
-                        // Post announcement message showing who ran the command
-                        let announcement = format!("<@{}> ran /tldr! {}\nProcessing request, I'll send a summary of unread messages shortly.", 
-                                                  task.user_id, parameter_text);
-                        
-                        if let Err(e) = self.slack_bot.send_message_to_channel(source_channel_id, &announcement).await {
-                            error!("Failed to send announcement message: {}", e);
-                            // Continue with the summary anyway
-                        }
-                        
-                        // Post to the current channel (visible to all)
-                        if let Err(e) = self.slack_bot.send_message_to_channel(source_channel_id, &summary).await {
+                        // Post summary directly to the channel (visible to all)
+                        if let Err(e) = self.slack_bot.send_message_to_channel(source_channel_id, &format!("{} {}", parameter_text, summary)).await {
                             error!("Failed to send public message to channel {}: {}", source_channel_id, e);
                             // Fallback to sending as DM
                             if let Err(dm_error) = self.slack_bot.send_dm(&task.user_id, &summary).await {
@@ -179,12 +158,6 @@ impl BotHandler {
                                     "I couldn't post to the channel, so I've sent you the summary as a DM instead."
                                 ).await?;
                             }
-                        } else {
-                            // Confirm public summary was sent
-                            self.send_response_url(
-                                &task.response_url, 
-                                &format!("I've posted a summary to <#{}>.", source_channel_id)
-                            ).await?;
                         }
                     } else {
                         // Send as DM to the user (original behavior)
@@ -250,6 +223,17 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
     Ok(())
 }
 
-// The main function is removed as it's not needed
-// The handler is exposed through `pub use self::function_handler as handler;`
-// and is called by bootstrap.rs
+#[tokio::main]
+async fn main() -> Result<(), Error> {
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_target(false)
+        .without_time()
+        .init();
+    
+    // Start the Lambda runtime
+    lambda_runtime::run(lambda_runtime::service_fn(function_handler)).await?;
+    
+    Ok(())
+}
