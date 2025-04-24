@@ -57,7 +57,7 @@ async fn send_to_sqs(task: &ProcessingTask) -> Result<(), SlackError> {
 
 async fn get_latest_message_ts(channel_id: &str) -> Result<Option<String>, SlackError> {
     // Initialize the SlackBot
-    let slack_bot = SlackBot::new()?;
+    let slack_bot = SlackBot::new().await?;
     
     // Get the most recent message in the channel (limit to 1)
     let messages = slack_bot.get_last_n_messages(channel_id, 1).await?;
