@@ -324,17 +324,19 @@ async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<impl 
     // Return immediate response to Slack
     info!("Task sent to processing queue successfully");
     
-    // Always use ephemeral for the initial response since:
-    // 1. For regular (private) requests, we only want the invoker to see the response
-    // 2. For visible requests, we'll delete this and post a dedicated announcement from the worker
-    let response_type = "ephemeral";
+    // Determine the response type based on visibility
+    let response_type = if visible {
+        "in_channel"  // Make the response visible to everyone in the channel
+    } else {
+        "ephemeral"   // Only visible to the command invoker
+    };
     
     Ok(json!({
         "statusCode": 200,
         "body": json!({
             "response_type": response_type,
             "text": if visible {
-                // For visible commands, we'll delete this initial response and post the proper announcement + summary from the worker
+                // For visible commands, we'll display a public message
                 "Processing your request. The summary will be sent shortly."
             } else {
                 "Processing your request. I'll send you a summary of unread messages shortly!"
