@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use percent_encoding::percent_decode_str;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct SlackCommandEvent {
@@ -17,40 +18,13 @@ pub struct SlackCommandEvent {
     pub command_ts: String,
 }
 
-/// Decodes URL encoded string
+/// Decodes URL encoded string using percent_encoding crate
 fn decode_url_component(input: &str) -> Result<String, String> {
-    let mut result = String::with_capacity(input.len());
-    let mut i = 0;
-    let bytes = input.as_bytes();
-
-    while i < bytes.len() {
-        match bytes[i] {
-            b'%' => {
-                if i + 2 >= bytes.len() {
-                    return Err("Invalid percent encoding".to_string());
-                }
-                
-                let hex_str = std::str::from_utf8(&bytes[i+1..i+3])
-                    .map_err(|_| "Invalid UTF-8 in percent encoding".to_string())?;
-                    
-                let byte = u8::from_str_radix(hex_str, 16)
-                    .map_err(|_| "Invalid hex in percent encoding".to_string())?;
-                    
-                result.push(byte as char);
-                i += 3;
-            },
-            b'+' => {
-                result.push(' ');
-                i += 1;
-            },
-            b => {
-                result.push(b as char);
-                i += 1;
-            }
-        }
-    }
-    
-    Ok(result)
+    percent_decode_str(input)
+        .decode_utf8()
+        .map(|s| s.replace('+', " "))
+        .map_err(|e| format!("Failed to decode URL component: {}", e))
+        .map(|s| s.to_string())
 }
 
 pub fn parse_form_data(form_data: &str) -> Result<SlackCommandEvent, String> {

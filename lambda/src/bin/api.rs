@@ -326,8 +326,8 @@ async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<impl 
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    // Initialize tracing (can be done once, either here or in handler)
-    // tracing_subscriber::fmt::init(); 
+    // Initialize JSON structured logging
+    tldr::setup_logging();
 
     let func = service_fn(function_handler);
     run(func).await?;

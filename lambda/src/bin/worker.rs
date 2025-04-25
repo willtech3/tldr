@@ -225,12 +225,8 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_target(false)
-        .without_time()
-        .init();
+    // Initialize JSON structured logging
+    tldr::setup_logging();
     
     // Start the Lambda runtime
     lambda_runtime::run(lambda_runtime::service_fn(function_handler)).await?;
