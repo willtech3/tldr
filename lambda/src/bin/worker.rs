@@ -7,7 +7,7 @@ use reqwest::Client as HttpClient;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 
 // Import shared modules
-use tldr::{SlackError, SlackBot};
+use tldr::{SlackError, SlackBot, format_summary_message, create_ephemeral_payload};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ProcessingTask {
@@ -41,10 +41,8 @@ impl BotHandler {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         
-        let body = serde_json::json!({
-            "text": message,
-            "response_type": "ephemeral"
-        });
+        // Use the extracted function to create a consistent ephemeral payload
+        let body = create_ephemeral_payload(message);
         
         self.http_client.post(response_url)
             .headers(headers)
@@ -100,21 +98,14 @@ impl BotHandler {
             Ok(summary) => {
                 // Determine where to send the summary
                 if let Some(target_channel) = &task.target_channel_id {
-                    // Format parameters to show in the announcement message when visible
-                    let message_content = if task.visible {
-                        let mut parameter_text = format!("<@{}> ran `/tldr` in <#{}>", task.user_id, source_channel_id);
-                        
-                        // Add additional parameters if specified
-                        if !task.text.is_empty() {
-                            parameter_text = format!("{} with parameters: `{}`", parameter_text, task.text);
-                        }
-                        
-                        // Format with parameter text and summary
-                        format!("{}\n\n{}", parameter_text, summary)
-                    } else {
-                        // Just the summary if not visible
-                        summary.clone()
-                    };
+                    // Use the library's format_summary_message function
+                    let message_content = format_summary_message(
+                        &task.user_id,
+                        source_channel_id,
+                        &task.text,
+                        &summary,
+                        task.visible
+                    );
                     
                     // Send to the specified channel
                     if let Err(e) = self.slack_bot.send_message_to_channel(target_channel, &message_content).await {
@@ -145,19 +136,19 @@ impl BotHandler {
                 } else {
                     // Check if we should post publicly to the current channel
                     if task.visible {
-                        // Format parameters to show in the announcement message
-                        let mut parameter_text = format!("<@{}> ran `/tldr` in <#{}>", task.user_id, source_channel_id);
-                        
-                        // Add additional parameters if specified
-                        if !task.text.is_empty() {
-                            parameter_text = format!("{} with parameters: `{}`", parameter_text, task.text);
-                        }
+                        // Use the library's format_summary_message function
+                        let message_content = format_summary_message(
+                            &task.user_id,
+                            source_channel_id,
+                            &task.text,
+                            &summary,
+                            task.visible
+                        );
                         
                         // Post summary directly to the channel (visible to all)
-                        // Format: "<@user> ran /tldr in <#channel> with parameters: `params` \n\n Summary: ..."
                         if let Err(e) = self.slack_bot.send_message_to_channel(
                             source_channel_id, 
-                            &format!("{}\n\n{}", parameter_text, summary)
+                            &message_content
                         ).await {
                             error!("Failed to send public message to channel {}: {}", source_channel_id, e);
                             // Fallback to sending as DM

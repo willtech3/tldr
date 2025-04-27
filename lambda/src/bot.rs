@@ -3,33 +3,31 @@ use slack_morphism::prelude::*;
 use slack_morphism::{
     SlackApiToken, SlackApiTokenValue, 
     SlackChannelId, SlackUserId,
-    SlackHistoryMessage,
-    SlackMessageContent,
-    SlackTs,
+    SlackHistoryMessage, SlackMessageContent, SlackTs
 };
 use slack_morphism::events::SlackMessageEventType;
 use slack_morphism::hyper_tokio::{SlackHyperClient, SlackClientHyperConnector};
+
 use openai_api_rs::v1::{
     api::OpenAIClient,
     chat_completion::{self, ChatCompletionRequest, Content, MessageRole},
 };
-use openai_api_rs::v1::common::GPT4_O;
-use anyhow::Result;
-use std::env;
-use tracing::{error, info};
 use reqwest::Client;
 use std::collections::{HashMap, HashSet};
-use serde_json::json;
+use std::time::Duration;
+use std::env;
+use tracing::{info, error};
 use tokio_retry::{Retry, strategy::ExponentialBackoff};
 use tokio_retry::strategy::jitter;
 
 use crate::errors::SlackError;
 use crate::prompt::sanitize_custom_internal;
+use crate::response::create_replace_original_payload;
 
 // GPT-4o model context limits
 const GPT4O_MAX_CONTEXT_TOKENS: usize = 128_000; // 128K token context window
-const GPT4O_MAX_OUTPUT_TOKENS: usize = 4_096;    // Maximum allowed output tokens
-const GPT4O_BUFFER_TOKENS: usize = 1_000;        // Buffer to prevent going over limit
+const GPT4O_MAX_OUTPUT_TOKENS: usize = 4_096;    // Maximum output tokens
+const GPT4O_BUFFER_TOKENS: usize = 250;          // Buffer to prevent going over limit
 
 /// Rough token estimation - about 4 chars per token for English text
 pub fn estimate_tokens(text: &str) -> usize {
@@ -45,7 +43,7 @@ static SLACK_CLIENT: Lazy<SlackHyperClient> = Lazy::new(|| {
 // Static HTTP client
 static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
     Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(Duration::from_secs(30))
         .build()
         .unwrap_or_else(|_| {
             // This should not happen with default configuration, but provides a fallback
@@ -53,7 +51,7 @@ static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
         })
 });
 
-// Common Slack functionality
+/// Common Slack functionality
 pub struct SlackBot {
     token: SlackApiToken,
     openai_client: OpenAIClient,
@@ -63,6 +61,7 @@ impl SlackBot {
     pub async fn new() -> Result<Self, SlackError> {
         let token = env::var("SLACK_BOT_TOKEN")
             .map_err(|_| SlackError::ApiError("SLACK_BOT_TOKEN not found".to_string()))?;
+        
         let openai_api_key = env::var("OPENAI_API_KEY")
             .map_err(|_| SlackError::OpenAIError("OPENAI_API_KEY not found".to_string()))?;
         
@@ -321,19 +320,8 @@ impl SlackBot {
     /// Uses Slack's response_url mechanism which allows modifying the original message
     pub async fn replace_original_message(&self, response_url: &str, text: Option<&str>) -> Result<(), SlackError> {
         self.with_retry(|| async {
-            // Build the payload
-            // If text is None or empty, we'll just send a blank message (effectively hiding the command)
-            let payload = if let Some(t) = text.filter(|t| !t.is_empty()) {
-                json!({
-                    "replace_original": true,
-                    "text": t
-                })
-            } else {
-                json!({
-                    "replace_original": true,
-                    "text": " " // Use a single space to effectively hide the message while maintaining its place
-                })
-            };
+            // Build the payload using our extracted function
+            let payload = create_replace_original_payload(text);
             
             // Send the request
             let response = HTTP_CLIENT.post(response_url)
@@ -533,7 +521,7 @@ impl SlackBot {
         
         // Build the GPT-4o chat completion request
         let request = ChatCompletionRequest::new(
-            GPT4_O.to_string(),
+            "gpt-4o".to_string(),
             prompt
         )
         .temperature(if custom_prompt.is_some() { 0.9 } else { 0.3 }) // Default 0.3, 0.9 if custom prompt is provided
