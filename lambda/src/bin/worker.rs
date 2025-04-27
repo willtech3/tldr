@@ -74,11 +74,7 @@ impl BotHandler {
         // This prevents the bot's response from being included in the summary
         if task.visible {
             // Get the bot's own user ID
-            let bot_user_id = if let Ok(bot_info) = self.slack_bot.get_bot_user_id().await {
-                Some(bot_info)
-            } else {
-                None
-            };
+            let bot_user_id = (self.slack_bot.get_bot_user_id().await).ok();
             
             // Filter out messages from the bot
             if let Some(bot_id) = bot_user_id {
@@ -131,19 +127,20 @@ impl BotHandler {
                 } else {
                     // Check if we should post publicly to the current channel
                     if task.visible {
-                        // No longer attempt to replace the original message since it's not working properly
-                        // The initial response will already be visible to the channel from the API Lambda
-                        
                         // Format parameters to show in the announcement message
-                        let mut parameter_text = format!("Channel: <#{}>", source_channel_id);
+                        let mut parameter_text = format!("<@{}> ran `/tldr` in <#{}>", task.user_id, source_channel_id);
                         
                         // Add additional parameters if specified
                         if !task.text.is_empty() {
-                            parameter_text = format!("{} | Parameters: {}", parameter_text, task.text);
+                            parameter_text = format!("{} with parameters: `{}`", parameter_text, task.text);
                         }
                         
                         // Post summary directly to the channel (visible to all)
-                        if let Err(e) = self.slack_bot.send_message_to_channel(source_channel_id, &format!("{} {}", parameter_text, summary)).await {
+                        // Format: "<@user> ran /tldr in <#channel> with parameters: `params` \n\n Summary: ..."
+                        if let Err(e) = self.slack_bot.send_message_to_channel(
+                            source_channel_id, 
+                            &format!("{}\n\n{}", parameter_text, summary)
+                        ).await {
                             error!("Failed to send public message to channel {}: {}", source_channel_id, e);
                             // Fallback to sending as DM
                             if let Err(dm_error) = self.slack_bot.send_dm(&task.user_id, &summary).await {
@@ -159,6 +156,8 @@ impl BotHandler {
                                 ).await?;
                             }
                         }
+                        // Intentionally not sending a confirmation message when visible message posts successfully
+                        // This avoids redundant notifications when the message is already visible in the channel
                     } else {
                         // Send as DM to the user (original behavior)
                         if let Err(e) = self.slack_bot.send_dm(&task.user_id, &summary).await {
@@ -198,9 +197,10 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
     
     // Extract and parse the message body from the SQS event
     // SQS events contain a 'Records' array, each record has a 'body' field
-    let task: ProcessingTask = event.payload["Records"]
-        .as_array()
-        .and_then(|records| records.get(0)) // Get the first record
+    let task: ProcessingTask = event.payload
+        .get("Records")
+        .and_then(|records| records.as_array())
+        .and_then(|records| records.first()) // Get the first record
         .and_then(|record| record.get("body")) // Get the body field
         .and_then(|body| body.as_str())      // Get body as a string
         .ok_or_else(|| Error::from("Failed to extract SQS message body"))

@@ -23,24 +23,24 @@ use slack_parser::{SlackCommandEvent, parse_form_data};
 #[derive(Debug)]
 enum SlackError {
     #[allow(dead_code)]
-    ParseError(String),
+    Parse(String),
     
-    OpenAIError(String),
-    
-    #[allow(dead_code)]
-    HttpError(String),
+    OpenAI(String),
     
     #[allow(dead_code)]
-    AwsError(String),
+    Http(String),
+    
+    #[allow(dead_code)]
+    Aws(String),
 }
 
 impl std::fmt::Display for SlackError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SlackError::ParseError(msg) => write!(f, "Failed to parse Slack event: {}", msg),
-            SlackError::OpenAIError(msg) => write!(f, "Failed to access OpenAI API: {}", msg),
-            SlackError::HttpError(msg) => write!(f, "Failed to send HTTP request: {}", msg),
-            SlackError::AwsError(msg) => write!(f, "Failed to interact with AWS services: {}", msg),
+            SlackError::Parse(msg) => write!(f, "Failed to parse Slack event: {}", msg),
+            SlackError::OpenAI(msg) => write!(f, "Failed to access OpenAI API: {}", msg),
+            SlackError::Http(msg) => write!(f, "Failed to send HTTP request: {}", msg),
+            SlackError::Aws(msg) => write!(f, "Failed to interact with AWS services: {}", msg),
         }
     }
 }
@@ -125,7 +125,7 @@ impl SlackBot {
         let channel_info = self.client.open_session(&self.token)
             .conversations_info(&SlackApiConversationsInfoRequest::new(SlackChannelId::new(channel_id.to_string())))
             .await
-            .map_err(|e| SlackError::OpenAIError(format!("Failed to get channel info: {}", e)))?;
+            .map_err(|e| SlackError::OpenAI(format!("Failed to get channel info: {}", e)))?;
             
         let channel_name = channel_info.channel.name
             .unwrap_or_else(|| channel_id.to_string());
@@ -167,11 +167,11 @@ impl SlackBot {
 
         let result = match self.openai_client.chat_completion(chat_req).await {
             Ok(result) => result,
-            Err(e) => return Err(SlackError::OpenAIError(format!("OpenAI API error: {}", e)))
+            Err(e) => return Err(SlackError::OpenAI(format!("OpenAI API error: {}", e)))
         };
 
         let summary = result.choices
-            .get(0)
+            .first()
             .and_then(|choice| choice.message.content.clone())
             .unwrap_or_else(|| "Could not generate summary.".to_string());
             
@@ -229,7 +229,7 @@ impl SlackBot {
 fn parse_slack_event(payload: &str) -> Result<SlackCommandEvent, SlackError> {
     // Parse the form-encoded data that Slack sends for slash commands
     parse_form_data(payload)
-        .map_err(|e| SlackError::ParseError(format!("Failed to parse form data: {}", e)))
+        .map_err(|e| SlackError::Parse(format!("Failed to parse form data: {}", e)))
 }
 
 async fn function_handler(event: LambdaEvent<String>) -> Result<impl Serialize, Error> {

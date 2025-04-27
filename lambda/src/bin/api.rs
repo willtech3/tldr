@@ -305,21 +305,15 @@ async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<impl 
     // Return immediate response to Slack
     info!("Task sent to processing queue successfully");
     
-    let response_type = if visible {
-        "in_channel" 
-    } else {
-        "ephemeral"   
-    };
+    // Always use ephemeral response from the API Lambda
+    // The worker will handle visible responses when needed
+    let response_type = "ephemeral";
     
     Ok(json!({
         "statusCode": 200,
         "body": json!({
             "response_type": response_type,
-            "text": if visible {
-                "Processing your request. The summary will be sent shortly."
-            } else {
-                "Processing your request. I'll send you a summary of unread messages shortly!"
-            }
+            "text": "Processing your request. I'll send you a summary shortly!"
         }).to_string()
     }))
 }
