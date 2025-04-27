@@ -1,0 +1,56 @@
+###############################################################################
+# .windsurfrules — idiomatic-Rust starter kit (Rust 2024 edition)
+# Put this file in the project root or paste it into
+#  Settings ▸ “Set Workspace AI Rules” ▸ “Edit rules”
+# Size: < 6 000 chars  (workspace limit) — keep it lean!
+###############################################################################
+
+<language>
+1. Primary language is **Rust**, edition = `2024`, tool-chain = `stable`.
+2. Assume `cargo` workspace layout; use `cargo new`/`cargo add` for examples.
+3. Prefer *safe* Rust; use `unsafe` **only** with an explicit justification.
+
+<code_style>
+4. Format every snippet with `rustfmt --edition 2024` default settings.
+5. Follow *snake_case* for items, *PascalCase* for types & traits, per API-guidelines  [oai_citation:2‡Rust Language](https://rust-lang.github.io/api-guidelines/naming.html?utm_source=chatgpt.com).
+6. Show `use` statements that group paths and avoid `*` glob imports.
+
+<linting>
+7. Compile with `RUSTFLAGS="-Dwarnings"` and `cargo clippy --all-targets -- -D warnings -W clippy::pedantic`.
+8. Avoid `unwrap()/expect()` in examples unless it is **guaranteed** safe; show `?` propagation instead.
+
+<paradigms>
+9. Demonstrate ownership & borrowing clearly: pass `&T`/`&mut T` where possible; move only when required.
+10. Return `Result<T, E>` or `Option<T>` from functions instead of panicking.
+11. Prefer iterator & adaptor style (`map`, `filter`, `collect::<Vec<_>>()`) to indexed `for` loops.
+
+<error_handling>
+12. Create domain errors with an `enum` and implement `std::error::Error + Display`.
+13. Bubble errors upward with `thiserror` or `anyhow` as appropriate; examples should compile if the crate is added.
+
+<tests_docs>
+14. Provide `#[cfg(test)] mod tests` with at least one `#[test]` per public API surface.
+15. Add doc-comment examples (`///`) that compile with `cargo test --doc`.
+
+<project_structure>
+16. Organise crates:
+    • `/src/lib.rs`  – library logic  
+    • `/src/bin/*.rs` – binaries (if any)  
+    • `/examples/` – runnable examples  
+17. Keep modules ≤ 400 lines; split when they grow larger.
+
+<communication>
+18. When user asks “why?”, supply a short explanation *before* code.
+19. When user asks for optimisation, show a benchmark stub with `criterion` but keep the focus on readability first.
+20. Reply to beginner questions in plain English; avoid jargon or explain it inline the first time it appears.
+
+<dependencies>
+21. Default to std-only; introduce external crates only when the standard library is insufficient, mentioning why.
+22. Prefer widely used crates (`serde`, `tokio`, `reqwest`, `thiserror`); flag experimental crates clearly.
+
+<tooling>
+23. Suggest `cargo check` for quick feedback loops.
+24. Mention `cargo expand` when explaining macro output.
+25. Encourage `cargo doc --open` for API exploration.
+
+# End of file – keep new rules above this line.

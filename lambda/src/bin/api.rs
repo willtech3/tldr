@@ -12,6 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use hex;
 use regex::Regex;
 use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 
 // Import shared modules
 use tldr::{slack_parser::{SlackCommandEvent, parse_form_data}, SlackError, sanitize_custom_prompt};
@@ -220,10 +221,7 @@ async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<impl 
         .join(" ");
     
     // Define regex for parsing key-value parameters with proper quote handling
-    lazy_static! {
-        static ref KV_RE: Regex =
-            Regex::new(r#"(\w+)\s*=\s*("[^"]*"|\S+)"#).unwrap();
-    }
+    static KV_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(\w+)\s*=\s*("[^"]*"|\S+)"#).expect("Failed to compile parameter parsing regex - this is a static pattern and should never fail"));
     
     // Parse parameters from filtered text
     let mut message_count: Option<u32> = None;
@@ -313,7 +311,7 @@ async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<impl 
         "statusCode": 200,
         "body": json!({
             "response_type": response_type,
-            "text": "Processing your request. I'll send you a summary shortly!"
+            "text": "Processing your request. I'll send a summary shortly!"
         }).to_string()
     }))
 }

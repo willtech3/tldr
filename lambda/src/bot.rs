@@ -47,7 +47,10 @@ static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
     Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
-        .expect("Failed to create HTTP client")
+        .unwrap_or_else(|_| {
+            // This should not happen with default configuration, but provides a fallback
+            Client::new()
+        })
 });
 
 // Common Slack functionality
@@ -440,18 +443,20 @@ impl SlackBot {
             .conversations_info(&SlackApiConversationsInfoRequest::new(SlackChannelId::new(channel_id.to_string())))
             .await
             .map_err(|e| SlackError::ApiError(format!("Failed to get channel info: {}", e)))?;
-        let channel_name = channel_info.channel.name
-            .unwrap_or_else(|| channel_id.to_string());
+        let channel_name = channel_info.channel.name.unwrap_or_else(|| channel_id.to_string());
         
         // Collect unique user IDs
-        let mut user_ids = HashSet::new();
-        for msg in messages {
-            if let Some(user) = &msg.sender.user {
-                if user.as_ref() != "Unknown User" {
-                    user_ids.insert(user.as_ref().to_string());
-                }
-            }
-        }
+        let user_ids: HashSet<String> = messages.iter()
+            .filter_map(|msg| {
+                msg.sender.user.as_ref().and_then(|user| {
+                    if user.as_ref() != "Unknown User" {
+                        Some(user.as_ref().to_string())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
         
         // Fetch all user info in advance and build a cache
         let mut user_info_cache = HashMap::new();
@@ -460,33 +465,33 @@ impl SlackBot {
                 Ok(name) => {
                     user_info_cache.insert(user_id, name);
                 },
-                Err(_) => {
+                Err(e) => {
+                    error!("Failed to get user info for {}: {}", user_id, e);
                     user_info_cache.insert(user_id.clone(), user_id);
                 }
             }
         }
         
         // Format messages using the cache
-        let mut formatted_messages = Vec::new();
-        for msg in messages { 
-            let user_id = msg.sender.user.as_ref()
-                .map_or("Unknown User", |uid| uid.as_ref());
-            
-            // Get the real username from cache
-            let author = if user_id != "Unknown User" {
-                user_info_cache.get(user_id).unwrap_or(&user_id.to_string()).clone()
-            } else {
-                user_id.to_string()
-            };
-            
-            let ts = msg.origin.ts.clone(); 
-            let text = msg.content.text.as_deref().unwrap_or("");
-            
-            formatted_messages.push(format!(
-                "[{}] {}: {}", 
-                ts, author, text
-            ));
-        }
+        let formatted_messages: Vec<String> = messages.iter()
+            .map(|msg| {
+                let user_id = msg.sender.user.as_ref()
+                    .map_or("Unknown User", |uid| uid.as_ref());
+                
+                // Get the real username from cache
+                let author = if user_id != "Unknown User" {
+                    user_info_cache.get(user_id)
+                        .map_or_else(|| user_id.to_string(), |name| name.clone())
+                } else {
+                    user_id.to_string()
+                };
+                
+                let ts = msg.origin.ts.clone(); 
+                let text = msg.content.text.as_deref().unwrap_or("");
+                
+                format!("[{}] {}: {}", ts, author, text)
+            })
+            .collect();
         
         // Build the full prompt using the new method with channel context
         let messages_text = format!(

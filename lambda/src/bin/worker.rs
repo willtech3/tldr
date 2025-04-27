@@ -100,9 +100,24 @@ impl BotHandler {
             Ok(summary) => {
                 // Determine where to send the summary
                 if let Some(target_channel) = &task.target_channel_id {
-                    // When visible flag is used with a target channel, always post to the specified channel
+                    // Format parameters to show in the announcement message when visible
+                    let message_content = if task.visible {
+                        let mut parameter_text = format!("<@{}> ran `/tldr` in <#{}>", task.user_id, source_channel_id);
+                        
+                        // Add additional parameters if specified
+                        if !task.text.is_empty() {
+                            parameter_text = format!("{} with parameters: `{}`", parameter_text, task.text);
+                        }
+                        
+                        // Format with parameter text and summary
+                        format!("{}\n\n{}", parameter_text, summary)
+                    } else {
+                        // Just the summary if not visible
+                        summary.clone()
+                    };
+                    
                     // Send to the specified channel
-                    if let Err(e) = self.slack_bot.send_message_to_channel(target_channel, &summary).await {
+                    if let Err(e) = self.slack_bot.send_message_to_channel(target_channel, &message_content).await {
                         error!("Failed to send message to channel {}: {}", target_channel, e);
                         // Fallback to sending as DM
                         if let Err(dm_error) = self.slack_bot.send_dm(&task.user_id, &summary).await {
@@ -118,11 +133,14 @@ impl BotHandler {
                             ).await?;
                         }
                     } else {
-                        // Confirm public summary was sent
-                        self.send_response_url(
-                            &task.response_url, 
-                            &format!("I've posted a summary to <#{}>.", target_channel)
-                        ).await?;
+                        // Confirm public summary was sent only if not visible
+                        if !task.visible {
+                            self.send_response_url(
+                                &task.response_url, 
+                                &format!("I've posted a summary to <#{}>.", target_channel)
+                            ).await?;
+                        }
+                        // Otherwise, don't send a confirmation since the message is already visible
                     }
                 } else {
                     // Check if we should post publicly to the current channel
@@ -195,7 +213,7 @@ pub use self::function_handler as handler;
 pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
     info!("Worker Lambda received SQS event payload: {:?}", event.payload);
     
-    // Extract and parse the message body from the SQS event
+    // Extract and parse the message body from the SQS event using iterator chains
     // SQS events contain a 'Records' array, each record has a 'body' field
     let task: ProcessingTask = event.payload
         .get("Records")
@@ -211,14 +229,12 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
     
     info!("Successfully parsed ProcessingTask: {:?}", task);
 
-    // Create bot handler and process task
+    // Create bot handler and process task using proper question mark error propagation
     let mut handler = BotHandler::new().await
         .map_err(|e| Error::from(format!("Failed to initialize bot: {}", e)))?;
     
-    if let Err(e) = handler.process_task(task).await {
-        error!("Error processing task: {}", e);
-        return Err(Error::from(format!("Processing error: {}", e)));
-    }
+    handler.process_task(task).await
+        .map_err(|e| Error::from(format!("Processing error: {}", e)))?;
     
     Ok(())
 }
