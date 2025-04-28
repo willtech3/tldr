@@ -1,207 +1,161 @@
-# TLDR: Slack Message Summarizer
+# TLDR — Slack ChatGPT Summarizer
 
-A Rust-based Slack bot that summarizes unread messages in channels using OpenAI's ChatGPT, packaged as serverless AWS Lambda functions.
+TLDR is a serverless, Rust-powered Slack bot that turns a wall of unread messages into a concise, ChatGPT-generated summary delivered straight to your DM.
 
-## Project Overview
+---
 
-TLDR is a Slack integration that helps users catch up on conversations they've missed. Using the `/tldr` slash command, users receive AI-generated summaries of unread messages delivered via direct message.
+## ✨ Key Features
 
-### Core Features
+- **Slash Command Workflow** – Trigger summaries with `/tldr` in any channel.
+- **AI-Generated Summaries** – Uses OpenAI ChatGPT to distill unread messages.
+- **Two-Lambda Architecture** – Instant slash-command acknowledgement + async processing for snappy UX.
+- **Built with Safe, Async Rust** – Tokio runtime, `slack-morphism` and `openai-api-rs`.
+- **Secure by Default** – HMAC-SHA256 request verification and least-privilege AWS IAM roles.
 
-- **Unread Message Summarization**: Get concise summaries of all unread messages in a channel
-- **Asynchronous Processing**: Two-part Lambda architecture (API + Worker) ensures responsive user experience
-- **Message Filtering**: Intelligent filtering to exclude system messages and focus on meaningful content
-- **Secure Request Verification**: HMAC-SHA256 signature verification to ensure authentic Slack requests
-- **Resilient Error Handling**: Comprehensive error management for all external API interactions
+---
 
-## Architecture
+## 🏗️  High-Level Architecture
 
-The application follows a serverless, event-driven architecture:
+```
+┌─────────┐    ┌────────────┐   SQS   ┌──────────────┐    ┌─────────────┐
+│  Slack  │──►│ API Lambda │─▶Queue▶│ Worker Lambda │───►│ OpenAI Chat │
+└─────────┘    └────────────┘         └──────┬───────┘    └─────────────┘
+                                             │
+                                             ▼
+                                        ┌─────────┐
+                                        │  User   │
+                                        └─────────┘
+```
 
-┌─────────┐    ┌────────────┐    ┌──────────┐    ┌───────────────┐
-│  Slack  │───►│ API Lambda │───►│ AWS SQS  │───►│ Worker Lambda │
-└─────────┘    └────────────┘    └──────────┘    └───────┬───────┘
-                                                         │
-                                                         ▼
-┌─────────┐                                       ┌─────────────┐
-│  User   │◄────────────────────────────────────◄│ OpenAI API  │
-└─────────┘                                       └─────────────┘
+1. **API Lambda** – Verifies Slack signatures and enqueues a summarisation job to SQS.
+2. **Worker Lambda** – Fetches unread channel messages, asks ChatGPT to summarise them, and DMs the user.
 
-### System Components
+---
 
-1. **API Lambda (`api.rs`)**
-   - Receives and validates Slack slash commands
-   - Implements Slack signature verification
-   - Queues summarization tasks to SQS
-   - Provides immediate acknowledgment to users
+## 🚀  Usage
 
-2. **Worker Lambda (`worker.rs`)**
-   - Processes queued summarization requests
-   - Retrieves unread messages from channels
-   - Generates summaries using OpenAI's ChatGPT
-   - Delivers summaries through Slack DMs
+1. **Install the Slack App** in your workspace (see *Slack Setup* below).
+2. In any channel type:
 
-3. **Shared Library (`lib.rs`)**
-   - Implements `SlackBot` for Slack API interactions
-   - Handles ChatGPT integration
-   - Provides error handling and type definitions
+```text
+/tldr
+```
 
-4. **AWS Infrastructure**
-   - AWS Lambda for compute
-   - SQS for message queuing and decoupling
-   - API Gateway for webhook endpoints
-   - CloudWatch for logging and monitoring
+3. A DM will arrive with a neatly formatted summary of everything you missed. ✨
 
-## Technical Implementation
+### Advanced Parameters
 
-### Rust Implementation Details
+You can tailor the summary by appending flags / key-value pairs after the command:
 
-- **Async Runtime**: Uses Tokio for asynchronous processing
-- **API Clients**: 
-  - `slack-morphism` for Slack API interactions
-  - `openai-api-rs` for ChatGPT access
-- **Error Handling**: Custom `SlackError` enum with conversions from external error types
-- **HTTP Client**: Reqwest for webhook responses
-- **JSON Handling**: Serde for serialization/deserialization
+| Parameter | Example | Description |
+|-----------|---------|-------------|
+| `count=<N>` | `/tldr count=50` | Summarise the **last N** messages instead of just unread messages. |
+| `channel=<#channel>` | `/tldr channel=#general` | Post the summary to a different channel (defaults to DM). |
+| `--visible` / `--public` | `/tldr --visible` | Make the summary visible to everyone in the target channel. |
+| `custom="…"` | `/tldr custom="Write at an 8th-grade level"` | Provide a custom prompt (max 800 chars) to influence the writing style. |
 
-### Slack Integration
+Parameters can be combined:
 
-The bot processes slash commands through these steps:
-1. **Authentication**: Verifies Slack's request signature
-2. **Task Queueing**: Sends task to SQS for asynchronous processing
-3. **Message Retrieval**: Fetches unread messages since last read timestamp
-4. **Summarization**: Formats messages and sends to ChatGPT
-5. **Delivery**: Sends summary via direct message to the requesting user
+```text
+/tldr count=100 channel=#project-updates --visible custom="Use bullet points and include action items"
+```
 
-### Security Considerations
+---
 
-- **Request Verification**: Implements Slack's signing secret verification
-- **Timestamp Validation**: Prevents replay attacks by checking request freshness
-- **Error Logging**: Detailed error logs without sensitive information
-- **Environment Variables**: Secure storage of API tokens and secrets
-
-## Development Setup
+## 🔧  Quick Start for Local Development
 
 ### Prerequisites
 
-- **Rust** (latest stable)
-  - cargo
-  - cargo-lambda for Lambda development
-- **Node.js** (v18+) and npm for CDK
-- **AWS CLI** configured with appropriate permissions
-- **Slack Workspace** with admin privileges
-- **OpenAI API** key
+- Rust (stable, Edition 2024)
+- `cargo-lambda` ≥ 0.17 for local Lambda builds
+- AWS CLI with a profile that can deploy Lambda + SQS
+- Node 18+ & npm (only for the CDK infrastructure)
+- A Slack workspace & OpenAI API key
 
-### Local Development
+### Steps
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/yourusername/tldr.git
-   cd tldr
-   ```
+```bash
+# 1. Clone
+$ git clone https://github.com/your-org/tldr.git && cd tldr
 
-2. **Set up environment variables**
-   Create a `.env` file with:
-   ```
-   SLACK_BOT_TOKEN=xoxb-your-token
-   SLACK_SIGNING_SECRET=your-signing-secret
-   OPENAI_API_KEY=your-openai-key
-   PROCESSING_QUEUE_URL=your-sqs-queue-url
-   ```
+# 2. Configure environment
+$ cp .env.example .env   # then edit the values
 
-3. **Build the Lambda functions**
-   ```bash
-   cd lambda
-   cargo build
-   # For Lambda deployment
-   cargo lambda build --release
-   ```
+# 3. Build & test the Lambda crate
+$ cd lambda
+$ cargo test
+$ cargo lambda build --release
 
-4. **Install CDK dependencies**
-   ```bash
-   cd ../infrastructure
-   npm install
-   ```
+# 4. Spin up a local Lambda for manual testing
+$ cargo lambda watch   # default on :9000
+```
 
-5. **Run tests**
-   ```bash
-   cd ../lambda
-   cargo test
-   ```
+Invoke the API Lambda locally with a sample payload:
 
-### Local Testing
+```bash
+$ cargo lambda invoke --data-file test/fixtures/slash_command.json
+```
 
-1. **Start Lambda locally**
-   ```bash
-   cargo lambda watch
-   ```
+---
 
-2. **Test with sample payloads**
-   ```bash
-   cargo lambda invoke --data-file test/fixtures/sample_slash_command.json
-   ```
+## ☁️  Deployment (AWS CDK)
 
-3. **Use ngrok to expose your local server to Slack**
-   ```bash
-   ngrok http 8080
-   ```
+The **`infrastructure/`** folder contains an *AWS CDK* stack that provisions:
 
-## Deployment
+- API Gateway endpoint
+- Two Lambda functions (API + Worker)
+- SQS queue
+- IAM roles & CloudWatch logs
 
-### AWS Infrastructure
+Deploy in one command:
 
-1. **Synthesize CloudFormation template**
-   ```bash
-   cd infrastructure
-   npm run cdk synth
-   ```
+```bash
+$ cd infrastructure
+$ npm install             # first time only
+$ npm run cdk deploy
+```
 
-2. **Deploy to AWS**
-   ```bash
-   npm run cdk deploy
-   ```
+After the stack is live, copy the API Gateway URL into your Slack slash-command configuration.
 
-### Slack App Configuration
+---
 
-1. **Create a Slack app** in the [Slack API Dashboard](https://api.slack.com/apps)
-2. **Add Bot Token Scopes:**
-   - `chat:write`
-   - `channels:history`
-   - `channels:read`
-   - `im:write`
-3. **Enable Slash Commands:**
-   - Command: `/tldr`
-   - Request URL: Your API Gateway URL
-   - Description: "Get a summary of unread messages in this channel"
-4. **Install the app** to your workspace
-5. **Update environment variables** in AWS Lambda with your Slack tokens
+## 🔐  Configuration
 
-## Troubleshooting
+Environment variables (set in Lambda or an `.env` file for local runs):
 
-- **Signature Verification Failures**: Check that your `SLACK_SIGNING_SECRET` is correctly configured
-- **Permission Errors**: Ensure the Slack bot has been invited to channels and has appropriate permissions
-- **No Summaries Generated**: Verify your OpenAI API key and check CloudWatch logs for specific errors
-- **Message Queue Issues**: Verify the SQS queue exists and is accessible
+| Variable | Purpose |
+|----------|---------|
+| `SLACK_BOT_TOKEN` | Bot OAuth token (starts with `xoxb-…`) |
+| `SLACK_SIGNING_SECRET` | Verifies Slack requests |
+| `OPENAI_API_KEY` | Access token for ChatGPT |
+| `PROCESSING_QUEUE_URL` | URL of the SQS queue |
 
-## Future Enhancements
+---
 
-- **User Preferences**: Store and apply user-specific summarization preferences
-- **Thread Summarization**: Add support for summarizing specific conversation threads
-- **Multi-Channel Digests**: Generate summaries across multiple channels
-- **DynamoDB Integration**: Persist user state and preferences
-- **Additional AI Models**: Support for different language models and customization options
+## 🗂️  Project Layout
 
-## Contributing
+```
+├─ lambda/          # Rust crate with both Lambda handlers
+│   ├─ src/
+│   │   ├─ api.rs
+│   │   ├─ worker.rs
+│   │   └─ bot.rs  # SlackBot implementation (shared)
+│   └─ Cargo.toml
+├─ infrastructure/  # AWS CDK stack (TypeScript)
+├─ tests/           # Integration & fixture payloads
+└─ README.md
+```
 
-This project uses:
-- Rust 2021 edition syntax and patterns
-- Error handling with Result and Option types
-- Async/await for asynchronous operations
-- AWS CDK for infrastructure as code
-- GitHub Actions for CI/CD
+---
 
-New contributors should focus on understanding the project structure and Rust's ownership model before making changes.
+## 🤝  Contributing
 
-## License
+1. Make sure `cargo check` and `cargo clippy -- -D warnings` pass.
+2. Add unit tests in `#[cfg(test)]` modules and doc-tests in public APIs.
+3. Open a PR – GitHub Actions will run the full test & lint suite.
 
-MIT
+---
+
+## 📄  License
+
+MIT © 2025 TLDR Contributors
