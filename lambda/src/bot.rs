@@ -1,24 +1,28 @@
 use once_cell::sync::Lazy;
 use slack_morphism::prelude::*;
 use slack_morphism::{
-    SlackApiToken, SlackApiTokenValue, 
+    SlackApiToken, SlackApiTokenValue,
     SlackChannelId, SlackUserId,
-    SlackHistoryMessage, SlackMessageContent, SlackTs
+    SlackHistoryMessage, SlackMessageContent, SlackTs,
+    SlackFile,
 };
 use slack_morphism::events::SlackMessageEventType;
 use slack_morphism::hyper_tokio::{SlackHyperClient, SlackClientHyperConnector};
 
 use openai_api_rs::v1::{
     api::OpenAIClient,
-    chat_completion::{self, ChatCompletionRequest, Content, MessageRole},
+    chat_completion::{self, ChatCompletionRequest, Content, MessageRole, ContentType, ImageUrl, ImageUrlType},
 };
 use reqwest::Client;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use std::env;
-use tracing::{info, error};
+use tracing::{info, error, debug, warn};
 use tokio_retry::{Retry, strategy::ExponentialBackoff};
 use tokio_retry::strategy::jitter;
+use base64::{engine::general_purpose, Engine as _};
+use serde_json::Value;
+use url::Url;
 
 use crate::errors::SlackError;
 use crate::prompt::sanitize_custom_internal;
@@ -28,11 +32,31 @@ use crate::response::create_replace_original_payload;
 const GPT4O_MAX_CONTEXT_TOKENS: usize = 128_000; // 128K token context window
 const GPT4O_MAX_OUTPUT_TOKENS: usize = 4_096;    // Maximum output tokens
 const GPT4O_BUFFER_TOKENS: usize = 250;          // Buffer to prevent going over limit
+const INLINE_IMAGE_MAX_BYTES: usize = 64 * 1024; // 64 KiB threshold for inline images – keep prompt size sensible
+const URL_IMAGE_MAX_BYTES: usize = 20 * 1024 * 1024; // 20 MB max for OpenAI vision URLs
 
-/// Rough token estimation - about 4 chars per token for English text
+/// Whitelisted image MIME types GPT-4o accepts
+const ALLOWED_IMAGE_MIME: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
+
+/// Returns lowercase, parameter-stripped, canonical mime (`image/jpg` ⇒ `image/jpeg`).
+fn canonicalize_mime(mime: &str) -> String {
+    let main = mime
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+
+    match main.as_str() {
+        "image/jpg" => "image/jpeg".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Rough token estimation - assume ~4 characters per token for English-like text.
+/// Adds 3 before division to effectively round up (ceiling).
 pub fn estimate_tokens(text: &str) -> usize {
-    let char_count = text.chars().count();
-    char_count / 4 + 1 // Add 1 to round up
+    text.chars().count() / 4 + 1
 }
 
 // Use once_cell to create static instances that are lazily initialized
@@ -122,7 +146,7 @@ impl SlackBot {
             // First get channel info to determine last_read timestamp
             let info_req = SlackApiConversationsInfoRequest::new(SlackChannelId::new(channel_id.to_string()));
             let channel_info = session.conversations_info(&info_req).await?;
-            let last_read_ts = channel_info.channel.last_state.last_read.unwrap_or_else(|| SlackTs::new("0.0".into()));
+            let last_read_ts = channel_info.channel.last_state.last_read.unwrap_or_else(|| SlackTs::new("0.0".to_string()));
     
             // Build request to get messages since last read
             let request = SlackApiConversationsHistoryRequest::new()
@@ -343,6 +367,195 @@ impl SlackBot {
         }).await
     }
 
+    async fn fetch_image_as_data_uri(&self, url: &str, fallback_mime: &str) -> Result<String, SlackError> {
+        let response = HTTP_CLIENT
+            .get(url)
+            .bearer_auth(&self.token.token_value.0)
+            .send()
+            .await
+            .map_err(|e| SlackError::HttpError(format!("Failed to download image: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(SlackError::HttpError(format!(
+                "Image download failed with status {}",
+                response.status()
+            )));
+        }
+
+        let header_mime = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok());
+        let mut mime = canonicalize_mime(header_mime.unwrap_or(fallback_mime));
+
+        // Ensure final mime is supported & canonical; fallback to provided mime otherwise
+        if !is_supported_image_mime(&mime) {
+            mime = canonicalize_mime(fallback_mime);
+        }
+
+        let bytes = response
+             .bytes()
+             .await
+             .map_err(|e| SlackError::HttpError(format!("Failed to read image bytes: {}", e)))?;
+
+        let encoded = general_purpose::STANDARD.encode(&bytes);
+
+        Ok(format!("data:{};base64,{}", mime, encoded))
+    }
+
+    async fn fetch_image_size(&self, url: &str) -> Result<Option<usize>, SlackError> {
+        let resp = HTTP_CLIENT
+            .head(url)
+            .bearer_auth(&self.token.token_value.0)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            return Ok(None);
+        }
+
+        let size_opt = resp
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<usize>().ok());
+
+        Ok(size_opt)
+    }
+
+    async fn ensure_public_file_url(&self, file: &SlackFile) -> Result<String, SlackError> {
+        // Step 1: Ensure the file has a public permalink. Avoid extra API call if already present.
+        let permalink = if let Some(link) = &file.permalink_public {
+            link.to_string()
+        } else {
+            // Publish the file via Slack API → files.sharedPublicURL
+            let api_url = "https://slack.com/api/files.sharedPublicURL";
+            let params = [("file", file.id.0.clone())];
+
+            let resp = HTTP_CLIENT
+                .post(api_url)
+                .bearer_auth(&self.token.token_value.0)
+                .form(&params)
+                .send()
+                .await?;
+
+            if !resp.status().is_success() {
+                return Err(SlackError::ApiError(format!(
+                    "files.sharedPublicURL failed with status {}",
+                    resp.status()
+                )));
+            }
+
+            let json: Value = resp.json().await?;
+            if !json["ok"].as_bool().unwrap_or(false) {
+                return Err(SlackError::ApiError(format!(
+                    "Slack API error while publishing file: {}",
+                    json
+                )));
+            }
+
+            json
+                .get("file")
+                .and_then(|f| f.get("permalink_public"))
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| SlackError::ApiError("`permalink_public` missing in response".to_string()))?
+                .to_string()
+        };
+
+        // Step 2: Extract pub_secret from the permalink.
+        let secret = Url::parse(&permalink)
+            .ok()
+            .and_then(|u| {
+                // First, try query string
+                if let Some(val) = u
+                    .query_pairs()
+                    .find(|(k, _)| k == "pub_secret")
+                    .map(|(_, v)| v.to_string())
+                {
+                    return Some(val);
+                }
+
+                // Fallback: public permalinks are of form
+                // https://slack-files.com/TXXXX-FFFF-<secret>
+                // Extract last hyphen-separated part of last path segment.
+                u.path_segments()
+                    .and_then(|mut segs| segs.next_back().map(|s| s.to_string()))
+                    .and_then(|last_seg| last_seg.rsplit('-').next().map(|s| s.to_string()))
+            })
+            .ok_or_else(|| SlackError::ApiError("pub_secret missing in permalink_public".to_string()))?;
+
+        // Step 3: Construct direct asset URL by adding pub_secret to download URL.
+        let base_download = Self::get_slack_file_download_url(file).ok_or_else(|| SlackError::ApiError("No downloadable URL on SlackFile".to_string()))?;
+
+        debug!(
+            "Ensuring public URL for file {} (mimetype={:?}): base={}",
+            file.id.0, file.mimetype.as_ref().map(|m| m.0.clone()), base_download
+        );
+
+        // Start with the original private download URL and attach the pub_secret.
+        let mut direct = base_download.clone();
+        direct.set_query(Some(&format!("pub_secret={}", secret)));
+
+        // First attempt: original /download/ path (direct already has it)
+        let mut candidate = direct.clone();
+
+        // Inner helper – returns Ok(url) if supported image mime obtained
+        async fn validate_candidate(url: &Url) -> Result<Option<String>, SlackError> {
+            if let Ok(resp) = HTTP_CLIENT
+                .head(url.clone())
+                .timeout(Duration::from_secs(10))
+                .send()
+                .await
+            {
+                let status = resp.status();
+                let ct = resp
+                    .headers()
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("(unknown)");
+                info!("HEAD {} -> {} (CT={})", url, status, ct);
+                if status.is_client_error() || status.is_server_error() {
+                    warn!("Public URL returned error status {}", status);
+                    return Ok(None);
+                }
+                let canon_ct = canonicalize_mime(ct);
+                if is_supported_image_mime(&canon_ct) {
+                    return Ok(Some(canon_ct));
+                }
+            } else {
+                warn!("HEAD request failed for {}", url);
+            }
+            Ok(None)
+        }
+
+        let is_supported = validate_candidate(&candidate).await?;
+
+        // If first candidate was unsupported, try without "/download/" segment
+        if is_supported.is_none() && candidate.path().contains("/download/") {
+            let mut new_path = candidate.path().replace("/download/", "/");
+            while new_path.contains("//") {
+                new_path = new_path.replace("//", "/");
+            }
+            let mut alt = candidate.clone();
+            alt.set_path(&new_path);
+
+            if let Some(_ct) = validate_candidate(&alt).await? {
+                candidate = alt;
+            } else {
+                warn!("Both download and non-download variants had unsupported MIME types");
+                return Err(SlackError::ApiError("No supported public URL variant".to_string()));
+            }
+        }
+
+        Ok(candidate.to_string())
+    }
+
+    /// Helper to obtain the best URL for downloading a Slack file.
+    /// Prefers `url_private_download` (direct download) and falls back to `url_private`.
+    fn get_slack_file_download_url(file: &SlackFile) -> Option<&Url> {
+        file.url_private_download.as_ref().or(file.url_private.as_ref())
+    }
+
     /// Build the complete prompt as chat messages ready for the OpenAI request.
     /// `messages_markdown` should already contain the raw Slack messages,
     /// separated by newlines.
@@ -354,7 +567,7 @@ impl SlackBot {
             .unwrap_or_default();
 
         // Extract channel name from messages_markdown
-        let channel = if messages_markdown.starts_with("Channel: #") {
+        let _channel = if messages_markdown.starts_with("Channel: #") {
             let end_idx = messages_markdown.find('\n').unwrap_or(messages_markdown.len());
             &messages_markdown[10..end_idx]
         } else {
@@ -405,9 +618,7 @@ impl SlackBot {
         // 3. Actual conversation payload
         chat.push(chat_completion::ChatCompletionMessage {
             role: MessageRole::user,
-            content: Content::Text(format!(
-                "New messages from #{channel}:\n{messages_markdown}"
-            )),
+            content: Content::Text(messages_markdown.to_string()),
             name: None,
             tool_calls: None,
             tool_call_id: None,
@@ -482,14 +693,107 @@ impl SlackBot {
             .collect();
         
         // Build the full prompt using the new method with channel context
-        let messages_text = format!(
-            "Channel: #{}\n\n{}",
-            channel_name, 
-            formatted_messages.join("\n")
-        );
-        
-        // Use the new build_prompt method to create the prompt
-        let prompt = self.build_prompt(&messages_text, custom_prompt);
+        let messages_text = format!("{}\n\n{}", channel_name, formatted_messages.join("\n"));
+
+        // 1. Base text portion
+        let mut prompt = self.build_prompt(&messages_text, custom_prompt);
+
+        // 2. Append image data so GPT-4o can see pictures
+        for msg in messages {
+            if let Some(files) = &msg.content.files {
+                let mut imgs: Vec<ImageUrl> = Vec::new();
+                for file in files {
+                    if let Some(url) = Self::get_slack_file_download_url(file) {
+                        // Determine mime type: prefer Slack-provided mimetype, else guess from URL path
+                        let raw_mime: String = file
+                            .mimetype
+                            .as_ref()
+                            .map(|m| m.0.clone())
+                            .unwrap_or_else(|| {
+                                mime_guess::from_path(url.path())
+                                    .first_or_octet_stream()
+                                    .essence_str()
+                                    .to_string()
+                            });
+
+                        let canon = canonicalize_mime(&raw_mime);
+                        if !is_supported_image_mime(&canon) {
+                            continue; // Skip unsupported formats like HEIC, TIFF, etc.
+                        }
+
+                        let size_opt = self.fetch_image_size(url.as_str()).await.unwrap_or(None);
+
+                        // Skip if over OpenAI hard limit
+                        if let Some(sz) = size_opt {
+                            if sz > URL_IMAGE_MAX_BYTES {
+                                info!("Skipping image {} because size {}B > {}B", url, sz, URL_IMAGE_MAX_BYTES);
+                                continue;
+                            }
+                        }
+
+                        let use_inline = match size_opt {
+                            Some(sz) => sz <= INLINE_IMAGE_MAX_BYTES,
+                            None => false,
+                        };
+
+                        if use_inline {
+                            match self.fetch_image_as_data_uri(url.as_str(), &canon).await {
+                                Ok(data_uri) => imgs.push(ImageUrl {
+                                    r#type: ContentType::image_url,
+                                    text: None,
+                                    image_url: Some(ImageUrlType { url: data_uri }),
+                                }),
+                                Err(e) => error!("Failed to fetch image {}: {}", url, e),
+                            }
+                        } else {
+                            match self.ensure_public_file_url(file).await {
+                                Ok(public_url) => imgs.push(ImageUrl {
+                                    r#type: ContentType::image_url,
+                                    text: None,
+                                    image_url: Some(ImageUrlType { url: public_url }),
+                                }),
+                                Err(e) => error!("Failed to get public URL for image {}: {}", url, e),
+                            }
+                        }
+                    }
+                }
+                if !imgs.is_empty() {
+                    // Determine if original Slack message had any visible text
+                    let text_is_empty = msg
+                        .content
+                        .text
+                        .as_ref()
+                        .map(|t| t.trim().is_empty())
+                        .unwrap_or(true);
+
+                    if text_is_empty {
+                        // Inject a minimal placeholder so the model treats the images as user input
+                        let placeholder = if imgs.len() == 1 {
+                            "(uploaded an image)".to_string()
+                        } else {
+                            format!("(uploaded {} images)", imgs.len())
+                        };
+
+                        prompt.push(chat_completion::ChatCompletionMessage {
+                            role: MessageRole::user,
+                            content: Content::Text(placeholder),
+                            name: None,
+                            tool_calls: None,
+                            tool_call_id: None,
+                        });
+                    }
+
+                    // Now push the actual image payload so GPT-4o can inspect them
+                    prompt.push(chat_completion::ChatCompletionMessage {
+                        role: MessageRole::user,
+                        content: Content::ImageUrl(imgs),
+                        name: None,
+                        tool_calls: None,
+                        tool_call_id: None,
+                    });
+                }
+            }
+        }
         
         // Log the prompt with different detail levels based on feature flag
         #[cfg(feature = "debug-logs")]
@@ -544,4 +848,10 @@ impl SlackBot {
             Err(SlackError::OpenAIError("No response from OpenAI".to_string()))
         }
     }
+}
+
+/// Returns whether a given MIME type is supported for image uploads.
+fn is_supported_image_mime(mime: &str) -> bool {
+    let canon = canonicalize_mime(mime);
+    ALLOWED_IMAGE_MIME.contains(&canon.as_str())
 }
