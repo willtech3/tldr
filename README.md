@@ -10,7 +10,6 @@ TLDR is a serverless, Rust-powered Slack bot that turns a wall of unread message
 - **AI-Generated Summaries** – Uses OpenAI ChatGPT to distill unread messages.
 - **Two-Lambda Architecture** – Instant slash-command acknowledgement + async processing for snappy UX.
 - **Built with Safe, Async Rust** – Tokio runtime, `slack-morphism` and `openai-api-rs`.
-- **Secure by Default** – HMAC-SHA256 request verification and least-privilege AWS IAM roles.
 
 ---
 
