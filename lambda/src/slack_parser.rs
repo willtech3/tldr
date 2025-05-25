@@ -79,20 +79,20 @@ pub fn decode_url_component(input: &str) -> Result<String, String> {
 /// ```
 pub fn parse_form_data(form_data: &str) -> Result<SlackCommandEvent, String> {
     let mut map: HashMap<String, String> = HashMap::new();
-    
+
     // Parse the form data
     for pair in form_data.split('&') {
         if let Some(idx) = pair.find('=') {
             let key = decode_url_component(&pair[..idx])
                 .map_err(|e| format!("Failed to decode key: {}", e))?;
-                
+
             let value = decode_url_component(&pair[idx + 1..])
                 .map_err(|e| format!("Failed to decode value: {}", e))?;
-                
+
             map.insert(key, value);
         }
     }
-    
+
     // Create the SlackCommandEvent from the parsed data
     let event = SlackCommandEvent {
         token: map.get("token").cloned().unwrap_or_default(),
@@ -108,6 +108,6 @@ pub fn parse_form_data(form_data: &str) -> Result<SlackCommandEvent, String> {
         trigger_id: map.get("trigger_id").cloned().unwrap_or_default(),
         command_ts: map.get("command_ts").cloned().unwrap_or_default(),
     };
-    
+
     Ok(event)
 }

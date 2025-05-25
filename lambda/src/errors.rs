@@ -6,16 +6,16 @@ use openai_api_rs::v1::error::APIError;
 pub enum SlackError {
     #[error("Failed to parse Slack event: {0}")]
     ParseError(String),
-    
+
     #[error("Failed to access Slack API: {0}")]
     ApiError(String),
-    
+
     #[error("Failed to access OpenAI API: {0}")]
     OpenAIError(String),
-    
+
     #[error("Failed to send HTTP request: {0}")]
     HttpError(String),
-    
+
     #[error("Failed to interact with AWS services: {0}")]
     AwsError(String),
 }
@@ -39,8 +39,8 @@ impl From<anyhow::Error> for SlackError {
 }
 
 // Generic implementation for AWS SDK errors
-impl<E> From<aws_sdk_sqs::types::SdkError<E>> for SlackError 
-where 
+impl<E> From<aws_sdk_sqs::types::SdkError<E>> for SlackError
+where
     E: std::fmt::Display
 {
     fn from(error: aws_sdk_sqs::types::SdkError<E>) -> Self {

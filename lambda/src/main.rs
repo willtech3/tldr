@@ -2,8 +2,8 @@ use lambda_runtime::{run, service_fn, Error, LambdaEvent};
 use serde::{Serialize};
 use slack_morphism::prelude::*;
 use slack_morphism::{
-    SlackApiToken, SlackApiTokenValue, 
-    SlackChannelId, 
+    SlackApiToken, SlackApiTokenValue,
+    SlackChannelId,
     SlackUserId,
     SlackHistoryMessage,
 };
@@ -27,12 +27,12 @@ use slack_parser::{SlackCommandEvent, parse_form_data};
 enum SlackError {
     #[allow(dead_code)]
     Parse(String),
-    
+
     OpenAI(String),
-    
+
     #[allow(dead_code)]
     Http(String),
-    
+
     #[allow(dead_code)]
     Aws(String),
 }
@@ -60,11 +60,11 @@ impl SlackBot {
     async fn new() -> Result<Self> {
         let token = env::var("SLACK_BOT_TOKEN")?;
         let openai_api_key = env::var("OPENAI_API_KEY")?;
-        
+
         // Initialize SlackHyperClient correctly using the connector
-        let client = SlackHyperClient::new(SlackClientHyperConnector::new()); 
+        let client = SlackHyperClient::new(SlackClientHyperConnector::new());
         let token = SlackApiToken::new(SlackApiTokenValue::new(token));
-        
+
         // Use the builder pattern and handle errors explicitly to avoid issues with Send/Sync constraints
         let openai_client = match OpenAIClient::builder()
             .with_api_key(openai_api_key)
@@ -72,27 +72,27 @@ impl SlackBot {
                 Ok(client) => client,
                 Err(e) => return Err(anyhow::anyhow!("Failed to create OpenAI client: {}", e))
             };
-        
+
         Ok(Self { client, token, openai_client })
     }
-    
+
     async fn get_user_im_channel(&self, user_id: &str) -> Result<String> {
         let session = self.client.open_session(&self.token);
 
-        // Use conversations.open directly. It will return the existing IM channel ID 
+        // Use conversations.open directly. It will return the existing IM channel ID
         // if one exists, or open a new one.
         let open_req = SlackApiConversationsOpenRequest::new()
             .with_users(vec![SlackUserId(user_id.to_string())]);
-        
+
         let open_resp = session.conversations_open(&open_req).await?;
 
         // The response directly contains the channel ID (new or existing)
         Ok(open_resp.channel.id.0)
     }
-    
+
     async fn get_unread_messages(&self, channel_id: &str) -> Result<Vec<SlackHistoryMessage>> {
         let session = self.client.open_session(&self.token);
-        
+
         // Get channel info to find last read timestamp (might require different API call)
         let info_req = SlackApiConversationsInfoRequest::new(SlackChannelId(channel_id.to_string()));
         let channel_info = session.conversations_info(&info_req).await?;
@@ -105,15 +105,15 @@ impl SlackBot {
             .with_channel(SlackChannelId(channel_id.to_string())) // Use builder method
             .with_limit(1000) // Adjust as needed
             .with_oldest(last_read_ts); // Pass SlackTs directly, not Option<SlackTs>
-        
+
         let result = session.conversations_history(&request).await?;
 
         // Change return type to Vec<SlackHistoryMessage>
         Ok(result.messages)
     }
-    
+
     async fn summarize_messages_with_chatgpt(
-        &mut self, 
+        &mut self,
         messages: &[SlackHistoryMessage],
         channel_id: &str,
         custom_prompt: Option<&str>,
@@ -121,13 +121,13 @@ impl SlackBot {
         if messages.is_empty() {
             return Ok("No messages to summarize.".to_string());
         }
-        
+
         // Get channel name from channel_id
         let channel_info = self.client.open_session(&self.token)
             .conversations_info(&SlackApiConversationsInfoRequest::new(SlackChannelId::new(channel_id.to_string())))
             .await
             .map_err(|e| SlackError::OpenAI(format!("Failed to get channel info: {}", e)))?;
-            
+
         let channel_name = channel_info.channel.name
             .unwrap_or_else(|| channel_id.to_string());
 
@@ -366,7 +366,7 @@ Focus on key information, group related points, and preserve any useful links.",
         session.chat_post_message(&post_req).await?;
         Ok(())
     }
-    
+
     async fn handle_slash_command(&self, command: SlackCommandEvent) -> Result<String> {
         let channel_id = command.channel_id.clone();
         let user_id = command.user_id.clone();
@@ -383,11 +383,11 @@ Focus on key information, group related points, and preserve any useful links.",
 
         // Type signature now returns Vec<SlackHistoryMessage>
         let messages = self.get_unread_messages(channel_id.as_ref()).await?;
-        
+
         if messages.is_empty() {
             return Ok("No unread messages found in this channel.".to_string());
         }
-        
+
         // Start async processing to generate summary and send DM
         let messages_count = messages.len(); // Store length before move
         let messages_vec = messages.to_vec(); // Clone messages for the async task if needed
@@ -398,7 +398,7 @@ Focus on key information, group related points, and preserve any useful links.",
                 if let Ok(summary) = bot
                     .summarize_messages_with_chatgpt(&messages_vec, channel_id.as_ref(), custom_prompt_opt.as_deref())
                     .await
-                { 
+                {
                     if let Err(e) = bot.send_dm(&user_id, &summary).await {
                         error!("Failed to send DM: {}", e);
                     } else {

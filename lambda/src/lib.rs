@@ -67,7 +67,7 @@ pub fn setup_logging() {
     let fmt_layer = tracing_subscriber::fmt::layer()
         .json()
         .with_target(true);
-    
+
     tracing_subscriber::registry()
         .with(fmt_layer)
         .init();
