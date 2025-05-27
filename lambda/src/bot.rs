@@ -11,7 +11,7 @@ use base64::{Engine as _, engine::general_purpose};
 use openai_api_rs::v1::{
     api::OpenAIClient,
     chat_completion::{
-        self, ChatCompletionRequest, Content, ContentType, ImageUrl, ImageUrlType, MessageRole,
+        self, Content, ContentType, ImageUrl, ImageUrlType, MessageRole,
     },
 };
 use reqwest::Client;
@@ -948,31 +948,74 @@ impl SlackBot {
         }
 
         // Build the o3 chat completion request
-        let request = ChatCompletionRequest::new("o3".to_string(), prompt)
-            .temperature(if custom_prompt.is_some() { 0.9 } else { 0.3 }) // Default 0.3, 0.9 if custom prompt is provided
-            .max_tokens(max_output_tokens as i64);
+        // Note: o3 model requires 'max_completion_tokens' instead of 'max_tokens'
+        // Since the openai-api-rs crate doesn't support max_completion_tokens yet,
+        // we'll make the request manually using reqwest
+        let request_body = serde_json::json!({
+            "model": "o3",
+            "messages": prompt,
+            "temperature": if custom_prompt.is_some() { 0.9 } else { 0.3 },
+            "max_completion_tokens": max_output_tokens
+        });
 
-        // Send to OpenAI API directly with mutable reference
-        let response = self
-            .openai_client
-            .chat_completion(request)
+        // Get the OpenAI API key for direct HTTP request
+        let api_key = env::var("OPENAI_API_KEY")
+            .map_err(|_| SlackError::OpenAIError("OPENAI_API_KEY not found".to_string()))?;
+        
+        let org_id = env::var("OPENAI_ORG_ID").ok();
+
+        // Make direct HTTP request to OpenAI API
+        let client = reqwest::Client::new();
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("Authorization", format!("Bearer {}", api_key).parse().unwrap());
+        headers.insert("Content-Type", "application/json".parse().unwrap());
+        
+        if let Some(org) = org_id {
+            headers.insert("OpenAI-Organization", org.parse().unwrap());
+        }
+
+        let response = client
+            .post("https://api.openai.com/v1/chat/completions")
+            .headers(headers)
+            .json(&request_body)
+            .send()
             .await
-            .map_err(|e| SlackError::OpenAIError(format!("OpenAI API error: {}", e)))?;
+            .map_err(|e| SlackError::HttpError(format!("OpenAI API request failed: {}", e)))?;
 
-        // Extract the text response
-        if let Some(choice) = response.choices.first() {
-            if let Some(text) = &choice.message.content {
-                // Include channel information in the final summary
-                let formatted_summary = format!("*Summary from #{}*\n\n{}", channel_name, text);
-                Ok(formatted_summary)
+        if !response.status().is_success() {
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(SlackError::OpenAIError(format!("OpenAI API error: {}", error_text)));
+        }
+
+        let response_json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| SlackError::OpenAIError(format!("Failed to parse OpenAI response: {}", e)))?;
+
+        // Extract the text response from JSON
+        if let Some(choices) = response_json.get("choices").and_then(|c| c.as_array()) {
+            if let Some(choice) = choices.first() {
+                if let Some(text) = choice
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_str())
+                {
+                    // Include channel information in the final summary
+                    let formatted_summary = format!("*Summary from #{}*\n\n{}", channel_name, text);
+                    Ok(formatted_summary)
+                } else {
+                    Err(SlackError::OpenAIError(
+                        "No content in OpenAI response".to_string(),
+                    ))
+                }
             } else {
                 Err(SlackError::OpenAIError(
-                    "No content in OpenAI response".to_string(),
+                    "No choices in OpenAI response".to_string(),
                 ))
             }
         } else {
             Err(SlackError::OpenAIError(
-                "No response from OpenAI".to_string(),
+                "Invalid OpenAI response format".to_string(),
             ))
         }
     }
