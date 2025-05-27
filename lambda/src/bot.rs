@@ -949,12 +949,13 @@ impl SlackBot {
 
         // Build the o3 chat completion request
         // Note: o3 model requires 'max_completion_tokens' instead of 'max_tokens'
+        // and only supports the default temperature value (1.0)
         // Since the openai-api-rs crate doesn't support max_completion_tokens yet,
         // we'll make the request manually using reqwest
         let request_body = serde_json::json!({
             "model": "o3",
             "messages": prompt,
-            "temperature": if custom_prompt.is_some() { 0.9 } else { 0.3 },
+            // o3 model only supports default temperature (1.0), so we omit this parameter
             "max_completion_tokens": max_output_tokens
         });
 
