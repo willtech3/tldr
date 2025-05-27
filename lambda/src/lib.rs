@@ -35,7 +35,13 @@
 ///
 ///     Ok(())
 /// }
-/// // Re-export the module components as a public API
+/// // DDD module structure
+pub mod domains;
+pub mod infrastructure;
+pub mod application;
+pub mod adapters;
+
+// Legacy modules (to be refactored into DDD structure)
 pub mod bot;
 pub mod errors;
 pub mod formatting;
