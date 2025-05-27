@@ -28,14 +28,14 @@ use crate::errors::SlackError;
 use crate::prompt::sanitize_custom_internal;
 use crate::response::create_replace_original_payload;
 
-// GPT-4o model context limits
-const GPT4O_MAX_CONTEXT_TOKENS: usize = 128_000; // 128K token context window
-const GPT4O_MAX_OUTPUT_TOKENS: usize = 4_096;    // Maximum output tokens
-const GPT4O_BUFFER_TOKENS: usize = 250;          // Buffer to prevent going over limit
+// o3 model context limits
+const O3_MAX_CONTEXT_TOKENS: usize = 128_000; // 128K token context window
+const O3_MAX_OUTPUT_TOKENS: usize = 4_096;    // Maximum output tokens
+const O3_BUFFER_TOKENS: usize = 250;          // Buffer to prevent going over limit
 const INLINE_IMAGE_MAX_BYTES: usize = 64 * 1024; // 64 KiB threshold for inline images – keep prompt size sensible
 const URL_IMAGE_MAX_BYTES: usize = 20 * 1024 * 1024; // 20 MB max for OpenAI vision URLs
 
-/// Whitelisted image MIME types GPT-4o accepts
+/// Whitelisted image MIME types o3 accepts
 const ALLOWED_IMAGE_MIME: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
 
 /// Returns lowercase, parameter-stripped, canonical mime (`image/jpg` ⇒ `image/jpeg`).
@@ -810,9 +810,9 @@ impl SlackBot {
         info!("Estimated input tokens: {}", estimated_input_tokens);
 
         // Calculate safe max_tokens (with buffer to prevent exceeding context limit)
-        let max_output_tokens = (GPT4O_MAX_CONTEXT_TOKENS - estimated_input_tokens)
-            .saturating_sub(GPT4O_BUFFER_TOKENS) // Ensure we don't underflow
-            .min(GPT4O_MAX_OUTPUT_TOKENS);       // Don't exceed maximum allowed output
+        let max_output_tokens = (O3_MAX_CONTEXT_TOKENS - estimated_input_tokens)
+            .saturating_sub(O3_BUFFER_TOKENS) // Ensure we don't underflow
+            .min(O3_MAX_OUTPUT_TOKENS);       // Don't exceed maximum allowed output
 
         info!("Calculated max output tokens: {}", max_output_tokens);
 
@@ -823,9 +823,9 @@ impl SlackBot {
             return Ok("The conversation was too large to summarize completely. Here's a partial summary of the most recent messages.".to_string());
         }
 
-        // Build the GPT-4o chat completion request
+        // Build the o3 chat completion request
         let request = ChatCompletionRequest::new(
-            "gpt-4o".to_string(),
+            "o3".to_string(),
             prompt
         )
         .temperature(if custom_prompt.is_some() { 0.9 } else { 0.3 }) // Default 0.3, 0.9 if custom prompt is provided
