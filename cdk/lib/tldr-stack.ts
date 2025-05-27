@@ -12,6 +12,7 @@ interface TldrStackProps extends cdk.StackProps {
   slackBotToken: string;
   slackSigningSecret: string;
   openaiApiKey: string;
+  openaiOrgId: string;
 }
 
 export class TldrStack extends cdk.Stack {
@@ -66,6 +67,7 @@ export class TldrStack extends cdk.Stack {
       SLACK_BOT_TOKEN: props.slackBotToken,
       SLACK_SIGNING_SECRET: props.slackSigningSecret,
       OPENAI_API_KEY: props.openaiApiKey,
+      OPENAI_ORG_ID: props.openaiOrgId,
       PROCESSING_QUEUE_URL: processingQueue.queueUrl,
     };
 
