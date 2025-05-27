@@ -29,6 +29,7 @@ new TldrStack(app, 'TldrStack', {
   slackBotToken: process.env.SLACK_BOT_TOKEN || '',
   slackSigningSecret: process.env.SLACK_SIGNING_SECRET || '',
   openaiApiKey: process.env.OPENAI_API_KEY || '',
+  openaiOrgId: process.env.OPENAI_ORG_ID || '',
   // Add basic environment configuration
   env: {
     account: accountId,
