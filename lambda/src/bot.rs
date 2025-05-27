@@ -29,8 +29,8 @@ use crate::prompt::sanitize_custom_internal;
 use crate::response::create_replace_original_payload;
 
 // o3 model context limits
-const O3_MAX_CONTEXT_TOKENS: usize = 128_000; // 128K token context window
-const O3_MAX_OUTPUT_TOKENS: usize = 4_096;    // Maximum output tokens
+const O3_MAX_CONTEXT_TOKENS: usize = 200_000; // 200K token context window
+const O3_MAX_OUTPUT_TOKENS: usize = 100_000;  // Maximum output tokens
 const O3_BUFFER_TOKENS: usize = 250;          // Buffer to prevent going over limit
 const INLINE_IMAGE_MAX_BYTES: usize = 64 * 1024; // 64 KiB threshold for inline images – keep prompt size sensible
 const URL_IMAGE_MAX_BYTES: usize = 20 * 1024 * 1024; // 20 MB max for OpenAI vision URLs
