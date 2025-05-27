@@ -58,13 +58,14 @@ jobs:
         run: cargo test --all-features
         if: github.event_name == 'pull_request'
 
-      # Build Lambda functions using Docker
+      # Build Lambda functions using Docker (only for deployments)
       - name: Build Lambda Functions
         run: |
           chmod +x build-local.sh
           ./build-local.sh
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
-      # Extract built Lambda artifacts from the container
+      # Extract built Lambda artifacts from the container (only for deployments)
       - name: Extract Lambda artifacts
         run: |
           mkdir -p lambda/target/lambda/tldr-api
@@ -77,29 +78,33 @@ jobs:
           ls -l lambda/target/lambda/tldr-api/function.zip || (echo 'API function.zip not found!' && exit 1)
           echo '--- Verifying Worker Lambda artifact ---'
           ls -l lambda/target/lambda/tldr-worker/function.zip || (echo 'Worker function.zip not found!' && exit 1)
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
       # Skip the cache move step since we're not using docker/build-push-action
       # The move cache step is needed only when using docker/build-push-action with cache-to
 
-      # Setup Node.js
+      # Setup Node.js (only for deployments)
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
           node-version: '18'
           cache: 'npm'
           cache-dependency-path: './cdk/package-lock.json'
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
-      # Install CDK dependencies
+      # Install CDK dependencies (only for deployments)
       - name: Install CDK dependencies
         run: |
           cd cdk
           npm ci
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
-      # Build CDK TypeScript
+      # Build CDK TypeScript (only for deployments)
       - name: Build CDK TypeScript
         run: |
           cd cdk
           npm run build
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
         # Configure AWS credentials for CDK deployment
       - name: Configure AWS credentials
@@ -130,5 +135,6 @@ jobs:
           SLACK_BOT_TOKEN:      ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
           OPENAI_API_KEY:       ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_ORG_ID:        ${{ secrets.OPENAI_ORG_ID }}
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
