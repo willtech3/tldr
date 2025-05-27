@@ -8,12 +8,12 @@ fn test_logging_setup() {
         // Call the setup_logging function
         setup_logging();
     });
-    
+
     // The test passes if no panic occurred
     assert!(result.is_ok(), "setup_logging function should not panic");
 }
 
 // Note: We can't fully test the actual logging output here as that would
-// require capturing stdout/stderr or examining log files, which is more 
+// require capturing stdout/stderr or examining log files, which is more
 // complex than needed for this test. The primary goal is to ensure the
 // function can be called without errors.

@@ -49,7 +49,7 @@ pub fn format_summary_message(
     source_channel_id: &str,
     text: &str,
     summary: &str,
-    visible: bool
+    visible: bool,
 ) -> String {
     if visible {
         // Format parameters to show in the announcement message when visible

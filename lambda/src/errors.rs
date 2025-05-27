@@ -1,6 +1,6 @@
-use thiserror::Error;
-use slack_morphism::errors::SlackClientError;
 use openai_api_rs::v1::error::APIError;
+use slack_morphism::errors::SlackClientError;
+use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum SlackError {
@@ -41,7 +41,7 @@ impl From<anyhow::Error> for SlackError {
 // Generic implementation for AWS SDK errors
 impl<E> From<aws_sdk_sqs::types::SdkError<E>> for SlackError
 where
-    E: std::fmt::Display
+    E: std::fmt::Display,
 {
     fn from(error: aws_sdk_sqs::types::SdkError<E>) -> Self {
         SlackError::AwsError(error.to_string())

@@ -1,7 +1,5 @@
 /// List of disallowed patterns in custom prompts (prompt injection protection)
-pub const DISALLOWED_PATTERNS: [&str; 4] = [
-    "system:", "assistant:", "user:", "{{"
-];
+pub const DISALLOWED_PATTERNS: [&str; 4] = ["system:", "assistant:", "user:", "{{"];
 
 /// Maximum length allowed for custom prompts for command parameters
 pub const MAX_CUSTOM_PROMPT_LENGTH: usize = 800;
@@ -14,18 +12,25 @@ pub const MAX_CUSTOM_LEN: usize = 800;
 pub fn sanitize_custom_prompt(prompt: &str) -> Result<String, String> {
     // Check length
     if prompt.len() > MAX_CUSTOM_PROMPT_LENGTH {
-        return Err(format!("Custom prompt exceeds maximum length of {} characters", MAX_CUSTOM_PROMPT_LENGTH));
+        return Err(format!(
+            "Custom prompt exceeds maximum length of {} characters",
+            MAX_CUSTOM_PROMPT_LENGTH
+        ));
     }
 
     // Check for disallowed patterns
     for pattern in DISALLOWED_PATTERNS.iter() {
         if prompt.to_lowercase().contains(&pattern.to_lowercase()) {
-            return Err(format!("Custom prompt contains disallowed pattern: {}", pattern));
+            return Err(format!(
+                "Custom prompt contains disallowed pattern: {}",
+                pattern
+            ));
         }
     }
 
     // Remove any control characters
-    let sanitized = prompt.chars()
+    let sanitized = prompt
+        .chars()
         .filter(|&c| !c.is_control())
         .collect::<String>();
 

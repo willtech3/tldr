@@ -3,7 +3,7 @@
 //! This module provides standardized ways to create and format
 //! responses sent to Slack, particularly for slash commands.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Create a JSON payload to replace/hide the original slash command
 ///

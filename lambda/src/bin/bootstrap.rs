@@ -18,7 +18,7 @@ async fn main() -> Result<(), Error> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
-    
+
     // Run the appropriate function handler based on features
     #[cfg(feature = "api")]
     {

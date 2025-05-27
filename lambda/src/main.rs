@@ -1,24 +1,24 @@
-use lambda_runtime::{run, service_fn, Error, LambdaEvent};
-use serde::{Serialize};
-use slack_morphism::prelude::*;
-use slack_morphism::{
-    SlackApiToken, SlackApiTokenValue,
-    SlackChannelId,
-    SlackUserId,
-    SlackHistoryMessage,
-};
-use slack_morphism::hyper_tokio::{SlackHyperClient, SlackClientHyperConnector};
+use anyhow::Result;
+use html2text::from_read as html_to_text;
+use lambda_runtime::{Error, LambdaEvent, run, service_fn};
+use openai_api_rs::v1::common::GPT4_O;
 use openai_api_rs::v1::{
     api::OpenAIClient,
-    chat_completion::{self, ChatCompletionRequest, Content, MessageRole, ContentType, ImageUrl, ImageUrlType, FinishReason, ChatCompletionMessageForResponse},
-    types::{Function, FunctionParameters, JSONSchemaType, JSONSchemaDefine},
+    chat_completion::{
+        self, ChatCompletionMessageForResponse, ChatCompletionRequest, Content, ContentType,
+        FinishReason, ImageUrl, ImageUrlType, MessageRole,
+    },
+    types::{Function, FunctionParameters, JSONSchemaDefine, JSONSchemaType},
 };
-use openai_api_rs::v1::common::GPT4_O;
-use std::env;
-use anyhow::Result;
-use tracing::{info, error};
-use html2text::from_read as html_to_text;
+use serde::Serialize;
 use serde_json::Value;
+use slack_morphism::hyper_tokio::{SlackClientHyperConnector, SlackHyperClient};
+use slack_morphism::prelude::*;
+use slack_morphism::{
+    SlackApiToken, SlackApiTokenValue, SlackChannelId, SlackHistoryMessage, SlackUserId,
+};
+use std::env;
+use tracing::{error, info};
 
 mod slack_parser;
 use slack_parser::{SlackCommandEvent, parse_form_data};
@@ -66,14 +66,16 @@ impl SlackBot {
         let token = SlackApiToken::new(SlackApiTokenValue::new(token));
 
         // Use the builder pattern and handle errors explicitly to avoid issues with Send/Sync constraints
-        let openai_client = match OpenAIClient::builder()
-            .with_api_key(openai_api_key)
-            .build() {
-                Ok(client) => client,
-                Err(e) => return Err(anyhow::anyhow!("Failed to create OpenAI client: {}", e))
-            };
+        let openai_client = match OpenAIClient::builder().with_api_key(openai_api_key).build() {
+            Ok(client) => client,
+            Err(e) => return Err(anyhow::anyhow!("Failed to create OpenAI client: {}", e)),
+        };
 
-        Ok(Self { client, token, openai_client })
+        Ok(Self {
+            client,
+            token,
+            openai_client,
+        })
     }
 
     async fn get_user_im_channel(&self, user_id: &str) -> Result<String> {
@@ -94,11 +96,16 @@ impl SlackBot {
         let session = self.client.open_session(&self.token);
 
         // Get channel info to find last read timestamp (might require different API call)
-        let info_req = SlackApiConversationsInfoRequest::new(SlackChannelId(channel_id.to_string()));
+        let info_req =
+            SlackApiConversationsInfoRequest::new(SlackChannelId(channel_id.to_string()));
         let channel_info = session.conversations_info(&info_req).await?;
 
         // Correct path to last_read
-        let last_read_ts = channel_info.channel.last_state.last_read.unwrap_or_else(|| SlackTs::new("0.0".into()));
+        let last_read_ts = channel_info
+            .channel
+            .last_state
+            .last_read
+            .unwrap_or_else(|| SlackTs::new("0.0".into()));
 
         // Get messages since last read
         let request = SlackApiConversationsHistoryRequest::new()
@@ -123,12 +130,18 @@ impl SlackBot {
         }
 
         // Get channel name from channel_id
-        let channel_info = self.client.open_session(&self.token)
-            .conversations_info(&SlackApiConversationsInfoRequest::new(SlackChannelId::new(channel_id.to_string())))
+        let channel_info = self
+            .client
+            .open_session(&self.token)
+            .conversations_info(&SlackApiConversationsInfoRequest::new(SlackChannelId::new(
+                channel_id.to_string(),
+            )))
             .await
             .map_err(|e| SlackError::OpenAI(format!("Failed to get channel info: {}", e)))?;
 
-        let channel_name = channel_info.channel.name
+        let channel_name = channel_info
+            .channel
+            .name
             .unwrap_or_else(|| channel_id.to_string());
 
         // Build chat completion messages including text and images
@@ -194,7 +207,11 @@ Focus on key information, group related points, and preserve any useful links.",
                     }
                 }
                 if !imgs.is_empty() {
-                    info!("Adding {} image(s) from ts {} to context", imgs.len(), msg.origin.ts.as_ref());
+                    info!(
+                        "Adding {} image(s) from ts {} to context",
+                        imgs.len(),
+                        msg.origin.ts.as_ref()
+                    );
                     chat_messages.push(chat_completion::ChatCompletionMessage {
                         role: MessageRole::user,
                         content: Content::ImageUrl(imgs),
@@ -234,7 +251,8 @@ Focus on key information, group related points, and preserve any useful links.",
         let mut messages_history = chat_messages;
 
         let mut iterations = 0;
-        let mut response = self.openai_client
+        let mut response = self
+            .openai_client
             .chat_completion(
                 ChatCompletionRequest::new(GPT4_O.to_string(), messages_history.clone())
                     .temperature(if custom_prompt.is_some() { 0.9 } else { 0.3 })
@@ -246,7 +264,10 @@ Focus on key information, group related points, and preserve any useful links.",
             .map_err(|e| SlackError::OpenAI(format!("OpenAI API error: {}", e)))?;
 
         loop {
-            let choice = response.choices.first().ok_or_else(|| SlackError::OpenAI("No choices in response".to_string()))?;
+            let choice = response
+                .choices
+                .first()
+                .ok_or_else(|| SlackError::OpenAI("No choices in response".to_string()))?;
 
             match &choice.finish_reason {
                 Some(FinishReason::tool_calls) => {
@@ -256,15 +277,12 @@ Focus on key information, group related points, and preserve any useful links.",
                     if let Some(tool_calls) = &choice.message.tool_calls {
                         info!("OpenAI requested {} tool call(s)", tool_calls.len());
                         for tc in tool_calls {
-                            let args_json = tc
-                                .function
-                                .arguments
-                                .as_deref()
-                                .unwrap_or("{}");
+                            let args_json = tc.function.arguments.as_deref().unwrap_or("{}");
 
-                            let url_opt = serde_json::from_str::<Value>(args_json)
-                                .ok()
-                                .and_then(|v| v.get("url").and_then(|u| u.as_str().map(|s| s.to_string())));
+                            let url_opt =
+                                serde_json::from_str::<Value>(args_json).ok().and_then(|v| {
+                                    v.get("url").and_then(|u| u.as_str().map(|s| s.to_string()))
+                                });
 
                             let fetched = if let Some(url) = url_opt {
                                 info!("Fetching URL requested by model: {}", url);
@@ -272,18 +290,22 @@ Focus on key information, group related points, and preserve any useful links.",
                                     Ok(text) => {
                                         info!("Fetched {} ({} chars)", url, text.len());
                                         text
-                                    },
+                                    }
                                     Err(e) => {
                                         error!("Failed to fetch {}: {}", url, e);
                                         format!("Failed to fetch {}: {}", url, e)
-                                    },
+                                    }
                                 }
                             } else {
                                 "Invalid arguments for get_url_content".to_string()
                             };
 
                             // Tool-role message with the fetched content
-                            info!("Inserting tool response for call_id {} ({} chars)", tc.id, fetched.len());
+                            info!(
+                                "Inserting tool response for call_id {} ({} chars)",
+                                tc.id,
+                                fetched.len()
+                            );
                             messages_history.push(chat_completion::ChatCompletionMessage {
                                 role: MessageRole::tool,
                                 content: Content::Text(fetched),
@@ -295,13 +317,17 @@ Focus on key information, group related points, and preserve any useful links.",
                     }
 
                     // Call the model again with updated history
-                    response = self.openai_client
+                    response = self
+                        .openai_client
                         .chat_completion(
-                            ChatCompletionRequest::new(GPT4_O.to_string(), messages_history.clone())
-                                .temperature(if custom_prompt.is_some() { 0.9 } else { 0.3 })
-                                .max_tokens(2500)
-                                .tools(tools_def.clone())
-                                .tool_choice(chat_completion::ToolChoiceType::Auto),
+                            ChatCompletionRequest::new(
+                                GPT4_O.to_string(),
+                                messages_history.clone(),
+                            )
+                            .temperature(if custom_prompt.is_some() { 0.9 } else { 0.3 })
+                            .max_tokens(2500)
+                            .tools(tools_def.clone())
+                            .tool_choice(chat_completion::ToolChoiceType::Auto),
                         )
                         .await
                         .map_err(|e| SlackError::OpenAI(format!("OpenAI API error: {}", e)))?;
@@ -336,17 +362,26 @@ Focus on key information, group related points, and preserve any useful links.",
         // Simple GET with timeout
         let resp = reqwest::Client::new()
             .get(url)
-            .header("User-Agent", "tldr-bot/0.1 (+https://github.com/willtech3/tldr)")
+            .header(
+                "User-Agent",
+                "tldr-bot/0.1 (+https://github.com/willtech3/tldr)",
+            )
             .timeout(std::time::Duration::from_secs(10))
             .send()
             .await
             .map_err(|e| SlackError::Http(format!("Request error: {}", e)))?;
 
         if !resp.status().is_success() {
-            return Err(SlackError::Http(format!("Non-success status: {}", resp.status())));
+            return Err(SlackError::Http(format!(
+                "Non-success status: {}",
+                resp.status()
+            )));
         }
 
-        let body = resp.text().await.map_err(|e| SlackError::Http(format!("Read body error: {}", e)))?;
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| SlackError::Http(format!("Read body error: {}", e)))?;
 
         // Convert HTML → plain text (width 80) and trim to 4000 chars to save tokens
         let text = html_to_text(body.as_bytes(), 80);
@@ -362,7 +397,10 @@ Focus on key information, group related points, and preserve any useful links.",
     async fn send_dm(&self, user_id: &str, message: &str) -> Result<()> {
         let channel_id = self.get_user_im_channel(user_id).await?;
         let session = self.client.open_session(&self.token);
-        let post_req = SlackApiChatPostMessageRequest::new(channel_id.into(), SlackMessageContent::new().with_text(message.to_string()));
+        let post_req = SlackApiChatPostMessageRequest::new(
+            channel_id.into(),
+            SlackMessageContent::new().with_text(message.to_string()),
+        );
         session.chat_post_message(&post_req).await?;
         Ok(())
     }
@@ -396,7 +434,11 @@ Focus on key information, group related points, and preserve any useful links.",
             if let Ok(mut bot) = SlackBot::new().await {
                 // Pass the cloned Vec<SlackHistoryMessage>
                 if let Ok(summary) = bot
-                    .summarize_messages_with_chatgpt(&messages_vec, channel_id.as_ref(), custom_prompt_opt.as_deref())
+                    .summarize_messages_with_chatgpt(
+                        &messages_vec,
+                        channel_id.as_ref(),
+                        custom_prompt_opt.as_deref(),
+                    )
                     .await
                 {
                     if let Err(e) = bot.send_dm(&user_id, &summary).await {
@@ -413,16 +455,21 @@ Focus on key information, group related points, and preserve any useful links.",
         });
 
         // Acknowledge command immediately using the stored count
-        Ok(format!("Processing {} unread messages. I'll DM you a summary shortly!", messages_count))
+        Ok(format!(
+            "Processing {} unread messages. I'll DM you a summary shortly!",
+            messages_count
+        ))
     }
 
     /// Converts a response message into a request-format message so it can be
     /// appended back to the conversation history.
-    fn convert_response_message(resp: &ChatCompletionMessageForResponse) -> chat_completion::ChatCompletionMessage {
-        let content = resp
-            .content
-            .as_ref()
-            .map_or_else(|| Content::Text(String::new()), |c| Content::Text(c.clone()));
+    fn convert_response_message(
+        resp: &ChatCompletionMessageForResponse,
+    ) -> chat_completion::ChatCompletionMessage {
+        let content = resp.content.as_ref().map_or_else(
+            || Content::Text(String::new()),
+            |c| Content::Text(c.clone()),
+        );
 
         chat_completion::ChatCompletionMessage {
             role: resp.role.clone(),

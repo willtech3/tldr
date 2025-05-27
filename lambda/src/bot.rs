@@ -1,27 +1,27 @@
 use once_cell::sync::Lazy;
+use slack_morphism::events::SlackMessageEventType;
+use slack_morphism::hyper_tokio::{SlackClientHyperConnector, SlackHyperClient};
 use slack_morphism::prelude::*;
 use slack_morphism::{
-    SlackApiToken, SlackApiTokenValue,
-    SlackChannelId, SlackUserId,
-    SlackHistoryMessage, SlackMessageContent, SlackTs,
-    SlackFile,
+    SlackApiToken, SlackApiTokenValue, SlackChannelId, SlackFile, SlackHistoryMessage,
+    SlackMessageContent, SlackTs, SlackUserId,
 };
-use slack_morphism::events::SlackMessageEventType;
-use slack_morphism::hyper_tokio::{SlackHyperClient, SlackClientHyperConnector};
 
+use base64::{Engine as _, engine::general_purpose};
 use openai_api_rs::v1::{
     api::OpenAIClient,
-    chat_completion::{self, ChatCompletionRequest, Content, MessageRole, ContentType, ImageUrl, ImageUrlType},
+    chat_completion::{
+        self, ChatCompletionRequest, Content, ContentType, ImageUrl, ImageUrlType, MessageRole,
+    },
 };
 use reqwest::Client;
-use std::collections::{HashMap, HashSet};
-use std::time::Duration;
-use std::env;
-use tracing::{info, error, debug, warn};
-use tokio_retry::{Retry, strategy::ExponentialBackoff};
-use tokio_retry::strategy::jitter;
-use base64::{engine::general_purpose, Engine as _};
 use serde_json::Value;
+use std::collections::{HashMap, HashSet};
+use std::env;
+use std::time::Duration;
+use tokio_retry::strategy::jitter;
+use tokio_retry::{Retry, strategy::ExponentialBackoff};
+use tracing::{debug, error, info, warn};
 use url::Url;
 
 use crate::errors::SlackError;
@@ -30,8 +30,8 @@ use crate::response::create_replace_original_payload;
 
 // o3 model context limits
 const O3_MAX_CONTEXT_TOKENS: usize = 200_000; // 200K token context window
-const O3_MAX_OUTPUT_TOKENS: usize = 100_000;  // Maximum output tokens
-const O3_BUFFER_TOKENS: usize = 250;          // Buffer to prevent going over limit
+const O3_MAX_OUTPUT_TOKENS: usize = 100_000; // Maximum output tokens
+const O3_BUFFER_TOKENS: usize = 250; // Buffer to prevent going over limit
 const INLINE_IMAGE_MAX_BYTES: usize = 64 * 1024; // 64 KiB threshold for inline images – keep prompt size sensible
 const URL_IMAGE_MAX_BYTES: usize = 20 * 1024 * 1024; // 20 MB max for OpenAI vision URLs
 
@@ -60,9 +60,8 @@ pub fn estimate_tokens(text: &str) -> usize {
 }
 
 // Use once_cell to create static instances that are lazily initialized
-static SLACK_CLIENT: Lazy<SlackHyperClient> = Lazy::new(|| {
-    SlackHyperClient::new(SlackClientHyperConnector::new())
-});
+static SLACK_CLIENT: Lazy<SlackHyperClient> =
+    Lazy::new(|| SlackHyperClient::new(SlackClientHyperConnector::new()));
 
 // Static HTTP client
 static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
@@ -93,9 +92,14 @@ impl SlackBot {
         let openai_client = OpenAIClient::builder()
             .with_api_key(openai_api_key)
             .build()
-            .map_err(|e| SlackError::OpenAIError(format!("Failed to create OpenAI client: {}", e)))?;
+            .map_err(|e| {
+                SlackError::OpenAIError(format!("Failed to create OpenAI client: {}", e))
+            })?;
 
-        Ok(Self { token, openai_client })
+        Ok(Self {
+            token,
+            openai_client,
+        })
     }
 
     // Helper function to wrap API calls with retry logic for rate limits and server errors
@@ -108,7 +112,7 @@ impl SlackBot {
         // Configure exponential backoff strategy with jitter to prevent thundering herd
         let strategy = ExponentialBackoff::from_millis(100)
             .map(jitter) // Add randomness to backoff durations
-            .take(5);    // Maximum 5 retries
+            .take(5); // Maximum 5 retries
 
         // Retry the operation with custom retry logic for specific error conditions
         Retry::spawn(strategy, operation).await
@@ -122,7 +126,8 @@ impl SlackBot {
 
             let open_resp = session.conversations_open(&open_req).await?;
             Ok(open_resp.channel.id.0)
-        }).await
+        })
+        .await
     }
 
     /// Get the bot's own user ID for filtering purposes
@@ -131,22 +136,33 @@ impl SlackBot {
             let session = SLACK_CLIENT.open_session(&self.token);
 
             // Use the auth.test API method to get information about the bot
-            let auth_test = session.auth_test().await
+            let auth_test = session
+                .auth_test()
+                .await
                 .map_err(|e| SlackError::ApiError(format!("Failed to get bot info: {}", e)))?;
 
             // Extract and return the bot's user ID
             Ok(auth_test.user_id.0)
-        }).await
+        })
+        .await
     }
 
-    pub async fn get_unread_messages(&self, channel_id: &str) -> Result<Vec<SlackHistoryMessage>, SlackError> {
+    pub async fn get_unread_messages(
+        &self,
+        channel_id: &str,
+    ) -> Result<Vec<SlackHistoryMessage>, SlackError> {
         self.with_retry(|| async {
             let session = SLACK_CLIENT.open_session(&self.token);
 
             // First get channel info to determine last_read timestamp
-            let info_req = SlackApiConversationsInfoRequest::new(SlackChannelId::new(channel_id.to_string()));
+            let info_req =
+                SlackApiConversationsInfoRequest::new(SlackChannelId::new(channel_id.to_string()));
             let channel_info = session.conversations_info(&info_req).await?;
-            let last_read_ts = channel_info.channel.last_state.last_read.unwrap_or_else(|| SlackTs::new("0.0".to_string()));
+            let last_read_ts = channel_info
+                .channel
+                .last_state
+                .last_read
+                .unwrap_or_else(|| SlackTs::new("0.0".to_string()));
 
             // Build request to get messages since last read
             let request = SlackApiConversationsHistoryRequest::new()
@@ -164,39 +180,55 @@ impl SlackBot {
             let bot_user_id = self.get_bot_user_id().await.ok();
 
             // Filter messages: Keep only those from users, exclude system messages AND bot's own messages
-            let filtered_messages: Vec<SlackHistoryMessage> = result.messages.into_iter().filter(|msg| {
-                // Check if the sender is a user (not a bot or system)
-                let is_user_message = msg.sender.user.is_some();
+            let filtered_messages: Vec<SlackHistoryMessage> = result
+                .messages
+                .into_iter()
+                .filter(|msg| {
+                    // Check if the sender is a user (not a bot or system)
+                    let is_user_message = msg.sender.user.is_some();
 
-                // Check for common system subtypes to exclude (add more as needed)
-                let is_system_message = match &msg.subtype {
-                    Some(subtype) => matches!(
-                        subtype,
-                        SlackMessageEventType::ChannelJoin | SlackMessageEventType::ChannelLeave | SlackMessageEventType::BotMessage
-                        // Add other subtypes like SlackMessageEventType::FileShare etc. if desired
-                    ),
-                    None => false, // Regular message, no subtype
-                };
+                    // Check for common system subtypes to exclude (add more as needed)
+                    let is_system_message = match &msg.subtype {
+                        Some(subtype) => matches!(
+                            subtype,
+                            SlackMessageEventType::ChannelJoin
+                                | SlackMessageEventType::ChannelLeave
+                                | SlackMessageEventType::BotMessage // Add other subtypes like SlackMessageEventType::FileShare etc. if desired
+                        ),
+                        None => false, // Regular message, no subtype
+                    };
 
-                // Check if it's a message from this bot
-                let is_from_this_bot = if let Some(ref bot_id) = bot_user_id {
-                    msg.sender.user.as_ref().is_some_and(|uid| uid.0 == *bot_id)
-                } else {
-                    false
-                };
+                    // Check if it's a message from this bot
+                    let is_from_this_bot = if let Some(ref bot_id) = bot_user_id {
+                        msg.sender.user.as_ref().is_some_and(|uid| uid.0 == *bot_id)
+                    } else {
+                        false
+                    };
 
-                // Check if the message contains "/tldr" (to exclude bot commands from summaries)
-                let contains_tldr_command = msg.content.text.as_deref()
-                    .map(|text| text.contains("/tldr"))
-                    .unwrap_or(false);
+                    // Check if the message contains "/tldr" (to exclude bot commands from summaries)
+                    let contains_tldr_command = msg
+                        .content
+                        .text
+                        .as_deref()
+                        .map(|text| text.contains("/tldr"))
+                        .unwrap_or(false);
 
-                is_user_message && !is_system_message && !is_from_this_bot && !contains_tldr_command
-            }).collect();
+                    is_user_message
+                        && !is_system_message
+                        && !is_from_this_bot
+                        && !contains_tldr_command
+                })
+                .collect();
 
-            info!("Fetched {} total messages, filtered down to {} user messages for summarization", original_message_count, filtered_messages.len());
+            info!(
+                "Fetched {} total messages, filtered down to {} user messages for summarization",
+                original_message_count,
+                filtered_messages.len()
+            );
 
             Ok(filtered_messages)
-        }).await
+        })
+        .await
     }
 
     pub async fn get_user_info(&self, user_id: &str) -> Result<String, SlackError> {
@@ -207,22 +239,33 @@ impl SlackBot {
             match session.users_info(&user_info_req).await {
                 Ok(info) => {
                     // Try to get real name first, then display name, then fallback to user ID
-                    let name = info.user.real_name
+                    let name = info
+                        .user
+                        .real_name
                         .or(info.user.profile.and_then(|p| p.display_name))
                         .unwrap_or_else(|| user_id.to_string());
 
-                    Ok(if name.is_empty() { user_id.to_string() } else { name })
-                },
+                    Ok(if name.is_empty() {
+                        user_id.to_string()
+                    } else {
+                        name
+                    })
+                }
                 Err(e) => {
                     // Log the error but don't fail the entire operation
                     error!("Failed to get user info for {}: {}", user_id, e);
                     Ok(user_id.to_string())
                 }
             }
-        }).await
+        })
+        .await
     }
 
-    pub async fn get_last_n_messages(&self, channel_id: &str, count: u32) -> Result<Vec<SlackHistoryMessage>, SlackError> {
+    pub async fn get_last_n_messages(
+        &self,
+        channel_id: &str,
+        count: u32,
+    ) -> Result<Vec<SlackHistoryMessage>, SlackError> {
         self.with_retry(|| async {
             let session = SLACK_CLIENT.open_session(&self.token);
 
@@ -246,7 +289,9 @@ impl SlackBot {
             let original_message_count = result.messages.len();
 
             // Filter messages: Keep only those from users, exclude system messages AND bot's own messages
-            let filtered_messages: Vec<SlackHistoryMessage> = result.messages.into_iter()
+            let filtered_messages: Vec<SlackHistoryMessage> = result
+                .messages
+                .into_iter()
                 .filter(|msg| {
                     // Check if the sender is a user (not a bot or system)
                     let is_user_message = msg.sender.user.is_some();
@@ -255,8 +300,9 @@ impl SlackBot {
                     let is_system_message = match &msg.subtype {
                         Some(subtype) => matches!(
                             subtype,
-                            SlackMessageEventType::ChannelJoin | SlackMessageEventType::ChannelLeave | SlackMessageEventType::BotMessage
-                            // Add other subtypes like SlackMessageEventType::FileShare etc. if desired
+                            SlackMessageEventType::ChannelJoin
+                                | SlackMessageEventType::ChannelLeave
+                                | SlackMessageEventType::BotMessage // Add other subtypes like SlackMessageEventType::FileShare etc. if desired
                         ),
                         None => false, // Regular message, no subtype
                     };
@@ -269,20 +315,30 @@ impl SlackBot {
                     };
 
                     // Check if the message contains "/tldr" (to exclude bot commands from summaries)
-                    let contains_tldr_command = msg.content.text.as_deref()
+                    let contains_tldr_command = msg
+                        .content
+                        .text
+                        .as_deref()
                         .map(|text| text.contains("/tldr"))
                         .unwrap_or(false);
 
-                    is_user_message && !is_system_message && !is_from_this_bot && !contains_tldr_command
+                    is_user_message
+                        && !is_system_message
+                        && !is_from_this_bot
+                        && !contains_tldr_command
                 })
                 .take(count as usize) // Limit to requested count after filtering
                 .collect();
 
-            info!("Fetched {} total messages, filtered down to {} user messages for summarization",
-                original_message_count, filtered_messages.len());
+            info!(
+                "Fetched {} total messages, filtered down to {} user messages for summarization",
+                original_message_count,
+                filtered_messages.len()
+            );
 
             Ok(filtered_messages)
-        }).await
+        })
+        .await
     }
 
     pub async fn send_dm(&self, user_id: &str, message: &str) -> Result<(), SlackError> {
@@ -292,28 +348,34 @@ impl SlackBot {
 
             let post_req = SlackApiChatPostMessageRequest::new(
                 SlackChannelId(im_channel),
-                SlackMessageContent::new().with_text(message.to_string())
+                SlackMessageContent::new().with_text(message.to_string()),
             );
 
             session.chat_post_message(&post_req).await?;
 
             Ok(())
-        }).await
+        })
+        .await
     }
 
-    pub async fn send_message_to_channel(&self, channel_id: &str, message: &str) -> Result<(), SlackError> {
+    pub async fn send_message_to_channel(
+        &self,
+        channel_id: &str,
+        message: &str,
+    ) -> Result<(), SlackError> {
         self.with_retry(|| async {
             let session = SLACK_CLIENT.open_session(&self.token);
 
             let post_req = SlackApiChatPostMessageRequest::new(
                 SlackChannelId(channel_id.to_string()),
-                SlackMessageContent::new().with_text(message.to_string())
+                SlackMessageContent::new().with_text(message.to_string()),
             );
 
             session.chat_post_message(&post_req).await?;
 
             Ok(())
-        }).await
+        })
+        .await
     }
 
     pub async fn delete_message(&self, channel_id: &str, ts: &str) -> Result<(), SlackError> {
@@ -323,32 +385,44 @@ impl SlackBot {
             // Create the delete message request
             let delete_req = SlackApiChatDeleteRequest::new(
                 SlackChannelId::new(channel_id.to_string()),
-                SlackTs::new(ts.to_string())
+                SlackTs::new(ts.to_string()),
             );
 
             // Send the delete request
             match session.chat_delete(&delete_req).await {
                 Ok(_) => {
-                    info!("Successfully deleted message with ts {} from channel {}", ts, channel_id);
+                    info!(
+                        "Successfully deleted message with ts {} from channel {}",
+                        ts, channel_id
+                    );
                     Ok(())
-                },
+                }
                 Err(e) => {
                     error!("Failed to delete message: {}", e);
-                    Err(SlackError::ApiError(format!("Failed to delete message: {}", e)))
+                    Err(SlackError::ApiError(format!(
+                        "Failed to delete message: {}",
+                        e
+                    )))
                 }
             }
-        }).await
+        })
+        .await
     }
 
     /// Hides a slash command invocation by replacing it with an empty message
     /// Uses Slack's response_url mechanism which allows modifying the original message
-    pub async fn replace_original_message(&self, response_url: &str, text: Option<&str>) -> Result<(), SlackError> {
+    pub async fn replace_original_message(
+        &self,
+        response_url: &str,
+        text: Option<&str>,
+    ) -> Result<(), SlackError> {
         self.with_retry(|| async {
             // Build the payload using our extracted function
             let payload = create_replace_original_payload(text);
 
             // Send the request
-            let response = HTTP_CLIENT.post(response_url)
+            let response = HTTP_CLIENT
+                .post(response_url)
                 .header("Content-Type", "application/json")
                 .json(&payload)
                 .send()
@@ -358,16 +432,27 @@ impl SlackBot {
             // Check for errors
             if !response.status().is_success() {
                 let status = response.status();
-                let body = response.text().await.unwrap_or_else(|_| String::from("Unable to read response body"));
-                return Err(SlackError::ApiError(format!("Failed to replace message: HTTP {} - {}", status, body)));
+                let body = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| String::from("Unable to read response body"));
+                return Err(SlackError::ApiError(format!(
+                    "Failed to replace message: HTTP {} - {}",
+                    status, body
+                )));
             }
 
             info!("Successfully replaced original message via response_url");
             Ok(())
-        }).await
+        })
+        .await
     }
 
-    async fn fetch_image_as_data_uri(&self, url: &str, fallback_mime: &str) -> Result<String, SlackError> {
+    async fn fetch_image_as_data_uri(
+        &self,
+        url: &str,
+        fallback_mime: &str,
+    ) -> Result<String, SlackError> {
         let response = HTTP_CLIENT
             .get(url)
             .bearer_auth(&self.token.token_value.0)
@@ -394,9 +479,9 @@ impl SlackBot {
         }
 
         let bytes = response
-             .bytes()
-             .await
-             .map_err(|e| SlackError::HttpError(format!("Failed to read image bytes: {}", e)))?;
+            .bytes()
+            .await
+            .map_err(|e| SlackError::HttpError(format!("Failed to read image bytes: {}", e)))?;
 
         let encoded = general_purpose::STANDARD.encode(&bytes);
 
@@ -454,11 +539,12 @@ impl SlackBot {
                 )));
             }
 
-            json
-                .get("file")
+            json.get("file")
                 .and_then(|f| f.get("permalink_public"))
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| SlackError::ApiError("`permalink_public` missing in response".to_string()))?
+                .ok_or_else(|| {
+                    SlackError::ApiError("`permalink_public` missing in response".to_string())
+                })?
                 .to_string()
         };
 
@@ -482,14 +568,19 @@ impl SlackBot {
                     .and_then(|mut segs| segs.next_back().map(|s| s.to_string()))
                     .and_then(|last_seg| last_seg.rsplit('-').next().map(|s| s.to_string()))
             })
-            .ok_or_else(|| SlackError::ApiError("pub_secret missing in permalink_public".to_string()))?;
+            .ok_or_else(|| {
+                SlackError::ApiError("pub_secret missing in permalink_public".to_string())
+            })?;
 
         // Step 3: Construct direct asset URL by adding pub_secret to download URL.
-        let base_download = Self::get_slack_file_download_url(file).ok_or_else(|| SlackError::ApiError("No downloadable URL on SlackFile".to_string()))?;
+        let base_download = Self::get_slack_file_download_url(file)
+            .ok_or_else(|| SlackError::ApiError("No downloadable URL on SlackFile".to_string()))?;
 
         debug!(
             "Ensuring public URL for file {} (mimetype={:?}): base={}",
-            file.id.0, file.mimetype.as_ref().map(|m| m.0.clone()), base_download
+            file.id.0,
+            file.mimetype.as_ref().map(|m| m.0.clone()),
+            base_download
         );
 
         // Start with the original private download URL and attach the pub_secret.
@@ -543,7 +634,9 @@ impl SlackBot {
                 candidate = alt;
             } else {
                 warn!("Both download and non-download variants had unsupported MIME types");
-                return Err(SlackError::ApiError("No supported public URL variant".to_string()));
+                return Err(SlackError::ApiError(
+                    "No supported public URL variant".to_string(),
+                ));
             }
         }
 
@@ -553,13 +646,19 @@ impl SlackBot {
     /// Helper to obtain the best URL for downloading a Slack file.
     /// Prefers `url_private_download` (direct download) and falls back to `url_private`.
     fn get_slack_file_download_url(file: &SlackFile) -> Option<&Url> {
-        file.url_private_download.as_ref().or(file.url_private.as_ref())
+        file.url_private_download
+            .as_ref()
+            .or(file.url_private.as_ref())
     }
 
     /// Build the complete prompt as chat messages ready for the OpenAI request.
     /// `messages_markdown` should already contain the raw Slack messages,
     /// separated by newlines.
-    fn build_prompt(&self, messages_markdown: &str, custom_opt: Option<&str>) -> Vec<chat_completion::ChatCompletionMessage> {
+    fn build_prompt(
+        &self,
+        messages_markdown: &str,
+        custom_opt: Option<&str>,
+    ) -> Vec<chat_completion::ChatCompletionMessage> {
         // 1. Sanitise (or insert an empty string if none supplied)
         let custom_block = custom_opt
             .filter(|s| !s.trim().is_empty())
@@ -568,7 +667,9 @@ impl SlackBot {
 
         // Extract channel name from messages_markdown
         let _channel = if messages_markdown.starts_with("Channel: #") {
-            let end_idx = messages_markdown.find('\n').unwrap_or(messages_markdown.len());
+            let end_idx = messages_markdown
+                .find('\n')
+                .unwrap_or(messages_markdown.len());
             &messages_markdown[10..end_idx]
         } else {
             "unknown"
@@ -596,7 +697,7 @@ impl SlackBot {
         // 1. OPTIONAL user style instructions – high priority
         if !custom_block.is_empty() {
             chat.push(chat_completion::ChatCompletionMessage {
-                role: MessageRole::system,  // Same level as core policy, but later (higher precedence)
+                role: MessageRole::system, // Same level as core policy, but later (higher precedence)
                 content: Content::Text(format!(
                     "CUSTOM STYLE (override lower-priority rules): {custom_block}"
                 )),
@@ -608,7 +709,10 @@ impl SlackBot {
             // Add acknowledgment to reinforce the style instructions
             chat.push(chat_completion::ChatCompletionMessage {
                 role: MessageRole::assistant,
-                content: Content::Text("Acknowledged. I will write the summary using the above stylistic rules.".to_string()),
+                content: Content::Text(
+                    "Acknowledged. I will write the summary using the above stylistic rules."
+                        .to_string(),
+                ),
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
@@ -631,21 +735,28 @@ impl SlackBot {
         &mut self,
         messages: &[SlackHistoryMessage],
         channel_id: &str,
-        custom_prompt: Option<&str>
+        custom_prompt: Option<&str>,
     ) -> Result<String, SlackError> {
         if messages.is_empty() {
             return Ok("No messages to summarize.".to_string());
         }
 
         // Get channel name from channel_id
-        let channel_info = SLACK_CLIENT.open_session(&self.token)
-            .conversations_info(&SlackApiConversationsInfoRequest::new(SlackChannelId::new(channel_id.to_string())))
+        let channel_info = SLACK_CLIENT
+            .open_session(&self.token)
+            .conversations_info(&SlackApiConversationsInfoRequest::new(SlackChannelId::new(
+                channel_id.to_string(),
+            )))
             .await
             .map_err(|e| SlackError::ApiError(format!("Failed to get channel info: {}", e)))?;
-        let channel_name = channel_info.channel.name.unwrap_or_else(|| channel_id.to_string());
+        let channel_name = channel_info
+            .channel
+            .name
+            .unwrap_or_else(|| channel_id.to_string());
 
         // Collect unique user IDs
-        let user_ids: HashSet<String> = messages.iter()
+        let user_ids: HashSet<String> = messages
+            .iter()
             .filter_map(|msg| {
                 msg.sender.user.as_ref().and_then(|user| {
                     if user.as_ref() != "Unknown User" {
@@ -663,7 +774,7 @@ impl SlackBot {
             match self.get_user_info(&user_id).await {
                 Ok(name) => {
                     user_info_cache.insert(user_id, name);
-                },
+                }
                 Err(e) => {
                     error!("Failed to get user info for {}: {}", user_id, e);
                     user_info_cache.insert(user_id.clone(), user_id);
@@ -672,14 +783,19 @@ impl SlackBot {
         }
 
         // Format messages using the cache
-        let formatted_messages: Vec<String> = messages.iter()
+        let formatted_messages: Vec<String> = messages
+            .iter()
             .map(|msg| {
-                let user_id = msg.sender.user.as_ref()
+                let user_id = msg
+                    .sender
+                    .user
+                    .as_ref()
                     .map_or("Unknown User", |uid| uid.as_ref());
 
                 // Get the real username from cache
                 let author = if user_id != "Unknown User" {
-                    user_info_cache.get(user_id)
+                    user_info_cache
+                        .get(user_id)
                         .map_or_else(|| user_id.to_string(), |name| name.clone())
                 } else {
                     user_id.to_string()
@@ -726,7 +842,10 @@ impl SlackBot {
                         // Skip if over OpenAI hard limit
                         if let Some(sz) = size_opt {
                             if sz > URL_IMAGE_MAX_BYTES {
-                                info!("Skipping image {} because size {}B > {}B", url, sz, URL_IMAGE_MAX_BYTES);
+                                info!(
+                                    "Skipping image {} because size {}B > {}B",
+                                    url, sz, URL_IMAGE_MAX_BYTES
+                                );
                                 continue;
                             }
                         }
@@ -752,7 +871,9 @@ impl SlackBot {
                                     text: None,
                                     image_url: Some(ImageUrlType { url: public_url }),
                                 }),
-                                Err(e) => error!("Failed to get public URL for image {}: {}", url, e),
+                                Err(e) => {
+                                    error!("Failed to get public URL for image {}: {}", url, e)
+                                }
                             }
                         }
                     }
@@ -800,10 +921,13 @@ impl SlackBot {
         info!("Using ChatGPT prompt:\n{:?}", prompt);
 
         #[cfg(not(feature = "debug-logs"))]
-        info!("Using ChatGPT prompt: [... content masked, enable debug-logs feature to view full prompt ...]");
+        info!(
+            "Using ChatGPT prompt: [... content masked, enable debug-logs feature to view full prompt ...]"
+        );
 
         // Estimate input tokens and calculate safe max output tokens
-        let estimated_input_tokens = prompt.iter()
+        let estimated_input_tokens = prompt
+            .iter()
             .map(|msg| estimate_tokens(&format!("{:?}", msg.content)))
             .sum::<usize>();
 
@@ -812,7 +936,7 @@ impl SlackBot {
         // Calculate safe max_tokens (with buffer to prevent exceeding context limit)
         let max_output_tokens = (O3_MAX_CONTEXT_TOKENS - estimated_input_tokens)
             .saturating_sub(O3_BUFFER_TOKENS) // Ensure we don't underflow
-            .min(O3_MAX_OUTPUT_TOKENS);       // Don't exceed maximum allowed output
+            .min(O3_MAX_OUTPUT_TOKENS); // Don't exceed maximum allowed output
 
         info!("Calculated max output tokens: {}", max_output_tokens);
 
@@ -824,15 +948,15 @@ impl SlackBot {
         }
 
         // Build the o3 chat completion request
-        let request = ChatCompletionRequest::new(
-            "o3".to_string(),
-            prompt
-        )
-        .temperature(if custom_prompt.is_some() { 0.9 } else { 0.3 }) // Default 0.3, 0.9 if custom prompt is provided
-        .max_tokens(max_output_tokens as i64);
+        let request = ChatCompletionRequest::new("o3".to_string(), prompt)
+            .temperature(if custom_prompt.is_some() { 0.9 } else { 0.3 }) // Default 0.3, 0.9 if custom prompt is provided
+            .max_tokens(max_output_tokens as i64);
 
         // Send to OpenAI API directly with mutable reference
-        let response = self.openai_client.chat_completion(request).await
+        let response = self
+            .openai_client
+            .chat_completion(request)
+            .await
             .map_err(|e| SlackError::OpenAIError(format!("OpenAI API error: {}", e)))?;
 
         // Extract the text response
@@ -842,10 +966,14 @@ impl SlackBot {
                 let formatted_summary = format!("*Summary from #{}*\n\n{}", channel_name, text);
                 Ok(formatted_summary)
             } else {
-                Err(SlackError::OpenAIError("No content in OpenAI response".to_string()))
+                Err(SlackError::OpenAIError(
+                    "No content in OpenAI response".to_string(),
+                ))
             }
         } else {
-            Err(SlackError::OpenAIError("No response from OpenAI".to_string()))
+            Err(SlackError::OpenAIError(
+                "No response from OpenAI".to_string(),
+            ))
         }
     }
 }

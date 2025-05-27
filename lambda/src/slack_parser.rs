@@ -1,6 +1,6 @@
+use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use percent_encoding::percent_decode_str;
 
 /// Structure representing a Slack slash command event.
 /// This contains all the fields that Slack sends when a user invokes a slash command.

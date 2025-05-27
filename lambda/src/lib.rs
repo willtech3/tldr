@@ -47,8 +47,8 @@ pub mod slack_parser;
 pub use bot::{SlackBot, estimate_tokens};
 pub use errors::SlackError;
 pub use formatting::format_summary_message;
-pub use prompt::{sanitize_custom_prompt, sanitize_custom_internal};
-pub use response::{create_replace_original_payload, create_ephemeral_payload};
+pub use prompt::{sanitize_custom_internal, sanitize_custom_prompt};
+pub use response::{create_ephemeral_payload, create_replace_original_payload};
 
 /// Configure structured logging with JSON format for AWS Lambda environments.
 ///
@@ -64,11 +64,7 @@ pub use response::{create_replace_original_payload, create_ephemeral_payload};
 /// ```
 pub fn setup_logging() {
     use tracing_subscriber::prelude::*;
-    let fmt_layer = tracing_subscriber::fmt::layer()
-        .json()
-        .with_target(true);
+    let fmt_layer = tracing_subscriber::fmt::layer().json().with_target(true);
 
-    tracing_subscriber::registry()
-        .with(fmt_layer)
-        .init();
+    tracing_subscriber::registry().with(fmt_layer).init();
 }
