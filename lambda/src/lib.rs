@@ -42,6 +42,7 @@ pub mod formatting;
 pub mod prompt;
 pub mod response;
 pub mod slack_parser;
+pub mod domains;
 
 // Public exports
 pub use bot::{SlackBot, estimate_tokens};
