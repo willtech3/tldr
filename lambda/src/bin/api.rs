@@ -4,7 +4,6 @@ use aws_sdk_sqs::Client as SqsClient;
 use hex;
 use hmac::{Hmac, Mac};
 use lambda_runtime::{Error, LambdaEvent, run, service_fn};
-use lazy_static::lazy_static;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -134,6 +133,8 @@ fn verify_slack_signature(request_body: &str, timestamp: &str, signature: &str) 
         false
     }
 }
+
+pub use self::function_handler as handler;
 
 async fn function_handler(event: LambdaEvent<serde_json::Value>) -> Result<impl Serialize, Error> {
     info!("API Lambda received request: {:?}", event);
