@@ -10,9 +10,7 @@ use slack_morphism::{
 use base64::{Engine as _, engine::general_purpose};
 use openai_api_rs::v1::{
     api::OpenAIClient,
-    chat_completion::{
-        self, Content, ContentType, ImageUrl, ImageUrlType, MessageRole,
-    },
+    chat_completion::{self, Content, ContentType, ImageUrl, ImageUrlType, MessageRole},
 };
 use reqwest::Client;
 use serde_json::Value;
@@ -962,15 +960,18 @@ impl SlackBot {
         // Get the OpenAI API key for direct HTTP request
         let api_key = env::var("OPENAI_API_KEY")
             .map_err(|_| SlackError::OpenAIError("OPENAI_API_KEY not found".to_string()))?;
-        
+
         let org_id = env::var("OPENAI_ORG_ID").ok();
 
         // Make direct HTTP request to OpenAI API
         let client = reqwest::Client::new();
         let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert("Authorization", format!("Bearer {}", api_key).parse().unwrap());
+        headers.insert(
+            "Authorization",
+            format!("Bearer {}", api_key).parse().unwrap(),
+        );
         headers.insert("Content-Type", "application/json".parse().unwrap());
-        
+
         if let Some(org) = org_id {
             headers.insert("OpenAI-Organization", org.parse().unwrap());
         }
@@ -984,14 +985,19 @@ impl SlackBot {
             .map_err(|e| SlackError::HttpError(format!("OpenAI API request failed: {}", e)))?;
 
         if !response.status().is_success() {
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(SlackError::OpenAIError(format!("OpenAI API error: {}", error_text)));
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(SlackError::OpenAIError(format!(
+                "OpenAI API error: {}",
+                error_text
+            )));
         }
 
-        let response_json: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| SlackError::OpenAIError(format!("Failed to parse OpenAI response: {}", e)))?;
+        let response_json: serde_json::Value = response.json().await.map_err(|e| {
+            SlackError::OpenAIError(format!("Failed to parse OpenAI response: {}", e))
+        })?;
 
         // Extract the text response from JSON
         if let Some(choices) = response_json.get("choices").and_then(|c| c.as_array()) {
