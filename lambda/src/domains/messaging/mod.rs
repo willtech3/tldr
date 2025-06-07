@@ -17,6 +17,10 @@ pub struct Message {
 impl Message {
     /// Create a new `Message` with the given channel, user and text.
     pub fn new(channel: String, user: String, text: String) -> Self {
-        Self { channel, user, text }
+        Self {
+            channel,
+            user,
+            text,
+        }
     }
 }
