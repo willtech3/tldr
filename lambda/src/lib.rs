@@ -37,6 +37,7 @@
 /// }
 /// // Re-export the module components as a public API
 pub mod bot;
+pub mod domains;
 pub mod errors;
 pub mod formatting;
 pub mod prompt;
