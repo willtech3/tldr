@@ -5,7 +5,7 @@
 /// - Channel management logic
 /// - Message parsing and formatting
 /// - Message retrieval services
-
+///
 /// Represents a basic Slack message.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Message {
