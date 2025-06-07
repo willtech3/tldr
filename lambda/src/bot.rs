@@ -9,7 +9,6 @@ use slack_morphism::{
 
 use base64::{Engine as _, engine::general_purpose};
 use openai_api_rs::v1::{
-    api::OpenAIClient,
     chat_completion::{self, Content, ContentType, ImageUrl, ImageUrlType, MessageRole},
 };
 use reqwest::Client;
@@ -75,7 +74,6 @@ static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
 /// Common Slack functionality
 pub struct SlackBot {
     token: SlackApiToken,
-    openai_client: OpenAIClient,
 }
 
 impl SlackBot {
@@ -83,21 +81,9 @@ impl SlackBot {
         let token = env::var("SLACK_BOT_TOKEN")
             .map_err(|_| SlackError::ApiError("SLACK_BOT_TOKEN not found".to_string()))?;
 
-        let openai_api_key = env::var("OPENAI_API_KEY")
-            .map_err(|_| SlackError::OpenAIError("OPENAI_API_KEY not found".to_string()))?;
-
         let token = SlackApiToken::new(SlackApiTokenValue::new(token));
-        let openai_client = OpenAIClient::builder()
-            .with_api_key(openai_api_key)
-            .build()
-            .map_err(|e| {
-                SlackError::OpenAIError(format!("Failed to create OpenAI client: {}", e))
-            })?;
 
-        Ok(Self {
-            token,
-            openai_client,
-        })
+        Ok(Self { token })
     }
 
     // Helper function to wrap API calls with retry logic for rate limits and server errors
