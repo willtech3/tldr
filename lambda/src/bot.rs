@@ -8,8 +8,8 @@ use slack_morphism::{
 };
 
 use base64::{Engine as _, engine::general_purpose};
-use openai_api_rs::v1::{
-    chat_completion::{self, Content, ContentType, ImageUrl, ImageUrlType, MessageRole},
+use openai_api_rs::v1::chat_completion::{
+    self, Content, ContentType, ImageUrl, ImageUrlType, MessageRole,
 };
 use reqwest::Client;
 use serde_json::Value;
