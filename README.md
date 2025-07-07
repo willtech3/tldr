@@ -1,6 +1,24 @@
 # TLDR — Slack ChatGPT Summarizer
 
+[![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![AWS Lambda](https://img.shields.io/badge/AWS-Lambda-FF9900.svg)](https://aws.amazon.com/lambda/)
+
 TLDR is a serverless, Rust-powered Slack bot that turns a wall of unread messages into a concise, ChatGPT-generated summary delivered straight to your DM.
+
+## 📖 Table of Contents
+
+- [Key Features](#-key-features)
+- [High-Level Architecture](#️-high-level-architecture)
+- [Usage](#-usage)
+- [Quick Start for Local Development](#-quick-start-for-local-development)
+- [Deployment (AWS CDK)](#️-deployment-aws-cdk)
+- [Configuration](#-configuration)
+- [Slack Setup](#-slack-setup)
+- [Project Layout](#️-project-layout)
+- [Troubleshooting](#-troubleshooting)
+- [Contributing](#-contributing)
+- [License](#-license)
 
 ---
 
@@ -15,15 +33,14 @@ TLDR is a serverless, Rust-powered Slack bot that turns a wall of unread message
 
 ## 🏗️  High-Level Architecture
 
-```
-┌─────────┐    ┌────────────┐   SQS   ┌──────────────┐    ┌─────────────┐
-│  Slack  │──►│ API Lambda │─▶Queue▶│ Worker Lambda │───►│ OpenAI Chat │
-└─────────┘    └────────────┘         └──────┬───────┘    └─────────────┘
-                                             │
-                                             ▼
-                                        ┌─────────┐
-                                        │  User   │
-                                        └─────────┘
+```mermaid
+graph LR
+    A[Slack] -->|/tldr command| B[API Lambda]
+    B -->|Enqueue job| C[SQS Queue]
+    C -->|Process| D[Worker Lambda]
+    D -->|Fetch messages| A
+    D -->|Generate summary| E[OpenAI ChatGPT]
+    D -->|Send DM| F[User]
 ```
 
 1. **API Lambda** – Verifies Slack signatures and enqueues a summarisation job to SQS.
@@ -118,6 +135,42 @@ After the stack is live, copy the API Gateway URL into your Slack slash-command 
 
 ---
 
+## 🔌 Slack Setup
+
+To install TLDR in your Slack workspace:
+
+1. **Create a Slack App**:
+   - Visit [api.slack.com/apps](https://api.slack.com/apps)
+   - Click "Create New App" → "From scratch"
+   - Name it "TLDR" and select your workspace
+
+2. **Configure OAuth & Permissions**:
+   - Navigate to "OAuth & Permissions"
+   - Add these Bot Token Scopes:
+     - `channels:history` - Read channel message history
+     - `channels:read` - View basic channel info
+     - `chat:write` - Send messages as the bot
+     - `commands` - Add slash commands
+     - `users:read` - View user profiles
+
+3. **Create the Slash Command**:
+   - Go to "Slash Commands" → "Create New Command"
+   - Command: `/tldr`
+   - Request URL: Your API Gateway endpoint (after deployment)
+   - Short Description: "Summarize unread messages"
+   - Usage Hint: `[count=N] [channel=#name] [--visible] [custom="prompt"]`
+
+4. **Install to Workspace**:
+   - Go to "Install App" and click "Install to Workspace"
+   - Copy the Bot User OAuth Token (starts with `xoxb-`)
+   - Save it as `SLACK_BOT_TOKEN` in your environment
+
+5. **Get Signing Secret**:
+   - From "Basic Information", copy the Signing Secret
+   - Save it as `SLACK_SIGNING_SECRET` in your environment
+
+---
+
 ## 🔐  Configuration
 
 Environment variables (set in Lambda or an `.env` file for local runs):
@@ -152,6 +205,37 @@ Environment variables (set in Lambda or an `.env` file for local runs):
 1. Make sure `cargo check` and `cargo clippy -- -D warnings` pass.
 2. Add unit tests in `#[cfg(test)]` modules and doc-tests in public APIs.
 3. Open a PR – GitHub Actions will run the full test & lint suite.
+
+---
+
+## 🔧 Troubleshooting
+
+### Common Issues
+
+**"Command not found" error in Slack**
+- Ensure the app is installed in your workspace
+- Check that the slash command is properly configured
+- Verify the Request URL points to your deployed API Gateway endpoint
+
+**Bot doesn't respond or times out**
+- Check CloudWatch logs for both Lambda functions
+- Verify all environment variables are set correctly
+- Ensure the SQS queue exists and Lambda has permissions to read from it
+
+**"Missing permissions" errors**
+- The bot needs to be invited to private channels: `/invite @tldr`
+- Verify all required OAuth scopes are added (see Slack Setup)
+- Reinstall the app if you've changed permissions
+
+**Summary quality issues**
+- Try adjusting the `custom` parameter with specific instructions
+- Ensure your OpenAI API key has sufficient credits
+- Check if the channel has enough message history
+
+**Lambda deployment failures**
+- Ensure `cargo-lambda` is installed and up to date
+- Check that your AWS credentials have the necessary permissions
+- Verify the Rust toolchain is set to stable
 
 ---
 
