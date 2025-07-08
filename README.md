@@ -42,6 +42,25 @@ TLDR is a serverless, Rust-powered Slack bot that turns a wall of unread message
 
 3. A DM will arrive with a neatly formatted summary of everything you missed. ✨
 
+### Example Output
+
+```
+📝 Channel Summary for #engineering (23 unread messages)
+
+**Key Discussion Points:**
+• Alice proposed switching to Rust for the new microservice
+• Bob shared performance benchmarks showing 3x improvement
+• Team agreed to start with a proof-of-concept next sprint
+
+**Action Items:**
+✓ Bob to set up initial Rust project structure by Friday
+✓ Alice to document the migration plan
+
+**Decisions Made:**
+• Approved Rust for new services (not migrating existing ones)
+• Weekly knowledge-sharing sessions starting Monday
+```
+
 ### Advanced Parameters
 
 You can tailor the summary by appending flags / key-value pairs after the command:
@@ -99,7 +118,7 @@ $ cargo lambda invoke --data-file test/fixtures/slash_command.json
 
 ## ☁️  Deployment (AWS CDK)
 
-The **`infrastructure/`** folder contains an *AWS CDK* stack that provisions:
+The **`cdk/`** folder contains an *AWS CDK* stack that provisions:
 
 - API Gateway endpoint
 - Two Lambda functions (API + Worker)
@@ -109,7 +128,7 @@ The **`infrastructure/`** folder contains an *AWS CDK* stack that provisions:
 Deploy in one command:
 
 ```bash
-$ cd infrastructure
+$ cd cdk
 $ npm install             # first time only
 $ npm run cdk deploy
 ```
@@ -131,18 +150,87 @@ Environment variables (set in Lambda or an `.env` file for local runs):
 
 ---
 
+## 📱  Slack Setup
+
+1. **Create a new Slack App** at [api.slack.com/apps](https://api.slack.com/apps)
+2. **Configure OAuth & Permissions:**
+   - Add these Bot Token Scopes:
+     - `channels:history` - Read channel messages
+     - `channels:read` - View basic channel info
+     - `chat:write` - Send DMs to users
+     - `commands` - Register slash commands
+     - `users:read` - Look up user info
+3. **Install the app** to your workspace and copy the Bot User OAuth Token
+4. **Create a Slash Command:**
+   - Command: `/tldr`
+   - Request URL: `<Your API Gateway URL>/slack/commands`
+   - Short Description: "Summarize unread channel messages"
+   - Usage Hint: "[count=N] [channel=#name] [--visible] [custom='...']"
+5. **Configure environment variables** with your tokens and secrets
+
+---
+
 ## 🗂️  Project Layout
 
 ```
 ├─ lambda/          # Rust crate with both Lambda handlers
 │   ├─ src/
-│   │   ├─ api.rs
-│   │   ├─ worker.rs
-│   │   └─ bot.rs  # SlackBot implementation (shared)
+│   │   ├─ bin/     # Lambda entry points
+│   │   ├─ bot.rs   # SlackBot implementation (shared)
+│   │   └─ domains/ # Domain logic modules
 │   └─ Cargo.toml
-├─ infrastructure/  # AWS CDK stack (TypeScript)
+├─ cdk/             # AWS CDK stack (TypeScript)
 ├─ tests/           # Integration & fixture payloads
 └─ README.md
+```
+
+---
+
+## 🚦  Performance & Limits
+
+- **Message Limits:** Processes up to 1000 messages per request (Slack API limit)
+- **Summary Length:** ChatGPT summaries are capped at ~500 words
+- **Processing Time:** Typically 2-5 seconds depending on message count
+- **Rate Limits:** 
+  - Slack: 50+ requests/minute per workspace
+  - OpenAI: Depends on your API tier
+- **Lambda Timeout:** 30 seconds (configurable in CDK)
+
+---
+
+## 🔍  Troubleshooting
+
+### Common Issues
+
+**"This slash command experienced an error"**
+- Check Lambda logs in CloudWatch for detailed errors
+- Verify all environment variables are set correctly
+- Ensure your bot has required permissions in the channel
+
+**Summary never arrives**
+- Check if the Worker Lambda is processing SQS messages
+- Verify the bot can DM you (some workspaces restrict DMs)
+- Look for rate limit errors in logs
+
+**"Not in channel" error**
+- The bot must be invited to private channels: `/invite @your-bot-name`
+- Public channels should work automatically with proper scopes
+
+**Empty or poor summaries**
+- Ensure there are actual messages to summarize
+- Check OpenAI API key is valid and has credits
+- Try adjusting the custom prompt for better results
+
+### Debug Commands
+
+```bash
+# Check Lambda logs
+$ aws logs tail /aws/lambda/tldr-api --follow
+$ aws logs tail /aws/lambda/tldr-worker --follow
+
+# Monitor SQS queue
+$ aws sqs get-queue-attributes --queue-url $QUEUE_URL \
+    --attribute-names ApproximateNumberOfMessages
 ```
 
 ---
