@@ -25,14 +25,14 @@ use crate::errors::SlackError;
 use crate::prompt::sanitize_custom_internal;
 use crate::response::create_replace_original_payload;
 
-// o3 model context limits
-const O3_MAX_CONTEXT_TOKENS: usize = 200_000; // 200K token context window
-const O3_MAX_OUTPUT_TOKENS: usize = 100_000; // Maximum output tokens
-const O3_BUFFER_TOKENS: usize = 250; // Buffer to prevent going over limit
+// gpt-5 model context limits
+const GPT5_MAX_CONTEXT_TOKENS: usize = 200_000; // 200K token context window
+const GPT5_MAX_OUTPUT_TOKENS: usize = 100_000; // Maximum output tokens
+const GPT5_BUFFER_TOKENS: usize = 250; // Buffer to prevent going over limit
 const INLINE_IMAGE_MAX_BYTES: usize = 64 * 1024; // 64 KiB threshold for inline images – keep prompt size sensible
 const URL_IMAGE_MAX_BYTES: usize = 20 * 1024 * 1024; // 20 MB max for OpenAI vision URLs
 
-/// Whitelisted image MIME types o3 accepts
+/// Whitelisted image MIME types gpt-5 accepts
 const ALLOWED_IMAGE_MIME: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
 
 /// Returns lowercase, parameter-stripped, canonical mime (`image/jpg` ⇒ `image/jpeg`).
@@ -918,9 +918,9 @@ impl SlackBot {
         info!("Estimated input tokens: {}", estimated_input_tokens);
 
         // Calculate safe max_tokens (with buffer to prevent exceeding context limit)
-        let max_output_tokens = (O3_MAX_CONTEXT_TOKENS - estimated_input_tokens)
-            .saturating_sub(O3_BUFFER_TOKENS) // Ensure we don't underflow
-            .min(O3_MAX_OUTPUT_TOKENS); // Don't exceed maximum allowed output
+        let max_output_tokens = (GPT5_MAX_CONTEXT_TOKENS - estimated_input_tokens)
+            .saturating_sub(GPT5_BUFFER_TOKENS) // Ensure we don't underflow
+            .min(GPT5_MAX_OUTPUT_TOKENS); // Don't exceed maximum allowed output
 
         info!("Calculated max output tokens: {}", max_output_tokens);
 
@@ -931,16 +931,16 @@ impl SlackBot {
             return Ok("The conversation was too large to summarize completely. Here's a partial summary of the most recent messages.".to_string());
         }
 
-        // Build the o3 chat completion request
-        // Note: o3 model requires 'max_completion_tokens' instead of 'max_tokens'
+        // Build the gpt-5 chat completion request
+        // Note: gpt-5 model uses 'max_output_tokens' instead of 'max_tokens'
         // and only supports the default temperature value (1.0)
-        // Since the openai-api-rs crate doesn't support max_completion_tokens yet,
+        // Since the openai-api-rs crate doesn't support max_output_tokens yet,
         // we'll make the request manually using reqwest
         let request_body = serde_json::json!({
-            "model": "o3",
+            "model": "gpt-5",
             "messages": prompt,
-            // o3 model only supports default temperature (1.0), so we omit this parameter
-            "max_completion_tokens": max_output_tokens
+            // gpt-5 model only supports default temperature (1.0), so we omit this parameter
+            "max_output_tokens": max_output_tokens
         });
 
         // Get the OpenAI API key for direct HTTP request
