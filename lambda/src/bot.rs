@@ -25,14 +25,14 @@ use crate::errors::SlackError;
 use crate::prompt::sanitize_custom_internal;
 use crate::response::create_replace_original_payload;
 
-// o3 model context limits
-const O3_MAX_CONTEXT_TOKENS: usize = 200_000; // 200K token context window
-const O3_MAX_OUTPUT_TOKENS: usize = 100_000; // Maximum output tokens
-const O3_BUFFER_TOKENS: usize = 250; // Buffer to prevent going over limit
+// Model token limits (model-agnostic; tuned for GPT-5 default usage)
+const MAX_CONTEXT_TOKENS: usize = 400_000; // Conservative upper bound for GPT-5 context window
+const MAX_OUTPUT_TOKENS: usize = 100_000; // Cap output to avoid very long generations
+const TOKEN_BUFFER: usize = 250; // Safety buffer to prevent exceeding context
 const INLINE_IMAGE_MAX_BYTES: usize = 64 * 1024; // 64 KiB threshold for inline images – keep prompt size sensible
 const URL_IMAGE_MAX_BYTES: usize = 20 * 1024 * 1024; // 20 MB max for OpenAI vision URLs
 
-/// Whitelisted image MIME types o3 accepts
+/// Whitelisted image MIME types accepted by the model
 const ALLOWED_IMAGE_MIME: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
 
 /// Returns lowercase, parameter-stripped, canonical mime (`image/jpg` ⇒ `image/jpeg`).
@@ -798,7 +798,7 @@ impl SlackBot {
         // 1. Base text portion
         let mut prompt = self.build_prompt(&messages_text, custom_prompt);
 
-        // 2. Append image data so GPT-4o can see pictures
+        // 2. Append image data so the model can see pictures
         for msg in messages {
             if let Some(files) = &msg.content.files {
                 let mut imgs: Vec<ImageUrl> = Vec::new();
@@ -824,14 +824,12 @@ impl SlackBot {
                         let size_opt = self.fetch_image_size(url.as_str()).await.unwrap_or(None);
 
                         // Skip if over OpenAI hard limit
-                        if let Some(sz) = size_opt {
-                            if sz > URL_IMAGE_MAX_BYTES {
-                                info!(
-                                    "Skipping image {} because size {}B > {}B",
-                                    url, sz, URL_IMAGE_MAX_BYTES
-                                );
-                                continue;
-                            }
+                        if let Some(sz) = size_opt.filter(|&s| s > URL_IMAGE_MAX_BYTES) {
+                            info!(
+                                "Skipping image {} because size {}B > {}B",
+                                url, sz, URL_IMAGE_MAX_BYTES
+                            );
+                            continue;
                         }
 
                         let use_inline = match size_opt {
@@ -888,7 +886,7 @@ impl SlackBot {
                         });
                     }
 
-                    // Now push the actual image payload so GPT-4o can inspect them
+                    // Now push the actual image payload so the model can inspect them
                     prompt.push(chat_completion::ChatCompletionMessage {
                         role: MessageRole::user,
                         content: Content::ImageUrl(imgs),
@@ -917,10 +915,10 @@ impl SlackBot {
 
         info!("Estimated input tokens: {}", estimated_input_tokens);
 
-        // Calculate safe max_tokens (with buffer to prevent exceeding context limit)
-        let max_output_tokens = (O3_MAX_CONTEXT_TOKENS - estimated_input_tokens)
-            .saturating_sub(O3_BUFFER_TOKENS) // Ensure we don't underflow
-            .min(O3_MAX_OUTPUT_TOKENS); // Don't exceed maximum allowed output
+        // Calculate safe max tokens (with buffer to prevent exceeding context limit)
+        let max_output_tokens = (MAX_CONTEXT_TOKENS - estimated_input_tokens)
+            .saturating_sub(TOKEN_BUFFER)
+            .min(MAX_OUTPUT_TOKENS);
 
         info!("Calculated max output tokens: {}", max_output_tokens);
 
@@ -931,15 +929,10 @@ impl SlackBot {
             return Ok("The conversation was too large to summarize completely. Here's a partial summary of the most recent messages.".to_string());
         }
 
-        // Build the o3 chat completion request
-        // Note: o3 model requires 'max_completion_tokens' instead of 'max_tokens'
-        // and only supports the default temperature value (1.0)
-        // Since the openai-api-rs crate doesn't support max_completion_tokens yet,
-        // we'll make the request manually using reqwest
+        // Build the Responses API request for GPT-5
         let request_body = serde_json::json!({
-            "model": "o3",
+            "model": "gpt-5",
             "messages": prompt,
-            // o3 model only supports default temperature (1.0), so we omit this parameter
             "max_completion_tokens": max_output_tokens
         });
 
@@ -963,7 +956,7 @@ impl SlackBot {
         }
 
         let response = client
-            .post("https://api.openai.com/v1/chat/completions")
+            .post("https://api.openai.com/v1/responses")
             .headers(headers)
             .json(&request_body)
             .send()
@@ -985,30 +978,34 @@ impl SlackBot {
             SlackError::OpenAIError(format!("Failed to parse OpenAI response: {}", e))
         })?;
 
-        // Extract the text response from JSON
-        if let Some(choices) = response_json.get("choices").and_then(|c| c.as_array()) {
-            if let Some(choice) = choices.first() {
-                if let Some(text) = choice
-                    .get("message")
-                    .and_then(|m| m.get("content"))
-                    .and_then(|c| c.as_str())
-                {
-                    // Include channel information in the final summary
-                    let formatted_summary = format!("*Summary from #{}*\n\n{}", channel_name, text);
-                    Ok(formatted_summary)
-                } else {
-                    Err(SlackError::OpenAIError(
-                        "No content in OpenAI response".to_string(),
-                    ))
-                }
-            } else {
-                Err(SlackError::OpenAIError(
-                    "No choices in OpenAI response".to_string(),
-                ))
-            }
+        // Extract the text response using Responses API fields
+        let text_opt = response_json
+            .get("output_text")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                // Fallback: scan first output message content for a text-bearing part
+                response_json
+                    .get("output")
+                    .and_then(|o| o.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|msg| msg.get("content"))
+                    .and_then(|c| c.as_array())
+                    .and_then(|parts| {
+                        parts.iter().find_map(|p| {
+                            p.get("text")
+                                .and_then(|t| t.as_str())
+                                .map(|s| s.to_string())
+                        })
+                    })
+            });
+
+        if let Some(text) = text_opt {
+            let formatted_summary = format!("*Summary from #{}*\n\n{}", channel_name, text);
+            Ok(formatted_summary)
         } else {
             Err(SlackError::OpenAIError(
-                "Invalid OpenAI response format".to_string(),
+                "No content in OpenAI Responses API result".to_string(),
             ))
         }
     }
