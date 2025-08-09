@@ -932,7 +932,7 @@ impl SlackBot {
         // Build the Responses API request for GPT-5
         let request_body = serde_json::json!({
             "model": "gpt-5",
-            "messages": prompt,
+            "input": prompt,
             "max_completion_tokens": max_output_tokens
         });
 
