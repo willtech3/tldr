@@ -933,7 +933,7 @@ impl SlackBot {
         let request_body = serde_json::json!({
             "model": "gpt-5",
             "input": prompt,
-            "max_completion_tokens": max_output_tokens
+            "max_output_tokens": max_output_tokens
         });
 
         // Get the OpenAI API key for direct HTTP request
