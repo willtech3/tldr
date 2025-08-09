@@ -995,7 +995,9 @@ impl SlackBot {
                     .and_then(|c| c.as_array())
                     .and_then(|parts| {
                         parts.iter().find_map(|p| {
-                            p.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+                            p.get("text")
+                                .and_then(|t| t.as_str())
+                                .map(|s| s.to_string())
                         })
                     })
             });
