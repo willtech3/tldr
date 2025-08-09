@@ -161,16 +161,14 @@ Focus on key information, group related points, and preserve any useful links.",
         });
 
         // Optional user-provided instructions (custom prompt)
-        if let Some(extra) = custom_prompt {
-            if !extra.trim().is_empty() {
-                chat_messages.push(chat_completion::ChatCompletionMessage {
-                    role: MessageRole::system, // keep it high-priority
-                    content: Content::Text(extra.to_string()),
-                    name: None,
-                    tool_calls: None,
-                    tool_call_id: None,
-                });
-            }
+        if let Some(extra) = custom_prompt.filter(|e| !e.trim().is_empty()) {
+            chat_messages.push(chat_completion::ChatCompletionMessage {
+                role: MessageRole::system, // keep it high-priority
+                content: Content::Text(extra.to_string()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            });
         }
 
         for msg in messages {
