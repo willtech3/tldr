@@ -933,8 +933,11 @@ impl SlackBot {
         // Responses API expects each message.content to be an array of typed parts:
         // - { type: "input_text", text: string }
         // - { type: "input_image", image_url: string }
+        // Build Responses API-compatible input. Skip any assistant-role messages,
+        // as Responses treats assistant content as output, not input.
         let input_messages: Vec<serde_json::Value> = prompt
             .iter()
+            .filter(|m| !matches!(m.role, MessageRole::assistant))
             .map(|m| {
                 let role_str = match m.role {
                     MessageRole::system => "system",
@@ -954,9 +957,10 @@ impl SlackBot {
                     Content::ImageUrl(imgs) => {
                         for img in imgs {
                             if let Some(ref iu) = img.image_url {
+                                // Per Responses API, image_url should be an object { url: string }
                                 parts.push(serde_json::json!({
                                     "type": "input_image",
-                                    "image_url": iu.url
+                                    "image_url": { "url": iu.url }
                                 }));
                             }
                         }
