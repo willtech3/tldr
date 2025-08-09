@@ -929,10 +929,51 @@ impl SlackBot {
             return Ok("The conversation was too large to summarize completely. Here's a partial summary of the most recent messages.".to_string());
         }
 
+        // Convert our chat-style prompt to Responses API input schema
+        // Responses API expects each message.content to be an array of typed parts:
+        // - { type: "input_text", text: string }
+        // - { type: "input_image", image_url: string }
+        let input_messages: Vec<serde_json::Value> = prompt
+            .iter()
+            .map(|m| {
+                let role_str = match m.role {
+                    MessageRole::system => "system",
+                    MessageRole::user => "user",
+                    MessageRole::assistant => "assistant",
+                    _ => "user",
+                };
+
+                let mut parts: Vec<serde_json::Value> = Vec::new();
+                match &m.content {
+                    Content::Text(t) => {
+                        parts.push(serde_json::json!({
+                            "type": "input_text",
+                            "text": t
+                        }));
+                    }
+                    Content::ImageUrl(imgs) => {
+                        for img in imgs {
+                            if let Some(ref iu) = img.image_url {
+                                parts.push(serde_json::json!({
+                                    "type": "input_image",
+                                    "image_url": iu.url
+                                }));
+                            }
+                        }
+                    }
+                }
+
+                serde_json::json!({
+                    "role": role_str,
+                    "content": parts
+                })
+            })
+            .collect();
+
         // Build the Responses API request for GPT-5
         let request_body = serde_json::json!({
             "model": "gpt-5",
-            "input": prompt,
+            "input": input_messages,
             "max_output_tokens": max_output_tokens
         });
 
@@ -979,25 +1020,45 @@ impl SlackBot {
         })?;
 
         // Extract the text response using Responses API fields
+        // Prefer aggregated output_text; otherwise scan output[].content[] for output_text items
         let text_opt = response_json
             .get("output_text")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .or_else(|| {
-                // Fallback: scan first output message content for a text-bearing part
-                response_json
-                    .get("output")
-                    .and_then(|o| o.as_array())
-                    .and_then(|arr| arr.first())
-                    .and_then(|msg| msg.get("content"))
-                    .and_then(|c| c.as_array())
-                    .and_then(|parts| {
-                        parts.iter().find_map(|p| {
-                            p.get("text")
-                                .and_then(|t| t.as_str())
-                                .map(|s| s.to_string())
-                        })
-                    })
+                // Collect any nested output_text values, supporting both string and { value } shapes
+                let mut collected: Vec<String> = Vec::new();
+                if let Some(items) = response_json.get("output").and_then(|o| o.as_array()) {
+                    for item in items {
+                        if let Some(parts) = item.get("content").and_then(|c| c.as_array()) {
+                            for p in parts {
+                                let is_output_text = p
+                                    .get("type")
+                                    .and_then(|t| t.as_str())
+                                    .map(|t| t == "output_text")
+                                    .unwrap_or(false);
+                                if !is_output_text {
+                                    continue;
+                                }
+                                // text could be a string or object with { value }
+                                if let Some(s) = p.get("text").and_then(|t| t.as_str()) {
+                                    collected.push(s.to_string());
+                                } else if let Some(s) = p
+                                    .get("text")
+                                    .and_then(|t| t.get("value"))
+                                    .and_then(|v| v.as_str())
+                                {
+                                    collected.push(s.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                if collected.is_empty() {
+                    None
+                } else {
+                    Some(collected.join("\n"))
+                }
             });
 
         if let Some(text) = text_opt {
