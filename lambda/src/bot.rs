@@ -824,14 +824,12 @@ impl SlackBot {
                         let size_opt = self.fetch_image_size(url.as_str()).await.unwrap_or(None);
 
                         // Skip if over OpenAI hard limit
-                        if let Some(sz) = size_opt {
-                            if sz > URL_IMAGE_MAX_BYTES {
-                                info!(
-                                    "Skipping image {} because size {}B > {}B",
-                                    url, sz, URL_IMAGE_MAX_BYTES
-                                );
-                                continue;
-                            }
+                        if let Some(sz) = size_opt.filter(|&s| s > URL_IMAGE_MAX_BYTES) {
+                            info!(
+                                "Skipping image {} because size {}B > {}B",
+                                url, sz, URL_IMAGE_MAX_BYTES
+                            );
+                            continue;
                         }
 
                         let use_inline = match size_opt {
