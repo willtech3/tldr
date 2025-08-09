@@ -16,9 +16,9 @@ TLDR is a serverless, Rust-powered Slack bot that turns a wall of unread message
 ## 🏗️  High-Level Architecture
 
 ```
-┌─────────┐    ┌────────────┐   SQS   ┌──────────────┐    ┌─────────────┐
-│  Slack  │──►│ API Lambda │─▶Queue▶│ Worker Lambda │───►│ OpenAI Chat │
-└─────────┘    └────────────┘         └──────┬───────┘    └─────────────┘
+┌─────────┐    ┌────────────┐   SQS   ┌──────────────┐    ┌────────────────────┐
+│  Slack  │──►│ API Lambda │─▶Queue▶│ Worker Lambda │───►│ OpenAI Responses API │
+└─────────┘    └────────────┘         └──────┬───────┘    └────────────────────┘
                                              │
                                              ▼
                                         ┌─────────┐
@@ -27,7 +27,7 @@ TLDR is a serverless, Rust-powered Slack bot that turns a wall of unread message
 ```
 
 1. **API Lambda** – Verifies Slack signatures and enqueues a summarisation job to SQS.
-2. **Worker Lambda** – Fetches unread channel messages, asks ChatGPT to summarise them, and DMs the user.
+2. **Worker Lambda** – Fetches unread channel messages, calls OpenAI Responses API (GPT‑5) to summarise them, and DMs the user.
 
 ---
 
@@ -69,7 +69,7 @@ Parameters can be combined:
 - `cargo-lambda` ≥ 0.17 for local Lambda builds
 - AWS CLI with a profile that can deploy Lambda + SQS
 - Node 18+ & npm (only for the CDK infrastructure)
-- A Slack workspace & OpenAI API key
+- A Slack workspace & OpenAI API key (and optional OpenAI Org ID)
 
 ### Steps
 
@@ -126,7 +126,9 @@ Environment variables (set in Lambda or an `.env` file for local runs):
 |----------|---------|
 | `SLACK_BOT_TOKEN` | Bot OAuth token (starts with `xoxb-…`) |
 | `SLACK_SIGNING_SECRET` | Verifies Slack requests |
-| `OPENAI_API_KEY` | Access token for ChatGPT |
+| `OPENAI_API_KEY` | Access token for the OpenAI API |
+| `OPENAI_ORG_ID` | Optional, sets OpenAI-Organization header |
+| `OPENAI_MODEL` | Optional, override model (defaults to `gpt-5`) |
 | `PROCESSING_QUEUE_URL` | URL of the SQS queue |
 
 ---
