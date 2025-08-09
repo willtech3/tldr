@@ -931,15 +931,10 @@ impl SlackBot {
             return Ok("The conversation was too large to summarize completely. Here's a partial summary of the most recent messages.".to_string());
         }
 
-        // Build the o3 chat completion request
-        // Note: o3 model requires 'max_completion_tokens' instead of 'max_tokens'
-        // and only supports the default temperature value (1.0)
-        // Since the openai-api-rs crate doesn't support max_completion_tokens yet,
-        // we'll make the request manually using reqwest
+        // Build the Responses API request for GPT-5
         let request_body = serde_json::json!({
-            "model": "o3",
+            "model": "gpt-5",
             "messages": prompt,
-            // o3 model only supports default temperature (1.0), so we omit this parameter
             "max_completion_tokens": max_output_tokens
         });
 
@@ -963,7 +958,7 @@ impl SlackBot {
         }
 
         let response = client
-            .post("https://api.openai.com/v1/chat/completions")
+            .post("https://api.openai.com/v1/responses")
             .headers(headers)
             .json(&request_body)
             .send()
@@ -985,30 +980,32 @@ impl SlackBot {
             SlackError::OpenAIError(format!("Failed to parse OpenAI response: {}", e))
         })?;
 
-        // Extract the text response from JSON
-        if let Some(choices) = response_json.get("choices").and_then(|c| c.as_array()) {
-            if let Some(choice) = choices.first() {
-                if let Some(text) = choice
-                    .get("message")
-                    .and_then(|m| m.get("content"))
-                    .and_then(|c| c.as_str())
-                {
-                    // Include channel information in the final summary
-                    let formatted_summary = format!("*Summary from #{}*\n\n{}", channel_name, text);
-                    Ok(formatted_summary)
-                } else {
-                    Err(SlackError::OpenAIError(
-                        "No content in OpenAI response".to_string(),
-                    ))
-                }
-            } else {
-                Err(SlackError::OpenAIError(
-                    "No choices in OpenAI response".to_string(),
-                ))
-            }
+        // Extract the text response using Responses API fields
+        let text_opt = response_json
+            .get("output_text")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                // Fallback: scan first output message content for a text-bearing part
+                response_json
+                    .get("output")
+                    .and_then(|o| o.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|msg| msg.get("content"))
+                    .and_then(|c| c.as_array())
+                    .and_then(|parts| {
+                        parts.iter().find_map(|p| {
+                            p.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+                        })
+                    })
+            });
+
+        if let Some(text) = text_opt {
+            let formatted_summary = format!("*Summary from #{}*\n\n{}", channel_name, text);
+            Ok(formatted_summary)
         } else {
             Err(SlackError::OpenAIError(
-                "Invalid OpenAI response format".to_string(),
+                "No content in OpenAI Responses API result".to_string(),
             ))
         }
     }
