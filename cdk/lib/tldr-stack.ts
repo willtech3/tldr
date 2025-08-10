@@ -58,7 +58,8 @@ export class TldrStack extends cdk.Stack {
 
     // Create SQS queue for processing tasks
     const processingQueue = new sqs.Queue(this, 'TldrProcessingQueue', {
-      visibilityTimeout: cdk.Duration.seconds(300), // 5 minutes
+      // Visibility timeout should exceed the Lambda processing timeout to avoid duplicate delivery
+      visibilityTimeout: cdk.Duration.seconds(930), // 15m 30s (~30s buffer over 900s Lambda timeout)
       retentionPeriod: cdk.Duration.days(1),
     });
 
@@ -95,7 +96,7 @@ export class TldrStack extends cdk.Stack {
       handler: 'bootstrap', // Fixed handler name for Rust Lambdas
       code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/target/lambda/tldr-worker/function.zip')),
       environment: commonEnvironment,
-      timeout: cdk.Duration.seconds(300), // Longer timeout for processing
+      timeout: cdk.Duration.seconds(900), // Max timeout for long-running summaries
       memorySize: 1024, // More memory for processing
       logRetention: logs.RetentionDays.ONE_WEEK, // Add CloudWatch logs retention
     });
