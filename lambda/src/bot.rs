@@ -989,7 +989,7 @@ impl SlackBot {
 
         // Make direct HTTP request to OpenAI API with a short, defensive timeout
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(25))
+            .timeout(Duration::from_secs(810))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
         let mut headers = reqwest::header::HeaderMap::new();
