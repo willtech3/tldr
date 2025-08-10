@@ -957,10 +957,10 @@ impl SlackBot {
                     Content::ImageUrl(imgs) => {
                         for img in imgs {
                             if let Some(ref iu) = img.image_url {
-                                // Per Responses API, image_url should be an object { url: string }
+                                // Per Responses API, image_url must be a string URL or data URI
                                 parts.push(serde_json::json!({
                                     "type": "input_image",
-                                    "image_url": { "url": iu.url }
+                                    "image_url": iu.url
                                 }));
                             }
                         }
@@ -987,8 +987,11 @@ impl SlackBot {
 
         let org_id = env::var("OPENAI_ORG_ID").ok();
 
-        // Make direct HTTP request to OpenAI API
-        let client = reqwest::Client::new();
+        // Make direct HTTP request to OpenAI API with a short, defensive timeout
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(25))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             "Authorization",
