@@ -130,13 +130,32 @@ fn build_task_from_view(
         .ok_or_else(|| SlackError::ParseError("view.state.values missing".to_string()))?;
 
     // Conversation
-    let channel_id = v_str(view, &["state", "values", "conv", "conv_id", "selected_conversation"]) //
-        .unwrap_or("")
-        .to_string();
+    let channel_id = v_str(
+        view,
+        &[
+            "state",
+            "values",
+            "conv",
+            "conv_id",
+            "selected_conversation",
+        ],
+    ) //
+    .unwrap_or("")
+    .to_string();
 
     // Range mode
-    let mode = v_str(view, &["state", "values", "range", "mode", "selected_option", "value"]) //
-        .unwrap_or("unread_since_last_run");
+    let mode = v_str(
+        view,
+        &[
+            "state",
+            "values",
+            "range",
+            "mode",
+            "selected_option",
+            "value",
+        ],
+    ) //
+    .unwrap_or("unread_since_last_run");
 
     // Last N (optional)
     let message_count = v_str(view, &["state", "values", "lastn", "n", "value"]) //
@@ -144,7 +163,10 @@ fn build_task_from_view(
 
     // Destination checkboxes
     let mut visible = false;
-    if let Some(selected) = v_array(view, &["state", "values", "dest", "dest_flags", "selected_options"]) {
+    if let Some(selected) = v_array(
+        view,
+        &["state", "values", "dest", "dest_flags", "selected_options"],
+    ) {
         for opt in selected {
             if let Some(val) = opt.get("value").and_then(|s| s.as_str()) {
                 match val {
@@ -392,8 +414,8 @@ pub async fn function_handler(
                     }
                 });
                 // Wait up to 2500ms for modal to open, staying within Slack's 3s limit
-                let _ =
-                    tokio::time::timeout(std::time::Duration::from_millis(2500), modal_handle).await;
+                let _ = tokio::time::timeout(std::time::Duration::from_millis(2500), modal_handle)
+                    .await;
 
                 return Ok(json!({
                     "statusCode": 200,
