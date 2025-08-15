@@ -167,9 +167,10 @@ pub fn validate_view_submission(view: &Value) -> Result<(), serde_json::Map<Stri
     if let Some(lastn_block) = values.get("lastn") {
         if let Some(n_obj) = lastn_block.get("n").and_then(|a| a.get("value")) {
             if let Some(n_str) = n_obj.as_str() {
-                if !n_str.trim().is_empty() {
-                    if let Ok(n) = n_str.parse::<i32>() {
-                        if !(10..=500).contains(&n) {
+                let trimmed = n_str.trim();
+                if !trimmed.is_empty() {
+                    match trimmed.parse::<i32>() {
+                        Ok(n) if !(10..=500).contains(&n) => {
                             errors.insert(
                                 "lastn".to_string(),
                                 Value::String(
@@ -177,11 +178,13 @@ pub fn validate_view_submission(view: &Value) -> Result<(), serde_json::Map<Stri
                                 ),
                             );
                         }
-                    } else {
-                        errors.insert(
-                            "lastn".to_string(),
-                            Value::String("Please enter a whole number".to_string()),
-                        );
+                        Err(_) => {
+                            errors.insert(
+                                "lastn".to_string(),
+                                Value::String("Please enter a whole number".to_string()),
+                            );
+                        }
+                        _ => {}
                     }
                 }
             }
