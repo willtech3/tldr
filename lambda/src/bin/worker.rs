@@ -184,15 +184,13 @@ impl BotHandler {
                                         Some(&task.user_id)
                                     ).await?;
                             }
-                        } else {
-                            if let Some(resp_url) = &task.response_url {
-                                self
-                                    .send_response_url(
-                                        resp_url,
-                                        "Sorry, I couldn't generate a summary at this time. Please try again later.",
-                                        Some(&task.user_id)
-                                    ).await?;
-                            }
+                        } else if let Some(resp_url) = &task.response_url {
+                            self
+                                .send_response_url(
+                                    resp_url,
+                                    "Sorry, I couldn't generate a summary at this time. Please try again later.",
+                                    Some(&task.user_id)
+                                ).await?;
                         }
                     } else {
                         // Do not send confirmation message when public post succeeds
@@ -233,15 +231,13 @@ impl BotHandler {
                                             Some(&task.user_id)
                                         ).await?;
                                 }
-                            } else {
-                                if let Some(resp_url) = &task.response_url {
-                                    self
-                                        .send_response_url(
-                                            resp_url,
-                                            "Sorry, I couldn't generate a summary at this time. Please try again later.",
-                                            Some(&task.user_id)
-                                        ).await?;
-                                }
+                            } else if let Some(resp_url) = &task.response_url {
+                                self
+                                    .send_response_url(
+                                        resp_url,
+                                        "Sorry, I couldn't generate a summary at this time. Please try again later.",
+                                        Some(&task.user_id)
+                                    ).await?;
                             }
                         }
                         // Intentionally not sending a confirmation message when visible message posts successfully

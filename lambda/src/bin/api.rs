@@ -76,7 +76,8 @@ async fn send_to_sqs(task: &ProcessingTask) -> Result<(), SlackError> {
 
 /// Detects whether the incoming body is a Slack interactive payload (form-encoded with a `payload=` JSON string)
 fn is_interactive_body(body: &str) -> bool {
-    body.contains("payload=")
+    // Check if body starts with "payload=" or contains "&payload=" to avoid false positives
+    body.starts_with("payload=") || body.contains("&payload=")
 }
 
 /// Parses the interactive `payload` JSON from a form-encoded body
@@ -119,49 +120,58 @@ fn v_array<'a>(root: &'a Value, path: &[&str]) -> Option<&'a Vec<Value>> {
 }
 
 /// Build a ProcessingTask from a `view_submission` payload's view.state.values
+///
+/// Parses the Block Kit modal submission data structure:
+/// - view.state.values contains blocks indexed by block_id
+/// - Each block contains action_ids with the user's input
+/// - Extracts conversation, range mode, message count, destination, and custom prompt
 fn build_task_from_view(
     user_id: &str,
     view: &Value,
     correlation_id: String,
 ) -> Result<ProcessingTask, SlackError> {
-    // Ensure view.state.values exists
+    // Ensure view.state.values exists (Block Kit requirement)
     let _ = v_path(view, &["state", "values"]) // only for presence check
         .and_then(|v| v.as_object())
         .ok_or_else(|| SlackError::ParseError("view.state.values missing".to_string()))?;
 
-    // Conversation
+    // Extract selected conversation from the conversations_select block
+    // Path: state.values.conv.conv_id.selected_conversation
     let channel_id = v_str(
         view,
         &[
             "state",
             "values",
-            "conv",
-            "conv_id",
+            "conv",    // block_id
+            "conv_id", // action_id
             "selected_conversation",
         ],
-    ) //
+    )
     .unwrap_or("")
     .to_string();
 
-    // Range mode
+    // Extract range mode from radio button selection
+    // Path: state.values.range.mode.selected_option.value
     let mode = v_str(
         view,
         &[
             "state",
             "values",
-            "range",
-            "mode",
+            "range", // block_id
+            "mode",  // action_id
             "selected_option",
             "value",
         ],
-    ) //
+    )
     .unwrap_or("unread_since_last_run");
 
-    // Last N (optional)
-    let message_count = v_str(view, &["state", "values", "lastn", "n", "value"]) //
+    // Extract optional message count for "last N messages" mode
+    // Path: state.values.lastn.n.value
+    let message_count = v_str(view, &["state", "values", "lastn", "n", "value"])
         .and_then(|s| s.parse::<u32>().ok());
 
-    // Destination checkboxes
+    // Parse destination checkboxes to determine visibility
+    // Path: state.values.dest.dest_flags.selected_options[]
     let mut visible = false;
     if let Some(selected) = v_array(
         view,
@@ -170,20 +180,22 @@ fn build_task_from_view(
         for opt in selected {
             if let Some(val) = opt.get("value").and_then(|s| s.as_str()) {
                 match val {
-                    "public_post" => visible = true,
-                    "dm" => {}
+                    "public_post" => visible = true, // Post publicly to channel
+                    "dm" => {}                       // Send via DM (default)
                     _ => {}
                 }
             }
         }
     }
 
-    // Custom prompt
-    let custom_prompt = v_str(view, &["state", "values", "style", "custom", "value"]) //
+    // Extract and sanitize custom prompt if provided
+    // Path: state.values.style.custom.value
+    let custom_prompt = v_str(view, &["state", "values", "style", "custom", "value"])
         .map(|s| s.to_string())
         .and_then(|raw| sanitize_custom_prompt(&raw).ok());
 
-    // For now, only honor last_n mode explicitly; otherwise default (None) means unread
+    // Determine effective message count based on mode
+    // Only use explicit count for "last_n" mode; otherwise None = unread messages
     let effective_count = if mode == "last_n" {
         message_count
     } else {
@@ -413,8 +425,8 @@ pub async fn function_handler(
                         }
                     }
                 });
-                // Wait up to 2500ms for modal to open, staying within Slack's 3s limit
-                let _ = tokio::time::timeout(std::time::Duration::from_millis(2500), modal_handle)
+                // Wait up to 2000ms for modal to open, providing safety margin within Slack's 3s limit
+                let _ = tokio::time::timeout(std::time::Duration::from_millis(2000), modal_handle)
                     .await;
 
                 return Ok(json!({
@@ -443,12 +455,15 @@ pub async fn function_handler(
                             ) {
                                 Ok(t) => t,
                                 Err(e) => {
-                                    error!("Failed to build task: {}", e);
+                                    error!(
+                                        "Failed to build task (correlation_id={}): {}",
+                                        correlation_id, e
+                                    );
                                     return Ok(json!({
                                         "statusCode": 200,
                                         "body": json!({
                                             "response_action": "errors",
-                                            "errors": { "conv": "Something went wrong; please try again." }
+                                            "errors": { "conv": format!("Error processing request (ref: {}). Please try again.", &correlation_id[..8]) }
                                         }).to_string()
                                     }));
                                 }
@@ -459,7 +474,7 @@ pub async fn function_handler(
                                     "statusCode": 200,
                                     "body": json!({
                                         "response_action": "errors",
-                                        "errors": { "conv": "Unable to start the job. Please try again." }
+                                        "errors": { "conv": format!("Unable to start job (ref: {}). Please try again.", &correlation_id[..8]) }
                                     }).to_string()
                                 }));
                             }
@@ -592,8 +607,8 @@ pub async fn function_handler(
         }
     });
 
-    // Wait up to 2500ms for modal to open, staying within Slack's 3s limit
-    let _ = tokio::time::timeout(std::time::Duration::from_millis(2500), modal_handle).await;
+    // Wait up to 2000ms for modal to open, providing safety margin within Slack's 3s limit
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(2000), modal_handle).await;
 
     Ok(json!({
         "statusCode": 200,

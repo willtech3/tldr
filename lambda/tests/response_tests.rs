@@ -83,7 +83,10 @@ fn test_ephemeral_payload() {
 #[test]
 fn test_replace_original_payload_blank_min() {
     let v = create_replace_original_payload(None);
-    assert_eq!(v.get("replace_original").and_then(|b| b.as_bool()), Some(true));
+    assert_eq!(
+        v.get("replace_original").and_then(|b| b.as_bool()),
+        Some(true)
+    );
 }
 
 /// Integration test: Verify the ephemeral response payload matches the format

@@ -169,7 +169,7 @@ pub fn validate_view_submission(view: &Value) -> Result<(), serde_json::Map<Stri
             if let Some(n_str) = n_obj.as_str() {
                 if !n_str.trim().is_empty() {
                     if let Ok(n) = n_str.parse::<i32>() {
-                        if n < 10 || n > 500 {
+                        if !(10..=500).contains(&n) {
                             errors.insert(
                                 "lastn".to_string(),
                                 Value::String(
