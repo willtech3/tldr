@@ -126,16 +126,13 @@ pub fn build_tldr_modal(prefill: &Prefill) -> Value {
 
     // If user explicitly does not want Canvas destination, remove it from initial options.
     if !prefill.dest_canvas {
-        if let Some(section) = blocks.get_mut(5) {
-            if let Some(accessory) = section.get_mut("accessory") {
-                if let Some(initial) = accessory.get_mut("initial_options") {
-                    if let Some(arr) = initial.as_array_mut() {
-                        arr.retain(|opt| {
-                            opt.get("value").and_then(|v| v.as_str()) != Some("canvas")
-                        });
-                    }
-                }
-            }
+        if let Some(arr) = blocks
+            .get_mut(5)
+            .and_then(|section| section.get_mut("accessory"))
+            .and_then(|accessory| accessory.get_mut("initial_options"))
+            .and_then(|initial| initial.as_array_mut())
+        {
+            arr.retain(|opt| opt.get("value").and_then(|v| v.as_str()) != Some("canvas"));
         }
     }
 
@@ -164,29 +161,29 @@ pub fn validate_view_submission(view: &Value) -> Result<(), serde_json::Map<Stri
     };
 
     // Validate last N if present
-    if let Some(lastn_block) = values.get("lastn") {
-        if let Some(n_obj) = lastn_block.get("n").and_then(|a| a.get("value")) {
-            if let Some(n_str) = n_obj.as_str() {
-                let trimmed = n_str.trim();
-                if !trimmed.is_empty() {
-                    match trimmed.parse::<i32>() {
-                        Ok(n) if !(10..=500).contains(&n) => {
-                            errors.insert(
-                                "lastn".to_string(),
-                                Value::String(
-                                    "Please enter a number between 10 and 500".to_string(),
-                                ),
-                            );
-                        }
-                        Err(_) => {
-                            errors.insert(
-                                "lastn".to_string(),
-                                Value::String("Please enter a whole number".to_string()),
-                            );
-                        }
-                        _ => {}
-                    }
+    let lastn_value = values
+        .get("lastn")
+        .and_then(|block| block.get("n"))
+        .and_then(|n| n.get("value"))
+        .and_then(|v| v.as_str());
+
+    if let Some(n_str) = lastn_value {
+        let trimmed = n_str.trim();
+        if !trimmed.is_empty() {
+            match trimmed.parse::<i32>() {
+                Ok(n) if !(10..=500).contains(&n) => {
+                    errors.insert(
+                        "lastn".to_string(),
+                        Value::String("Please enter a number between 10 and 500".to_string()),
+                    );
                 }
+                Err(_) => {
+                    errors.insert(
+                        "lastn".to_string(),
+                        Value::String("Please enter a whole number".to_string()),
+                    );
+                }
+                _ => {}
             }
         }
     }
