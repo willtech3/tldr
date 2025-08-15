@@ -1,5 +1,5 @@
-use tldr::{build_tldr_modal, validate_view_submission, Prefill};
 use serde_json::json;
+use tldr::{Prefill, build_tldr_modal, validate_view_submission};
 
 #[test]
 fn build_modal_with_prefill_defaults() {
@@ -27,15 +27,9 @@ fn build_modal_prefill_values() {
     };
     let view = build_tldr_modal(&prefill);
     // Check initial conversation applied
-    assert_eq!(
-        view["blocks"][0]["element"]["initial_conversation"],
-        "C123"
-    );
+    assert_eq!(view["blocks"][0]["element"]["initial_conversation"], "C123");
     // Check number input prefill
-    assert_eq!(
-        view["blocks"][2]["element"]["initial_value"],
-        "250"
-    );
+    assert_eq!(view["blocks"][2]["element"]["initial_value"], "250");
 }
 
 #[test]
@@ -54,5 +48,3 @@ fn validate_view_submission_lastn_errors() {
     let err2 = validate_view_submission(&view2).unwrap_err();
     assert!(err2.contains_key("lastn"));
 }
-
-

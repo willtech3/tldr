@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Prefill values collected from legacy slash flags or context.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -33,7 +33,10 @@ pub fn build_tldr_modal(prefill: &Prefill) -> Value {
         // When explicit conversation is provided, Slack requires using initial_conversation
         // and not default_to_current_conversation
         conv_element["initial_conversation"] = Value::String(conv.clone());
-        conv_element.as_object_mut().unwrap().remove("default_to_current_conversation");
+        conv_element
+            .as_object_mut()
+            .unwrap()
+            .remove("default_to_current_conversation");
     }
 
     let mut dest_initial_options: Vec<Value> = vec![json!({
@@ -118,7 +121,7 @@ pub fn build_tldr_modal(prefill: &Prefill) -> Value {
             "optional": true,
             "label": { "type": "plain_text", "text": "Style / prompt override" },
             "element": { "type": "plain_text_input", "action_id": "custom", "multiline": true, "initial_value": prefill.custom_prompt.clone().unwrap_or_default() }
-        })
+        }),
     ];
 
     // If user explicitly does not want Canvas destination, remove it from initial options.
@@ -127,7 +130,9 @@ pub fn build_tldr_modal(prefill: &Prefill) -> Value {
             if let Some(accessory) = section.get_mut("accessory") {
                 if let Some(initial) = accessory.get_mut("initial_options") {
                     if let Some(arr) = initial.as_array_mut() {
-                        arr.retain(|opt| opt.get("value").and_then(|v| v.as_str()) != Some("canvas"));
+                        arr.retain(|opt| {
+                            opt.get("value").and_then(|v| v.as_str()) != Some("canvas")
+                        });
                     }
                 }
             }
@@ -167,7 +172,9 @@ pub fn validate_view_submission(view: &Value) -> Result<(), serde_json::Map<Stri
                         if n < 10 || n > 500 {
                             errors.insert(
                                 "lastn".to_string(),
-                                Value::String("Please enter a number between 10 and 500".to_string()),
+                                Value::String(
+                                    "Please enter a number between 10 and 500".to_string(),
+                                ),
                             );
                         }
                     } else {
@@ -181,7 +188,9 @@ pub fn validate_view_submission(view: &Value) -> Result<(), serde_json::Map<Stri
         }
     }
 
-    if errors.is_empty() { Ok(()) } else { Err(errors) }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
 }
-
-

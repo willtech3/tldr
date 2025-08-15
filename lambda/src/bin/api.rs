@@ -16,9 +16,8 @@ use tracing::{error, info};
 // Import shared modules
 use tldr::SlackBot;
 use tldr::{
-    SlackError, sanitize_custom_prompt,
+    Prefill, SlackError, build_tldr_modal, sanitize_custom_prompt,
     slack_parser::{SlackCommandEvent, parse_form_data},
-    Prefill, build_tldr_modal,
 };
 
 #[derive(Debug, Serialize, Deserialize)]

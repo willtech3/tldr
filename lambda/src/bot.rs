@@ -389,7 +389,9 @@ impl SlackBot {
         } else {
             Err(SlackError::ApiError(format!(
                 "views.open error: {}",
-                json.get("error").and_then(|e| e.as_str()).unwrap_or("unknown")
+                json.get("error")
+                    .and_then(|e| e.as_str())
+                    .unwrap_or("unknown")
             )))
         }
     }

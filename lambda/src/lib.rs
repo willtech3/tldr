@@ -51,7 +51,7 @@ pub use errors::SlackError;
 pub use formatting::format_summary_message;
 pub use prompt::{sanitize_custom_internal, sanitize_custom_prompt};
 pub use response::{create_ephemeral_payload, create_replace_original_payload};
-pub use views::{build_tldr_modal, validate_view_submission, Prefill};
+pub use views::{Prefill, build_tldr_modal, validate_view_submission};
 
 /// Configure structured logging with JSON format for AWS Lambda environments.
 ///

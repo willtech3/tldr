@@ -37,14 +37,20 @@ impl BotHandler {
         })
     }
 
-    async fn send_response_url(&self, response_url: &str, message: &str, dm_fallback_user: Option<&str>) -> Result<(), SlackError> {
+    async fn send_response_url(
+        &self,
+        response_url: &str,
+        message: &str,
+        dm_fallback_user: Option<&str>,
+    ) -> Result<(), SlackError> {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
         // Use the extracted function to create a consistent ephemeral payload
         let body = create_ephemeral_payload(message);
 
-        let resp = self.http_client
+        let resp = self
+            .http_client
             .post(response_url)
             .headers(headers)
             .json(&body)
@@ -53,8 +59,14 @@ impl BotHandler {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let body_text = resp.text().await.unwrap_or_else(|_| "<failed to read body>".to_string());
-            error!("response_url POST failed: status={} body={}", status, body_text);
+            let body_text = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "<failed to read body>".to_string());
+            error!(
+                "response_url POST failed: status={} body={}",
+                status, body_text
+            );
 
             // Try DM fallback if provided
             if let Some(user_id) = dm_fallback_user {
@@ -110,8 +122,12 @@ impl BotHandler {
 
         if messages.is_empty() {
             // No messages to summarize
-            self.send_response_url(&task.response_url, "No messages found to summarize.", Some(&task.user_id))
-                .await?;
+            self.send_response_url(
+                &task.response_url,
+                "No messages found to summarize.",
+                Some(&task.user_id),
+            )
+            .await?;
             return Ok(());
         }
 
@@ -231,7 +247,7 @@ impl BotHandler {
                 self.send_response_url(
                     &task.response_url,
                     "Sorry, I couldn't generate a summary at this time. Please try again later.",
-                    Some(&task.user_id)
+                    Some(&task.user_id),
                 )
                 .await?;
             }
