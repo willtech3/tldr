@@ -82,15 +82,14 @@ fn parse_slack_event(payload: &str) -> Result<SlackCommandEvent, SlackError> {
 
 /// Case-insensitive header lookup from the API Gateway/Lambda JSON headers map.
 fn get_header_value<'a>(headers: &'a serde_json::Value, name: &str) -> Option<&'a str> {
-    // Try exact match first
+    // Try exact match first (avoids allocation in common case)
     if let Some(v) = headers.get(name).and_then(|s| s.as_str()) {
         return Some(v);
     }
-    // Try lower-cased key search
-    let target = name.to_ascii_lowercase();
+    // Fall back to case-insensitive search
     headers.as_object().and_then(|map| {
         map.iter().find_map(|(k, v)| {
-            if k.eq_ignore_ascii_case(&target) {
+            if k.eq_ignore_ascii_case(name) {
                 v.as_str()
             } else {
                 None
@@ -321,10 +320,11 @@ pub async fn function_handler(
 
     let view = build_tldr_modal(&prefill);
 
-    // Open modal using Slack Web API (3s trigger lifetime) – fire-and-forget
+    // Open modal using Slack Web API (3s trigger lifetime)
+    // Wait briefly to ensure the modal opens before Lambda container freezes
     let trigger_id = slack_event.trigger_id.clone();
     let view_clone = view.clone();
-    tokio::spawn(async move {
+    let modal_handle = tokio::spawn(async move {
         match SlackBot::new().await {
             Ok(bot) => {
                 if let Err(e) = bot.open_modal(&trigger_id, &view_clone).await {
@@ -336,6 +336,13 @@ pub async fn function_handler(
             }
         }
     });
+    
+    // Wait up to 500ms for modal to open, ensuring task completes within Lambda execution
+    // This prevents the container from freezing before the modal opens
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        modal_handle
+    ).await;
 
     Ok(json!({
         "statusCode": 200,
@@ -354,4 +361,38 @@ async fn main() -> Result<(), Error> {
     let func = service_fn(function_handler);
     run(func).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_case_insensitive_header_lookup() {
+        let headers = json!({
+            "x-slack-signature": "v0=test_sig_lower",
+            "X-SLACK-REQUEST-TIMESTAMP": "1234567890",
+            "Content-Type": "application/x-www-form-urlencoded"
+        });
+
+        // Test exact match
+        assert_eq!(
+            get_header_value(&headers, "Content-Type"),
+            Some("application/x-www-form-urlencoded")
+        );
+
+        // Test case-insensitive matches
+        assert_eq!(
+            get_header_value(&headers, "X-Slack-Signature"),
+            Some("v0=test_sig_lower")
+        );
+        assert_eq!(
+            get_header_value(&headers, "x-slack-request-timestamp"),
+            Some("1234567890")
+        );
+
+        // Test non-existent header
+        assert_eq!(get_header_value(&headers, "Non-Existent-Header"), None);
+    }
 }
