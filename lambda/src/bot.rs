@@ -362,6 +362,38 @@ impl SlackBot {
         .await
     }
 
+    /// Opens a Block Kit modal using Slack's `views.open` API.
+    pub async fn open_modal(&self, trigger_id: &str, view: &Value) -> Result<(), SlackError> {
+        let payload = serde_json::json!({
+            "trigger_id": trigger_id,
+            "view": view
+        });
+
+        let resp = HTTP_CLIENT
+            .post("https://slack.com/api/views.open")
+            .bearer_auth(&self.token.token_value.0)
+            .json(&payload)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            return Err(SlackError::ApiError(format!(
+                "views.open HTTP {}",
+                resp.status()
+            )));
+        }
+
+        let json: Value = resp.json().await?;
+        if json.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+            Ok(())
+        } else {
+            Err(SlackError::ApiError(format!(
+                "views.open error: {}",
+                json.get("error").and_then(|e| e.as_str()).unwrap_or("unknown")
+            )))
+        }
+    }
+
     pub async fn delete_message(&self, channel_id: &str, ts: &str) -> Result<(), SlackError> {
         self.with_retry(|| async {
             let session = SLACK_CLIENT.open_session(&self.token);

@@ -18,6 +18,7 @@ use tldr::SlackBot;
 use tldr::{
     SlackError, sanitize_custom_prompt,
     slack_parser::{SlackCommandEvent, parse_form_data},
+    Prefill, build_tldr_modal,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -292,44 +293,35 @@ pub async fn function_handler(
         }
     }
 
-    // Send to SQS for async processing
-
-    // Create processing task with all parsed parameters
-    let task = ProcessingTask {
-        user_id: slack_event.user_id.clone(),
-        channel_id: slack_event.channel_id.clone(),
-        response_url: slack_event.response_url.clone(),
-        text: filtered_text.clone(),
-        message_count,
-        target_channel_id,
-        custom_prompt,
-        visible,
+    // Prefer UI per plan: open modal immediately; worker handles background job on submission
+    let prefill = Prefill {
+        initial_conversation: Some(slack_event.channel_id.clone()),
+        last_n: message_count,
+        custom_prompt: custom_prompt.clone(),
+        dest_canvas: true,
+        dest_dm: !visible,
+        dest_public_post: visible,
     };
 
-    // Send to SQS for async processing
-    if let Err(e) = send_to_sqs(&task).await {
-        error!("Failed to send to SQS: {}", e);
-        return Ok(json!({
-            "statusCode": 200,
-            "body": json!({
-                "response_type": "ephemeral",
-                "text": "Sorry, I couldn't process your request at this time. Please try again later."
-            }).to_string()
-        }));
+    let view = build_tldr_modal(&prefill);
+
+    // Open modal using Slack Web API (3s trigger lifetime)
+    match SlackBot::new().await {
+        Ok(bot) => {
+            if let Err(e) = bot.open_modal(&slack_event.trigger_id, &view).await {
+                error!("Failed to open modal: {}", e);
+            }
+        }
+        Err(e) => {
+            error!("Failed to initialize SlackBot for views.open: {}", e);
+        }
     }
-
-    // Return immediate response to Slack
-    info!("Task sent to processing queue successfully");
-
-    // Always use ephemeral response from the API Lambda
-    // The worker will handle visible responses when needed
-    let response_type = "ephemeral";
 
     Ok(json!({
         "statusCode": 200,
         "body": json!({
-            "response_type": response_type,
-            "text": "Processing your request. I'll send a summary shortly!"
+            "response_type": "ephemeral",
+            "text": "Opening TLDR configuration…"
         }).to_string()
     }))
 }
