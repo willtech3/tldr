@@ -99,53 +99,52 @@ fn parse_interactive_payload(form_body: &str) -> Result<Value, SlackError> {
     Err(SlackError::ParseError("Missing payload field".to_string()))
 }
 
+/// Helper: traverse a nested JSON object by path of keys.
+fn v_path<'a>(root: &'a Value, path: &[&str]) -> Option<&'a Value> {
+    let mut cur = root;
+    for key in path {
+        cur = cur.get(*key)?;
+    }
+    Some(cur)
+}
+
+/// Helper: get a nested string value by path.
+fn v_str<'a>(root: &'a Value, path: &[&str]) -> Option<&'a str> {
+    v_path(root, path).and_then(|v| v.as_str())
+}
+
+/// Helper: get a nested array value by path.
+fn v_array<'a>(root: &'a Value, path: &[&str]) -> Option<&'a Vec<Value>> {
+    v_path(root, path).and_then(|v| v.as_array())
+}
+
 /// Build a ProcessingTask from a `view_submission` payload's view.state.values
 fn build_task_from_view(
     user_id: &str,
     view: &Value,
     correlation_id: String,
 ) -> Result<ProcessingTask, SlackError> {
-    // Navigate: view.state.values.{block_id}.{action_id}.something
-    let values = view
-        .get("state")
-        .and_then(|s| s.get("values"))
+    // Ensure view.state.values exists
+    let _ = v_path(view, &["state", "values"]) // only for presence check
         .and_then(|v| v.as_object())
         .ok_or_else(|| SlackError::ParseError("view.state.values missing".to_string()))?;
 
     // Conversation
-    let channel_id = values
-        .get("conv")
-        .and_then(|b| b.get("conv_id"))
-        .and_then(|a| a.get("selected_conversation"))
-        .and_then(|s| s.as_str())
+    let channel_id = v_str(view, &["state", "values", "conv", "conv_id", "selected_conversation"]) //
         .unwrap_or("")
         .to_string();
 
     // Range mode
-    let mode = values
-        .get("range")
-        .and_then(|b| b.get("mode"))
-        .and_then(|a| a.get("selected_option"))
-        .and_then(|o| o.get("value"))
-        .and_then(|s| s.as_str())
+    let mode = v_str(view, &["state", "values", "range", "mode", "selected_option", "value"]) //
         .unwrap_or("unread_since_last_run");
 
     // Last N (optional)
-    let message_count = values
-        .get("lastn")
-        .and_then(|b| b.get("n"))
-        .and_then(|a| a.get("value"))
-        .and_then(|s| s.as_str())
+    let message_count = v_str(view, &["state", "values", "lastn", "n", "value"]) //
         .and_then(|s| s.parse::<u32>().ok());
 
     // Destination checkboxes
     let mut visible = false;
-    if let Some(selected) = values
-        .get("dest")
-        .and_then(|b| b.get("dest_flags"))
-        .and_then(|a| a.get("selected_options"))
-        .and_then(|arr| arr.as_array())
-    {
+    if let Some(selected) = v_array(view, &["state", "values", "dest", "dest_flags", "selected_options"]) {
         for opt in selected {
             if let Some(val) = opt.get("value").and_then(|s| s.as_str()) {
                 match val {
@@ -158,11 +157,7 @@ fn build_task_from_view(
     }
 
     // Custom prompt
-    let custom_prompt = values
-        .get("style")
-        .and_then(|b| b.get("custom"))
-        .and_then(|a| a.get("value"))
-        .and_then(|s| s.as_str())
+    let custom_prompt = v_str(view, &["state", "values", "style", "custom", "value"]) //
         .map(|s| s.to_string())
         .and_then(|raw| sanitize_custom_prompt(&raw).ok());
 
@@ -371,11 +366,7 @@ pub async fn function_handler(
             "shortcut" | "message_action" => {
                 let mut prefill = Prefill::default();
                 // Try to prefill from channel if present (message_action)
-                if let Some(ch) = payload
-                    .get("channel")
-                    .and_then(|c| c.get("id"))
-                    .and_then(|s| s.as_str())
-                {
+                if let Some(ch) = v_str(&payload, &["channel", "id"]) {
                     prefill.initial_conversation = Some(ch.to_string());
                 }
                 prefill.last_n = Some(100);
@@ -384,9 +375,7 @@ pub async fn function_handler(
                 prefill.dest_public_post = false;
 
                 let view = build_tldr_modal(&prefill);
-                let trigger_id = payload
-                    .get("trigger_id")
-                    .and_then(|s| s.as_str())
+                let trigger_id = v_str(&payload, &["trigger_id"]) //
                     .unwrap_or("")
                     .to_string();
                 let view_clone = view.clone();
@@ -402,8 +391,9 @@ pub async fn function_handler(
                         }
                     }
                 });
+                // Wait up to 2500ms for modal to open, staying within Slack's 3s limit
                 let _ =
-                    tokio::time::timeout(std::time::Duration::from_millis(500), modal_handle).await;
+                    tokio::time::timeout(std::time::Duration::from_millis(2500), modal_handle).await;
 
                 return Ok(json!({
                     "statusCode": 200,
@@ -423,11 +413,7 @@ pub async fn function_handler(
                     match validate_view_submission(view) {
                         Ok(()) => {
                             // Build task and enqueue
-                            let user_id = payload
-                                .get("user")
-                                .and_then(|u| u.get("id"))
-                                .and_then(|s| s.as_str())
-                                .unwrap_or("");
+                            let user_id = v_str(&payload, &["user", "id"]).unwrap_or("");
                             let task = match build_task_from_view(
                                 user_id,
                                 view,
@@ -584,8 +570,8 @@ pub async fn function_handler(
         }
     });
 
-    // Wait up to 500ms for modal to open
-    let _ = tokio::time::timeout(std::time::Duration::from_millis(500), modal_handle).await;
+    // Wait up to 2500ms for modal to open, staying within Slack's 3s limit
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(2500), modal_handle).await;
 
     Ok(json!({
         "statusCode": 200,
