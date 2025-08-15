@@ -80,6 +80,24 @@ fn parse_slack_event(payload: &str) -> Result<SlackCommandEvent, SlackError> {
         .map_err(|e| SlackError::ParseError(format!("Failed to parse form data: {}", e)))
 }
 
+/// Case-insensitive header lookup from the API Gateway/Lambda JSON headers map.
+fn get_header_value<'a>(headers: &'a serde_json::Value, name: &str) -> Option<&'a str> {
+    // Try exact match first (avoids allocation in common case)
+    if let Some(v) = headers.get(name).and_then(|s| s.as_str()) {
+        return Some(v);
+    }
+    // Fall back to case-insensitive search
+    headers.as_object().and_then(|map| {
+        map.iter().find_map(|(k, v)| {
+            if k.eq_ignore_ascii_case(name) {
+                v.as_str()
+            } else {
+                None
+            }
+        })
+    })
+}
+
 /// Verify Slack request signature to ensure authenticity
 /// Based on Slack's security guidelines: https://api.slack.com/authentication/verifying-requests-from-slack
 fn verify_slack_signature(request_body: &str, timestamp: &str, signature: &str) -> bool {
@@ -174,7 +192,7 @@ pub async fn function_handler(
     };
 
     // Extract Slack signature headers
-    let signature = match headers.get("X-Slack-Signature").and_then(|s| s.as_str()) {
+    let signature = match get_header_value(headers, "X-Slack-Signature") {
         Some(sig) => sig,
         None => {
             error!("Missing X-Slack-Signature header");
@@ -185,10 +203,7 @@ pub async fn function_handler(
         }
     };
 
-    let timestamp = match headers
-        .get("X-Slack-Request-Timestamp")
-        .and_then(|s| s.as_str())
-    {
+    let timestamp = match get_header_value(headers, "X-Slack-Request-Timestamp") {
         Some(ts) => ts,
         None => {
             error!("Missing X-Slack-Request-Timestamp header");
@@ -292,7 +307,8 @@ pub async fn function_handler(
         }
     }
 
-    // Prefer UI per plan: open modal immediately; worker handles background job on submission
+    // Prefer UI per plan: open modal (must be within 3s trigger lifetime). Do it in background
+    // to ensure we ACK the slash command promptly.
     let prefill = Prefill {
         initial_conversation: Some(slack_event.channel_id.clone()),
         last_n: message_count,
@@ -305,16 +321,25 @@ pub async fn function_handler(
     let view = build_tldr_modal(&prefill);
 
     // Open modal using Slack Web API (3s trigger lifetime)
-    match SlackBot::new().await {
-        Ok(bot) => {
-            if let Err(e) = bot.open_modal(&slack_event.trigger_id, &view).await {
-                error!("Failed to open modal: {}", e);
+    // Wait briefly to ensure the modal opens before Lambda container freezes
+    let trigger_id = slack_event.trigger_id.clone();
+    let view_clone = view.clone();
+    let modal_handle = tokio::spawn(async move {
+        match SlackBot::new().await {
+            Ok(bot) => {
+                if let Err(e) = bot.open_modal(&trigger_id, &view_clone).await {
+                    error!("Failed to open modal: {}", e);
+                }
+            }
+            Err(e) => {
+                error!("Failed to initialize SlackBot for views.open: {}", e);
             }
         }
-        Err(e) => {
-            error!("Failed to initialize SlackBot for views.open: {}", e);
-        }
-    }
+    });
+
+    // Wait up to 500ms for modal to open, ensuring task completes within Lambda execution
+    // This prevents the container from freezing before the modal opens
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(500), modal_handle).await;
 
     Ok(json!({
         "statusCode": 200,
@@ -333,4 +358,38 @@ async fn main() -> Result<(), Error> {
     let func = service_fn(function_handler);
     run(func).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_case_insensitive_header_lookup() {
+        let headers = json!({
+            "x-slack-signature": "v0=test_sig_lower",
+            "X-SLACK-REQUEST-TIMESTAMP": "1234567890",
+            "Content-Type": "application/x-www-form-urlencoded"
+        });
+
+        // Test exact match
+        assert_eq!(
+            get_header_value(&headers, "Content-Type"),
+            Some("application/x-www-form-urlencoded")
+        );
+
+        // Test case-insensitive matches
+        assert_eq!(
+            get_header_value(&headers, "X-Slack-Signature"),
+            Some("v0=test_sig_lower")
+        );
+        assert_eq!(
+            get_header_value(&headers, "x-slack-request-timestamp"),
+            Some("1234567890")
+        );
+
+        // Test non-existent header
+        assert_eq!(get_header_value(&headers, "Non-Existent-Header"), None);
+    }
 }

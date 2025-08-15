@@ -48,3 +48,13 @@ fn validate_view_submission_lastn_errors() {
     let err2 = validate_view_submission(&view2).unwrap_err();
     assert!(err2.contains_key("lastn"));
 }
+
+#[test]
+fn modal_contains_required_fields() {
+    let view = build_tldr_modal(&Prefill::default());
+    assert_eq!(view["type"], "modal");
+    assert!(view["title"].is_object());
+    assert!(view["blocks"].is_array());
+    // Must include submit for input blocks per Slack docs
+    assert_eq!(view["submit"]["type"], "plain_text");
+}
