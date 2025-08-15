@@ -71,9 +71,13 @@ impl BotHandler {
 
             // Try DM fallback if provided
             if let Some(user_id) = dm_fallback_user {
-                if let Err(dm_err) = self.slack_bot.send_dm(user_id, message).await {
-                    error!("DM fallback failed for user {}: {}", user_id, dm_err);
-                }
+                let _ = self
+                    .slack_bot
+                    .send_dm(user_id, message)
+                    .await
+                    .map_err(|dm_err| {
+                        error!("DM fallback failed for user {}: {}", user_id, dm_err);
+                    });
             }
         }
 
