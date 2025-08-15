@@ -80,6 +80,25 @@ fn parse_slack_event(payload: &str) -> Result<SlackCommandEvent, SlackError> {
         .map_err(|e| SlackError::ParseError(format!("Failed to parse form data: {}", e)))
 }
 
+/// Case-insensitive header lookup from the API Gateway/Lambda JSON headers map.
+fn get_header_value<'a>(headers: &'a serde_json::Value, name: &str) -> Option<&'a str> {
+    // Try exact match first
+    if let Some(v) = headers.get(name).and_then(|s| s.as_str()) {
+        return Some(v);
+    }
+    // Try lower-cased key search
+    let target = name.to_ascii_lowercase();
+    headers.as_object().and_then(|map| {
+        map.iter().find_map(|(k, v)| {
+            if k.eq_ignore_ascii_case(&target) {
+                v.as_str()
+            } else {
+                None
+            }
+        })
+    })
+}
+
 /// Verify Slack request signature to ensure authenticity
 /// Based on Slack's security guidelines: https://api.slack.com/authentication/verifying-requests-from-slack
 fn verify_slack_signature(request_body: &str, timestamp: &str, signature: &str) -> bool {
@@ -174,7 +193,7 @@ pub async fn function_handler(
     };
 
     // Extract Slack signature headers
-    let signature = match headers.get("X-Slack-Signature").and_then(|s| s.as_str()) {
+    let signature = match get_header_value(headers, "X-Slack-Signature") {
         Some(sig) => sig,
         None => {
             error!("Missing X-Slack-Signature header");
@@ -185,10 +204,7 @@ pub async fn function_handler(
         }
     };
 
-    let timestamp = match headers
-        .get("X-Slack-Request-Timestamp")
-        .and_then(|s| s.as_str())
-    {
+    let timestamp = match get_header_value(headers, "X-Slack-Request-Timestamp") {
         Some(ts) => ts,
         None => {
             error!("Missing X-Slack-Request-Timestamp header");
@@ -292,7 +308,8 @@ pub async fn function_handler(
         }
     }
 
-    // Prefer UI per plan: open modal immediately; worker handles background job on submission
+    // Prefer UI per plan: open modal (must be within 3s trigger lifetime). Do it in background
+    // to ensure we ACK the slash command promptly.
     let prefill = Prefill {
         initial_conversation: Some(slack_event.channel_id.clone()),
         last_n: message_count,
@@ -304,17 +321,21 @@ pub async fn function_handler(
 
     let view = build_tldr_modal(&prefill);
 
-    // Open modal using Slack Web API (3s trigger lifetime)
-    match SlackBot::new().await {
-        Ok(bot) => {
-            if let Err(e) = bot.open_modal(&slack_event.trigger_id, &view).await {
-                error!("Failed to open modal: {}", e);
+    // Open modal using Slack Web API (3s trigger lifetime) – fire-and-forget
+    let trigger_id = slack_event.trigger_id.clone();
+    let view_clone = view.clone();
+    tokio::spawn(async move {
+        match SlackBot::new().await {
+            Ok(bot) => {
+                if let Err(e) = bot.open_modal(&trigger_id, &view_clone).await {
+                    error!("Failed to open modal: {}", e);
+                }
+            }
+            Err(e) => {
+                error!("Failed to initialize SlackBot for views.open: {}", e);
             }
         }
-        Err(e) => {
-            error!("Failed to initialize SlackBot for views.open: {}", e);
-        }
-    }
+    });
 
     Ok(json!({
         "statusCode": 200,
