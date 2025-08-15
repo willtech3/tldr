@@ -1,3 +1,15 @@
+//! Slack API Lambda handler for slash commands and interactive payloads.
+//!
+//! - Slash command (`/tldr`) path: verifies signature, opens modal with prefill,
+//!   returns ephemeral ACK.
+//! - Interactive path (`/slack/interactive`):
+//!   - `shortcut` / `message_action`: opens the TLDR modal via `views.open`
+//!   - `view_submission`: validates input, enqueues a job to SQS, and responds
+//!     with `{ response_action: "clear" }` on success or `{ response_action: "errors" }`
+//!     when validation fails.
+//!
+//! Correlation IDs (UUID v4) are propagated as part of the enqueued task to enable
+//! API→Worker traceability in logs.
 use anyhow::Result;
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_sqs::Client as SqsClient;
@@ -128,7 +140,6 @@ fn build_task_from_view(
 
     // Destination checkboxes
     let mut visible = false;
-    let mut _dm = false;
     if let Some(selected) = values
         .get("dest")
         .and_then(|b| b.get("dest_flags"))
@@ -139,7 +150,7 @@ fn build_task_from_view(
             if let Some(val) = opt.get("value").and_then(|s| s.as_str()) {
                 match val {
                     "public_post" => visible = true,
-                    "dm" => _dm = true,
+                    "dm" => {}
                     _ => {}
                 }
             }
@@ -513,7 +524,7 @@ pub async fn function_handler(
 
     // Parse parameters from filtered text
     let mut message_count: Option<u32> = None;
-    let mut _target_channel_id: Option<String> = None;
+    // Note: channel targeting is now handled via modal; we intentionally skip parsing it here.
     let mut custom_prompt: Option<String> = None;
 
     // Use regex captures to properly handle quoted values
@@ -527,25 +538,7 @@ pub async fn function_handler(
                     message_count = Some(count);
                 }
             }
-            "channel" => {
-                // Handle both #channel and channel formats
-                let channel_id = if raw.starts_with("<#") && raw.ends_with(">") {
-                    // Format: <#C12345|channel-name> or <#C12345>
-                    let channel_part = &raw[2..raw.len() - 1];
-                    if let Some(pipe_pos) = channel_part.find('|') {
-                        channel_part[0..pipe_pos].to_string()
-                    } else {
-                        channel_part.to_string()
-                    }
-                } else if raw.starts_with('#') {
-                    // Format: #channel-name (we'll need to look it up by name)
-                    raw[1..].to_string()
-                } else {
-                    // Just the raw channel ID or name
-                    raw.to_string()
-                };
-                _target_channel_id = Some(channel_id);
-            }
+            "channel" => {}
             "custom" => {
                 // Sanitize custom prompt
                 match sanitize_custom_prompt(raw) {
