@@ -125,15 +125,14 @@ pub fn build_tldr_modal(prefill: &Prefill) -> Value {
     ];
 
     // If user explicitly does not want Canvas destination, remove it from initial options.
-    if !prefill.dest_canvas {
-        if let Some(arr) = blocks
-            .get_mut(5)
-            .and_then(|section| section.get_mut("accessory"))
-            .and_then(|accessory| accessory.get_mut("initial_options"))
-            .and_then(|initial| initial.as_array_mut())
-        {
-            arr.retain(|opt| opt.get("value").and_then(|v| v.as_str()) != Some("canvas"));
-        }
+    if let Some(arr) = Some(())
+        .filter(|_| !prefill.dest_canvas)
+        .and_then(|_| blocks.get_mut(5))
+        .and_then(|section| section.get_mut("accessory"))
+        .and_then(|accessory| accessory.get_mut("initial_options"))
+        .and_then(|initial| initial.as_array_mut())
+    {
+        arr.retain(|opt| opt.get("value").and_then(|v| v.as_str()) != Some("canvas"));
     }
 
     json!({
