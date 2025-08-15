@@ -336,13 +336,10 @@ pub async fn function_handler(
             }
         }
     });
-    
+
     // Wait up to 500ms for modal to open, ensuring task completes within Lambda execution
     // This prevents the container from freezing before the modal opens
-    let _ = tokio::time::timeout(
-        std::time::Duration::from_millis(500),
-        modal_handle
-    ).await;
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(500), modal_handle).await;
 
     Ok(json!({
         "statusCode": 200,
