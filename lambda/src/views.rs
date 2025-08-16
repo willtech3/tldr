@@ -76,7 +76,7 @@ pub fn build_tldr_modal(prefill: &Prefill) -> Value {
                     { "text": { "type": "plain_text", "text": "Last N messages" }, "value": "last_n" },
                     { "text": { "type": "plain_text", "text": "Date range" }, "value": "date_range" }
                 ],
-                "initial_options": [ { "text": { "type": "plain_text", "text": "Last N messages" }, "value": "last_n" } ]
+                "initial_option": { "text": { "type": "plain_text", "text": "Last N messages" }, "value": "last_n" }
             }
         }),
         json!({
