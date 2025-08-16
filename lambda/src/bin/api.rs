@@ -215,6 +215,7 @@ fn build_task_from_view(
     })
 }
 
+#[allow(dead_code)]
 async fn get_latest_message_ts(channel_id: &str) -> Result<Option<String>, SlackError> {
     // Initialize the SlackBot
     let slack_bot = SlackBot::new().await?;
