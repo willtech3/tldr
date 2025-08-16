@@ -86,6 +86,11 @@ impl SlackBot {
         Ok(Self { token })
     }
 
+    /// Get a reference to the bot's token for Canvas operations
+    pub fn token(&self) -> &SlackApiToken {
+        &self.token
+    }
+
     // Helper function to wrap API calls with retry logic for rate limits and server errors
     async fn with_retry<F, Fut, T>(&self, operation: F) -> Result<T, SlackError>
     where

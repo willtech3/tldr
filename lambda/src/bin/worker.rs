@@ -7,7 +7,7 @@ use serde_json::Value;
 use tracing::{error, info};
 
 // Import shared modules
-use tldr::{SlackBot, SlackError, create_ephemeral_payload, format_summary_message};
+use tldr::{CanvasHelper, SlackBot, SlackError, create_ephemeral_payload, format_summary_message};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ProcessingTask {
@@ -20,6 +20,10 @@ struct ProcessingTask {
     target_channel_id: Option<String>,
     custom_prompt: Option<String>,
     visible: bool,
+    // Destination flags for output routing
+    dest_canvas: bool,
+    dest_dm: bool,
+    dest_public_post: bool,
 }
 
 struct BotHandler {
@@ -108,7 +112,7 @@ impl BotHandler {
 
         // If visible/public flag is used, filter out the bot's own messages
         // This prevents the bot's response from being included in the summary
-        if task.visible {
+        if task.visible || task.dest_public_post {
             // Get the bot's own user ID
             let bot_user_id = (self.slack_bot.get_bot_user_id().await).ok();
 
@@ -127,19 +131,17 @@ impl BotHandler {
 
         if messages.is_empty() {
             // No messages to summarize
-            if let Some(resp_url) = &task.response_url {
-                self.send_response_url(
-                    resp_url,
-                    "No messages found to summarize.",
-                    Some(&task.user_id),
-                )
-                .await?;
-            } else {
-                // If no response_url, try DM directly
+            let no_messages_text = "No messages found to summarize.";
+
+            // Send notification based on destination preferences
+            if task.dest_dm {
                 let _ = self
                     .slack_bot
-                    .send_dm(&task.user_id, "No messages found to summarize.")
+                    .send_dm(&task.user_id, no_messages_text)
                     .await;
+            } else if let Some(resp_url) = &task.response_url {
+                self.send_response_url(resp_url, no_messages_text, Some(&task.user_id))
+                    .await?;
             }
             return Ok(());
         }
@@ -155,9 +157,82 @@ impl BotHandler {
             .await
         {
             Ok(summary) => {
-                // Determine where to send the summary
-                if let Some(target_channel) = &task.target_channel_id {
-                    // Use the library's format_summary_message function
+                // Track if we've sent to at least one destination
+                let mut sent_successfully = false;
+
+                // Handle Canvas destination if requested
+                if task.dest_canvas {
+                    info!(
+                        "Writing summary to Canvas for channel {}",
+                        source_channel_id
+                    );
+                    let canvas_helper = CanvasHelper::new(self.slack_bot.token());
+
+                    match canvas_helper.ensure_channel_canvas(source_channel_id).await {
+                        Ok(canvas_id) => {
+                            // Create formatted summary for Canvas with timestamp
+                            let canvas_content = format!(
+                                "**Generated**: {}\n\n{}\n\n---\n*Summary by <@{}> using TLDR bot*",
+                                chrono::Utc::now().format("%Y-%m-%d %H:%M UTC"),
+                                summary,
+                                task.user_id
+                            );
+
+                            if let Err(e) = canvas_helper
+                                .upsert_section(&canvas_id, "TL;DR", &canvas_content)
+                                .await
+                            {
+                                error!("Failed to update Canvas: {}", e);
+                            } else {
+                                info!("Successfully updated Canvas {}", canvas_id);
+                                sent_successfully = true;
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to ensure Canvas exists: {}", e);
+                        }
+                    }
+                }
+
+                // Handle DM destination if requested
+                if task.dest_dm {
+                    info!("Sending summary via DM to user {}", task.user_id);
+                    if let Err(e) = self.slack_bot.send_dm(&task.user_id, &summary).await {
+                        error!("Failed to send DM: {}", e);
+                    } else {
+                        sent_successfully = true;
+                    }
+                }
+
+                // Handle public post destination if requested
+                if task.dest_public_post {
+                    info!("Posting summary publicly to channel {}", source_channel_id);
+                    let message_content = format_summary_message(
+                        &task.user_id,
+                        source_channel_id,
+                        &task.text,
+                        &summary,
+                        true,
+                    );
+
+                    if let Err(e) = self
+                        .slack_bot
+                        .send_message_to_channel(source_channel_id, &message_content)
+                        .await
+                    {
+                        error!("Failed to send public message: {}", e);
+                    } else {
+                        sent_successfully = true;
+                    }
+                }
+
+                // Legacy support: handle target_channel if specified
+                if let Some(target_channel) = task
+                    .target_channel_id
+                    .as_ref()
+                    .filter(|tc| *tc != source_channel_id)
+                {
+                    info!("Sending to target channel {}", target_channel);
                     let message_content = format_summary_message(
                         &task.user_id,
                         source_channel_id,
@@ -166,118 +241,73 @@ impl BotHandler {
                         task.visible,
                     );
 
-                    // Send to the specified channel
                     if let Err(e) = self
                         .slack_bot
                         .send_message_to_channel(target_channel, &message_content)
                         .await
                     {
-                        error!(
-                            "Failed to send message to channel {}: {}",
-                            target_channel, e
-                        );
-                        // Fallback to sending as DM
-                        if let Err(dm_error) = self.slack_bot.send_dm(&task.user_id, &summary).await
-                        {
-                            error!("Failed to send DM as fallback: {}", dm_error);
-                            if let Some(resp_url) = &task.response_url {
-                                self
-                                    .send_response_url(
-                                        resp_url,
-                                        "Sorry, I couldn't generate a summary at this time. Please try again later.",
-                                        Some(&task.user_id)
-                                    ).await?;
-                            }
-                        } else if let Some(resp_url) = &task.response_url {
-                            self
-                                .send_response_url(
-                                    resp_url,
-                                    "Sorry, I couldn't generate a summary at this time. Please try again later.",
-                                    Some(&task.user_id)
-                                ).await?;
-                        }
+                        error!("Failed to send to target channel: {}", e);
                     } else {
-                        // Do not send confirmation message when public post succeeds
-                        // Otherwise, don't send a confirmation since the message is already visible
+                        sent_successfully = true;
                     }
-                } else {
-                    // Check if we should post publicly to the current channel
-                    if task.visible {
-                        // Use the library's format_summary_message function
-                        let message_content = format_summary_message(
-                            &task.user_id,
-                            source_channel_id,
-                            &task.text,
-                            &summary,
-                            task.visible,
-                        );
+                }
 
-                        // Post summary directly to the channel (visible to all)
-                        if let Err(e) = self
-                            .slack_bot
-                            .send_message_to_channel(source_channel_id, &message_content)
-                            .await
-                        {
-                            error!(
-                                "Failed to send public message to channel {}: {}",
-                                source_channel_id, e
-                            );
-                            // Fallback to sending as DM
-                            if let Err(dm_error) =
-                                self.slack_bot.send_dm(&task.user_id, &summary).await
-                            {
-                                error!("Failed to send DM as fallback: {}", dm_error);
-                                if let Some(resp_url) = &task.response_url {
-                                    self
-                                        .send_response_url(
-                                            resp_url,
-                                            "Sorry, I couldn't generate a summary at this time. Please try again later.",
-                                            Some(&task.user_id)
-                                        ).await?;
-                                }
-                            } else if let Some(resp_url) = &task.response_url {
-                                self
-                                    .send_response_url(
-                                        resp_url,
-                                        "Sorry, I couldn't generate a summary at this time. Please try again later.",
-                                        Some(&task.user_id)
-                                    ).await?;
-                            }
-                        }
-                        // Intentionally not sending a confirmation message when visible message posts successfully
-                        // This avoids redundant notifications when the message is already visible in the channel
+                // Legacy support: handle visible flag without dest_public_post
+                if task.visible && !task.dest_public_post && task.target_channel_id.is_none() {
+                    info!(
+                        "Legacy visible flag: posting publicly to {}",
+                        source_channel_id
+                    );
+                    let message_content = format_summary_message(
+                        &task.user_id,
+                        source_channel_id,
+                        &task.text,
+                        &summary,
+                        true,
+                    );
+
+                    if let Err(e) = self
+                        .slack_bot
+                        .send_message_to_channel(source_channel_id, &message_content)
+                        .await
+                    {
+                        error!("Failed to send legacy visible message: {}", e);
                     } else {
-                        // Send as DM to the user (original behavior)
-                        if let Err(e) = self.slack_bot.send_dm(&task.user_id, &summary).await {
-                            error!("Failed to send DM: {}", e);
-                            // Try to notify the user via response_url as fallback
-                            if let Some(resp_url) = &task.response_url {
-                                self
-                                    .send_response_url(
-                                        resp_url,
-                                        "Sorry, I couldn't generate a summary at this time. Please try again later.",
-                                        Some(&task.user_id)
-                                    )
-                                    .await?;
-                            }
-                        } else {
-                            // Do not send a confirmation when DM succeeds
+                        sent_successfully = true;
+                    }
+                }
+
+                // If no destinations were selected or all failed, fall back to DM
+                if !sent_successfully
+                    && !task.dest_canvas
+                    && !task.dest_dm
+                    && !task.dest_public_post
+                {
+                    info!("No destinations selected or all failed, defaulting to DM");
+                    if let Err(e) = self.slack_bot.send_dm(&task.user_id, &summary).await {
+                        error!("Failed to send fallback DM: {}", e);
+                        // Last resort: try response_url
+                        if let Some(resp_url) = &task.response_url {
+                            self.send_response_url(
+                                resp_url,
+                                "Sorry, I couldn't deliver the summary. Please try again.",
+                                Some(&task.user_id),
+                            )
+                            .await?;
                         }
                     }
                 }
             }
             Err(e) => {
                 error!("Failed to generate summary: {}", e);
-                if let Some(resp_url) = &task.response_url {
-                    self
-                        .send_response_url(
-                            resp_url,
-                            "Sorry, I couldn't generate a summary at this time. Please try again later.",
-                            Some(&task.user_id),
-                        )
+                let error_message =
+                    "Sorry, I couldn't generate a summary at this time. Please try again later.";
+
+                if task.dest_dm {
+                    let _ = self.slack_bot.send_dm(&task.user_id, error_message).await;
+                } else if let Some(resp_url) = &task.response_url {
+                    self.send_response_url(resp_url, error_message, Some(&task.user_id))
                         .await?;
-                } else {
-                    let _ = self.slack_bot.send_dm(&task.user_id, "Sorry, I couldn't generate a summary at this time. Please try again later.").await;
                 }
             }
         }
@@ -329,6 +359,7 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
 }
 
 #[tokio::main]
+#[allow(dead_code)]
 async fn main() -> Result<(), Error> {
     // Initialize JSON structured logging
     tldr::setup_logging();
