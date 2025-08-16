@@ -114,10 +114,14 @@ impl<'a> CanvasHelper<'a> {
         })?;
 
         if create_result.ok {
-            if let Some(canvas_id) = create_result.canvas_id {
-                info!("Created new canvas: {}", canvas_id);
-                return Ok(canvas_id);
-            }
+            let Some(canvas_id) = create_result.canvas_id else {
+                // Canvas creation succeeded but no ID returned
+                return Err(SlackError::ApiError(
+                    "Canvas creation succeeded but no ID returned".to_string(),
+                ));
+            };
+            info!("Created new canvas: {}", canvas_id);
+            return Ok(canvas_id);
         }
 
         // Handle the case where canvas already exists
@@ -202,14 +206,12 @@ impl<'a> CanvasHelper<'a> {
         let mut section_id_to_replace = None;
 
         if lookup_result.ok {
-            if let Some(sections) = lookup_result.sections {
-                if !sections.is_empty() {
-                    section_id_to_replace = Some(sections[0].id.clone());
-                    debug!(
-                        "Found existing section to replace: {:?}",
-                        section_id_to_replace
-                    );
-                }
+            if let Some(sections) = lookup_result.sections.filter(|s| !s.is_empty()) {
+                section_id_to_replace = Some(sections[0].id.clone());
+                debug!(
+                    "Found existing section to replace: {:?}",
+                    section_id_to_replace
+                );
             }
         } else {
             warn!("Section lookup failed: {:?}", lookup_result.error);
