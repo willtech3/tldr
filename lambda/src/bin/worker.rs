@@ -227,26 +227,28 @@ impl BotHandler {
                 }
 
                 // Legacy support: handle target_channel if specified
-                if let Some(target_channel) = &task.target_channel_id {
-                    if target_channel != source_channel_id {
-                        info!("Sending to target channel {}", target_channel);
-                        let message_content = format_summary_message(
-                            &task.user_id,
-                            source_channel_id,
-                            &task.text,
-                            &summary,
-                            task.visible,
-                        );
+                if let Some(target_channel) = task
+                    .target_channel_id
+                    .as_ref()
+                    .filter(|tc| *tc != source_channel_id)
+                {
+                    info!("Sending to target channel {}", target_channel);
+                    let message_content = format_summary_message(
+                        &task.user_id,
+                        source_channel_id,
+                        &task.text,
+                        &summary,
+                        task.visible,
+                    );
 
-                        if let Err(e) = self
-                            .slack_bot
-                            .send_message_to_channel(target_channel, &message_content)
-                            .await
-                        {
-                            error!("Failed to send to target channel: {}", e);
-                        } else {
-                            sent_successfully = true;
-                        }
+                    if let Err(e) = self
+                        .slack_bot
+                        .send_message_to_channel(target_channel, &message_content)
+                        .await
+                    {
+                        error!("Failed to send to target channel: {}", e);
+                    } else {
+                        sent_successfully = true;
                     }
                 }
 
