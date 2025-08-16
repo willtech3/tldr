@@ -50,6 +50,16 @@ fn validate_view_submission_lastn_errors() {
 }
 
 #[test]
+fn validate_view_submission_ok() {
+    // Valid N within range
+    let view = json!({
+        "state": { "values": { "lastn": { "n": { "value": "100" } } } }
+    });
+    let ok = validate_view_submission(&view);
+    assert!(ok.is_ok());
+}
+
+#[test]
 fn modal_contains_required_fields() {
     let view = build_tldr_modal(&Prefill::default());
     assert_eq!(view["type"], "modal");

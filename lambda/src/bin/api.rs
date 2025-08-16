@@ -1,3 +1,15 @@
+//! Slack API Lambda handler for slash commands and interactive payloads.
+//!
+//! - Slash command (`/tldr`) path: verifies signature, opens modal with prefill,
+//!   returns ephemeral ACK.
+//! - Interactive path (`/slack/interactive`):
+//!   - `shortcut` / `message_action`: opens the TLDR modal via `views.open`
+//!   - `view_submission`: validates input, enqueues a job to SQS, and responds
+//!     with `{ response_action: "clear" }` on success or `{ response_action: "errors" }`
+//!     when validation fails.
+//!
+//! Correlation IDs (UUID v4) are propagated as part of the enqueued task to enable
+//! API→Worker traceability in logs.
 use anyhow::Result;
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_sqs::Client as SqsClient;
@@ -7,24 +19,27 @@ use lambda_runtime::{Error, LambdaEvent, run, service_fn};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use sha2::Sha256;
 use std::env;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info};
+use uuid::Uuid;
 
 // Import shared modules
 use tldr::SlackBot;
 use tldr::{
     Prefill, SlackError, build_tldr_modal, sanitize_custom_prompt,
-    slack_parser::{SlackCommandEvent, parse_form_data},
+    slack_parser::{SlackCommandEvent, decode_url_component, parse_form_data},
+    validate_view_submission,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProcessingTask {
+    pub correlation_id: String,
     pub user_id: String,
     pub channel_id: String,
-    pub response_url: String,
+    pub response_url: Option<String>,
     pub text: String,
     pub message_count: Option<u32>,
     pub target_channel_id: Option<String>,
@@ -57,6 +72,147 @@ async fn send_to_sqs(task: &ProcessingTask) -> Result<(), SlackError> {
         .map_err(|e| SlackError::AwsError(format!("Failed to send message to SQS: {}", e)))?;
 
     Ok(())
+}
+
+/// Detects whether the incoming body is a Slack interactive payload (form-encoded with a `payload=` JSON string)
+fn is_interactive_body(body: &str) -> bool {
+    // Check if body starts with "payload=" or contains "&payload=" to avoid false positives
+    body.starts_with("payload=") || body.contains("&payload=")
+}
+
+/// Parses the interactive `payload` JSON from a form-encoded body
+fn parse_interactive_payload(form_body: &str) -> Result<Value, SlackError> {
+    // Very small parser for key=value&key=value to extract `payload`
+    for pair in form_body.split('&') {
+        if let Some(eq_idx) = pair.find('=') {
+            let key = &pair[..eq_idx];
+            if key == "payload" {
+                let raw_val = &pair[eq_idx + 1..];
+                let decoded = decode_url_component(raw_val).map_err(|e| {
+                    SlackError::ParseError(format!("Failed to decode payload: {}", e))
+                })?;
+                let v: Value = serde_json::from_str(&decoded)
+                    .map_err(|e| SlackError::ParseError(format!("Invalid JSON payload: {}", e)))?;
+                return Ok(v);
+            }
+        }
+    }
+    Err(SlackError::ParseError("Missing payload field".to_string()))
+}
+
+/// Helper: traverse a nested JSON object by path of keys.
+fn v_path<'a>(root: &'a Value, path: &[&str]) -> Option<&'a Value> {
+    let mut cur = root;
+    for key in path {
+        cur = cur.get(*key)?;
+    }
+    Some(cur)
+}
+
+/// Helper: get a nested string value by path.
+fn v_str<'a>(root: &'a Value, path: &[&str]) -> Option<&'a str> {
+    v_path(root, path).and_then(|v| v.as_str())
+}
+
+/// Helper: get a nested array value by path.
+fn v_array<'a>(root: &'a Value, path: &[&str]) -> Option<&'a Vec<Value>> {
+    v_path(root, path).and_then(|v| v.as_array())
+}
+
+/// Build a ProcessingTask from a `view_submission` payload's view.state.values
+///
+/// Parses the Block Kit modal submission data structure:
+/// - view.state.values contains blocks indexed by block_id
+/// - Each block contains action_ids with the user's input
+/// - Extracts conversation, range mode, message count, destination, and custom prompt
+fn build_task_from_view(
+    user_id: &str,
+    view: &Value,
+    correlation_id: String,
+) -> Result<ProcessingTask, SlackError> {
+    // Ensure view.state.values exists (Block Kit requirement)
+    let _ = v_path(view, &["state", "values"]) // only for presence check
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| SlackError::ParseError("view.state.values missing".to_string()))?;
+
+    // Extract selected conversation from the conversations_select block
+    // Path: state.values.conv.conv_id.selected_conversation
+    let channel_id = v_str(
+        view,
+        &[
+            "state",
+            "values",
+            "conv",    // block_id
+            "conv_id", // action_id
+            "selected_conversation",
+        ],
+    )
+    .unwrap_or("")
+    .to_string();
+
+    // Extract range mode from radio button selection
+    // Path: state.values.range.mode.selected_option.value
+    let mode = v_str(
+        view,
+        &[
+            "state",
+            "values",
+            "range", // block_id
+            "mode",  // action_id
+            "selected_option",
+            "value",
+        ],
+    )
+    .unwrap_or("unread_since_last_run");
+
+    // Extract optional message count for "last N messages" mode
+    // Path: state.values.lastn.n.value
+    let message_count = v_str(view, &["state", "values", "lastn", "n", "value"])
+        .and_then(|s| s.parse::<u32>().ok());
+
+    // Parse destination checkboxes to determine visibility
+    // Path: state.values.dest.dest_flags.selected_options[]
+    let mut visible = false;
+    if let Some(selected) = v_array(
+        view,
+        &["state", "values", "dest", "dest_flags", "selected_options"],
+    ) {
+        for opt in selected {
+            if let Some(val) = opt.get("value").and_then(|s| s.as_str()) {
+                match val {
+                    "public_post" => visible = true, // Post publicly to channel
+                    "dm" => {}                       // Send via DM (default)
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // Extract and sanitize custom prompt if provided
+    // Path: state.values.style.custom.value
+    let custom_prompt = v_str(view, &["state", "values", "style", "custom", "value"])
+        .map(|s| s.to_string())
+        .and_then(|raw| sanitize_custom_prompt(&raw).ok());
+
+    // Determine effective message count based on mode
+    // Only use explicit count for "last_n" mode; otherwise None = unread messages
+    let effective_count = if mode == "last_n" {
+        message_count
+    } else {
+        None
+    };
+
+    Ok(ProcessingTask {
+        correlation_id,
+        user_id: user_id.to_string(),
+        channel_id,
+        response_url: None,
+        text: String::new(),
+        message_count: effective_count,
+        target_channel_id: None,
+        custom_prompt,
+        visible,
+    })
 }
 
 async fn get_latest_message_ts(channel_id: &str) -> Result<Option<String>, SlackError> {
@@ -224,7 +380,140 @@ pub async fn function_handler(
     }
 
     info!("Slack signature verified successfully");
+    // Branch: interactive vs slash command
+    if is_interactive_body(body) {
+        // Parse JSON payload
+        let payload = match parse_interactive_payload(body) {
+            Ok(v) => v,
+            Err(e) => {
+                error!("Interactive payload parse error: {}", e);
+                return Ok(json!({
+                    "statusCode": 400,
+                    "body": json!({ "error": format!("Parse Error: {}", e) }).to_string()
+                }));
+            }
+        };
 
+        let p_type = payload.get("type").and_then(|s| s.as_str()).unwrap_or("");
+        match p_type {
+            // Global shortcut or message action → open modal
+            "shortcut" | "message_action" => {
+                let mut prefill = Prefill::default();
+                // Try to prefill from channel if present (message_action)
+                if let Some(ch) = v_str(&payload, &["channel", "id"]) {
+                    prefill.initial_conversation = Some(ch.to_string());
+                }
+                prefill.last_n = Some(100);
+                prefill.dest_canvas = true;
+                prefill.dest_dm = true;
+                prefill.dest_public_post = false;
+
+                let view = build_tldr_modal(&prefill);
+                let trigger_id = v_str(&payload, &["trigger_id"]) //
+                    .unwrap_or("")
+                    .to_string();
+                let view_clone = view.clone();
+                let modal_handle = tokio::spawn(async move {
+                    match SlackBot::new().await {
+                        Ok(bot) => {
+                            if let Err(e) = bot.open_modal(&trigger_id, &view_clone).await {
+                                error!("Failed to open modal: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to initialize SlackBot for views.open: {}", e);
+                        }
+                    }
+                });
+                // Wait up to 2000ms for modal to open, providing safety margin within Slack's 3s limit
+                let _ = tokio::time::timeout(std::time::Duration::from_millis(2000), modal_handle)
+                    .await;
+
+                return Ok(json!({
+                    "statusCode": 200,
+                    "body": "{}"
+                }));
+            }
+            // Modal submission → validate, enqueue, clear
+            "view_submission" => {
+                let correlation_id = Uuid::new_v4().to_string();
+                info!(
+                    "view_submission received, correlation_id={}",
+                    correlation_id
+                );
+
+                // Validate fields
+                if let Some(view) = payload.get("view") {
+                    match validate_view_submission(view) {
+                        Ok(()) => {
+                            // Build task and enqueue
+                            let user_id = v_str(&payload, &["user", "id"]).unwrap_or("");
+                            let task = match build_task_from_view(
+                                user_id,
+                                view,
+                                correlation_id.clone(),
+                            ) {
+                                Ok(t) => t,
+                                Err(e) => {
+                                    error!(
+                                        "Failed to build task (correlation_id={}): {}",
+                                        correlation_id, e
+                                    );
+                                    return Ok(json!({
+                                        "statusCode": 200,
+                                        "body": json!({
+                                            "response_action": "errors",
+                                            "errors": { "conv": format!("Error processing request (ref: {}). Please try again.", &correlation_id[..8]) }
+                                        }).to_string()
+                                    }));
+                                }
+                            };
+                            if let Err(e) = send_to_sqs(&task).await {
+                                error!("Enqueue failed (correlation_id={}): {}", correlation_id, e);
+                                return Ok(json!({
+                                    "statusCode": 200,
+                                    "body": json!({
+                                        "response_action": "errors",
+                                        "errors": { "conv": format!("Unable to start job (ref: {}). Please try again.", &correlation_id[..8]) }
+                                    }).to_string()
+                                }));
+                            }
+
+                            return Ok(json!({
+                                "statusCode": 200,
+                                "body": json!({ "response_action": "clear" }).to_string()
+                            }));
+                        }
+                        Err(errors) => {
+                            return Ok(json!({
+                                "statusCode": 200,
+                                "body": json!({
+                                    "response_action": "errors",
+                                    "errors": Value::Object(errors)
+                                }).to_string()
+                            }));
+                        }
+                    }
+                }
+
+                // If no view present
+                return Ok(json!({
+                    "statusCode": 400,
+                    "body": json!({ "error": "Missing view in payload" }).to_string()
+                }));
+            }
+            _ => {
+                // Acknowledge unknown type to avoid Slack retries
+                info!("Unhandled interactive type: {}", p_type);
+                return Ok(json!({
+                    "statusCode": 200,
+                    "body": "{}"
+                }));
+            }
+        }
+    }
+
+    // Fallback: treat as slash command (existing behavior)
     // Parse the incoming event
     let slack_event = match parse_slack_event(body) {
         Ok(event) => event,
@@ -258,13 +547,13 @@ pub async fn function_handler(
 
     // Parse parameters from filtered text
     let mut message_count: Option<u32> = None;
-    let mut target_channel_id: Option<String> = None;
+    // Note: channel targeting is now handled via modal; we intentionally skip parsing it here.
     let mut custom_prompt: Option<String> = None;
 
     // Use regex captures to properly handle quoted values
     for cap in KV_RE.captures_iter(&filtered_text) {
         let key = &cap[1].to_lowercase();
-        let raw = cap[2].trim_matches('"'); // strip quotes if present
+        let raw = cap[2].trim_matches('"');
 
         match key.as_str() {
             "count" => {
@@ -272,25 +561,7 @@ pub async fn function_handler(
                     message_count = Some(count);
                 }
             }
-            "channel" => {
-                // Handle both #channel and channel formats
-                let channel_id = if raw.starts_with("<#") && raw.ends_with(">") {
-                    // Format: <#C12345|channel-name> or <#C12345>
-                    let channel_part = &raw[2..raw.len() - 1];
-                    if let Some(pipe_pos) = channel_part.find('|') {
-                        channel_part[0..pipe_pos].to_string()
-                    } else {
-                        channel_part.to_string()
-                    }
-                } else if raw.starts_with('#') {
-                    // Format: #channel-name (we'll need to look it up by name)
-                    raw[1..].to_string()
-                } else {
-                    // Just the raw channel ID or name
-                    raw.to_string()
-                };
-                target_channel_id = Some(channel_id);
-            }
+            "channel" => {}
             "custom" => {
                 // Sanitize custom prompt
                 match sanitize_custom_prompt(raw) {
@@ -299,7 +570,6 @@ pub async fn function_handler(
                     }
                     Err(e) => {
                         info!("Invalid custom prompt rejected: {}", e);
-                        // We continue processing without a custom prompt
                     }
                 }
             }
@@ -337,9 +607,8 @@ pub async fn function_handler(
         }
     });
 
-    // Wait up to 500ms for modal to open, ensuring task completes within Lambda execution
-    // This prevents the container from freezing before the modal opens
-    let _ = tokio::time::timeout(std::time::Duration::from_millis(500), modal_handle).await;
+    // Wait up to 2000ms for modal to open, providing safety margin within Slack's 3s limit
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(2000), modal_handle).await;
 
     Ok(json!({
         "statusCode": 200,
@@ -391,5 +660,34 @@ mod tests {
 
         // Test non-existent header
         assert_eq!(get_header_value(&headers, "Non-Existent-Header"), None);
+    }
+
+    #[test]
+    fn parse_interactive_payload_basic() {
+        let payload = json!({ "type": "shortcut", "trigger_id": "123" }).to_string();
+        let form = format!("payload={}", urlencoding::encode(&payload));
+        let v = parse_interactive_payload(&form).expect("should parse");
+        assert_eq!(v.get("type").and_then(|s| s.as_str()), Some("shortcut"));
+    }
+
+    #[test]
+    fn build_task_from_view_submission_lastn() {
+        let view = json!({
+            "state": { "values": {
+                "conv": { "conv_id": { "selected_conversation": "C123" } },
+                "range": { "mode": { "selected_option": { "value": "last_n" } } },
+                "lastn": { "n": { "value": "25" } },
+                "dest": { "dest_flags": { "selected_options": [ { "value": "dm" } ] } },
+                "style": { "custom": { "value": "Please keep it brief" } }
+            } }
+        });
+        let cid = "test-corr".to_string();
+        let task = build_task_from_view("U123", &view, cid.clone()).expect("task");
+        assert_eq!(task.correlation_id, cid);
+        assert_eq!(task.user_id, "U123");
+        assert_eq!(task.channel_id, "C123");
+        assert_eq!(task.message_count, Some(25));
+        assert!(!task.visible);
+        assert!(task.response_url.is_none());
     }
 }

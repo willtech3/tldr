@@ -133,13 +133,13 @@ export class TldrStack extends cdk.Stack {
     // Create a Lambda integration for the API Gateway
     const tldrIntegration = new apigateway.LambdaIntegration(tldrApiFunction);
 
-    // Add a resource and method for Slack events
-    const events = api.root.addResource('events');
-    events.addMethod('POST', tldrIntegration);
-
     // Add a resource and method for Slack slash commands
     const commands = api.root.addResource('commands');
     commands.addMethod('POST', tldrIntegration);
+
+    // Add a resource and method for Slack interactive payloads (shortcuts, view_submission)
+    const interactive = api.root.addResource('slack').addResource('interactive');
+    interactive.addMethod('POST', tldrIntegration);
 
     // Output the API endpoint URL
     new cdk.CfnOutput(this, 'ApiUrl', {

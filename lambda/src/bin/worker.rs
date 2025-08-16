@@ -11,9 +11,10 @@ use tldr::{SlackBot, SlackError, create_ephemeral_payload, format_summary_messag
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ProcessingTask {
+    correlation_id: String,
     user_id: String,
     channel_id: String,
-    response_url: String,
+    response_url: Option<String>,
     text: String,
     message_count: Option<u32>,
     target_channel_id: Option<String>,
@@ -70,9 +71,13 @@ impl BotHandler {
 
             // Try DM fallback if provided
             if let Some(user_id) = dm_fallback_user {
-                if let Err(dm_err) = self.slack_bot.send_dm(user_id, message).await {
-                    error!("DM fallback failed for user {}: {}", user_id, dm_err);
-                }
+                let _ = self
+                    .slack_bot
+                    .send_dm(user_id, message)
+                    .await
+                    .map_err(|dm_err| {
+                        error!("DM fallback failed for user {}: {}", user_id, dm_err);
+                    });
             }
         }
 
@@ -81,8 +86,8 @@ impl BotHandler {
 
     async fn process_task(&mut self, task: ProcessingTask) -> Result<(), SlackError> {
         info!(
-            "Processing task for user {} in channel {}",
-            task.user_id, task.channel_id
+            "Processing task correlation_id={} for user {} in channel {}",
+            task.correlation_id, task.user_id, task.channel_id
         );
 
         // Determine channel to get messages from (always the original channel)
@@ -122,12 +127,20 @@ impl BotHandler {
 
         if messages.is_empty() {
             // No messages to summarize
-            self.send_response_url(
-                &task.response_url,
-                "No messages found to summarize.",
-                Some(&task.user_id),
-            )
-            .await?;
+            if let Some(resp_url) = &task.response_url {
+                self.send_response_url(
+                    resp_url,
+                    "No messages found to summarize.",
+                    Some(&task.user_id),
+                )
+                .await?;
+            } else {
+                // If no response_url, try DM directly
+                let _ = self
+                    .slack_bot
+                    .send_dm(&task.user_id, "No messages found to summarize.")
+                    .await;
+            }
             return Ok(());
         }
 
@@ -167,17 +180,21 @@ impl BotHandler {
                         if let Err(dm_error) = self.slack_bot.send_dm(&task.user_id, &summary).await
                         {
                             error!("Failed to send DM as fallback: {}", dm_error);
-                            self.send_response_url(
-                                &task.response_url,
-                                "Sorry, I couldn't generate a summary at this time. Please try again later.",
-                                Some(&task.user_id)
-                            ).await?;
-                        } else {
-                            self.send_response_url(
-                                &task.response_url,
-                                "Sorry, I couldn't generate a summary at this time. Please try again later.",
-                                Some(&task.user_id)
-                            ).await?;
+                            if let Some(resp_url) = &task.response_url {
+                                self
+                                    .send_response_url(
+                                        resp_url,
+                                        "Sorry, I couldn't generate a summary at this time. Please try again later.",
+                                        Some(&task.user_id)
+                                    ).await?;
+                            }
+                        } else if let Some(resp_url) = &task.response_url {
+                            self
+                                .send_response_url(
+                                    resp_url,
+                                    "Sorry, I couldn't generate a summary at this time. Please try again later.",
+                                    Some(&task.user_id)
+                                ).await?;
                         }
                     } else {
                         // Do not send confirmation message when public post succeeds
@@ -210,17 +227,21 @@ impl BotHandler {
                                 self.slack_bot.send_dm(&task.user_id, &summary).await
                             {
                                 error!("Failed to send DM as fallback: {}", dm_error);
-                                self.send_response_url(
-                                    &task.response_url,
-                                    "Sorry, I couldn't generate a summary at this time. Please try again later.",
-                                    Some(&task.user_id)
-                                ).await?;
-                            } else {
-                                self.send_response_url(
-                                    &task.response_url,
-                                    "Sorry, I couldn't generate a summary at this time. Please try again later.",
-                                    Some(&task.user_id)
-                                ).await?;
+                                if let Some(resp_url) = &task.response_url {
+                                    self
+                                        .send_response_url(
+                                            resp_url,
+                                            "Sorry, I couldn't generate a summary at this time. Please try again later.",
+                                            Some(&task.user_id)
+                                        ).await?;
+                                }
+                            } else if let Some(resp_url) = &task.response_url {
+                                self
+                                    .send_response_url(
+                                        resp_url,
+                                        "Sorry, I couldn't generate a summary at this time. Please try again later.",
+                                        Some(&task.user_id)
+                                    ).await?;
                             }
                         }
                         // Intentionally not sending a confirmation message when visible message posts successfully
@@ -230,12 +251,15 @@ impl BotHandler {
                         if let Err(e) = self.slack_bot.send_dm(&task.user_id, &summary).await {
                             error!("Failed to send DM: {}", e);
                             // Try to notify the user via response_url as fallback
-                            self.send_response_url(
-                                &task.response_url,
-                                "Sorry, I couldn't generate a summary at this time. Please try again later.",
-                                Some(&task.user_id)
-                            )
-                            .await?;
+                            if let Some(resp_url) = &task.response_url {
+                                self
+                                    .send_response_url(
+                                        resp_url,
+                                        "Sorry, I couldn't generate a summary at this time. Please try again later.",
+                                        Some(&task.user_id)
+                                    )
+                                    .await?;
+                            }
                         } else {
                             // Do not send a confirmation when DM succeeds
                         }
@@ -244,12 +268,17 @@ impl BotHandler {
             }
             Err(e) => {
                 error!("Failed to generate summary: {}", e);
-                self.send_response_url(
-                    &task.response_url,
-                    "Sorry, I couldn't generate a summary at this time. Please try again later.",
-                    Some(&task.user_id),
-                )
-                .await?;
+                if let Some(resp_url) = &task.response_url {
+                    self
+                        .send_response_url(
+                            resp_url,
+                            "Sorry, I couldn't generate a summary at this time. Please try again later.",
+                            Some(&task.user_id),
+                        )
+                        .await?;
+                } else {
+                    let _ = self.slack_bot.send_dm(&task.user_id, "Sorry, I couldn't generate a summary at this time. Please try again later.").await;
+                }
             }
         }
 
