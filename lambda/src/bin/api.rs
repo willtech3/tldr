@@ -13,7 +13,6 @@
 use anyhow::Result;
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_sqs::Client as SqsClient;
-use hex;
 use hmac::{Hmac, Mac};
 use lambda_runtime::{Error, LambdaEvent, run, service_fn};
 use once_cell::sync::Lazy;
@@ -45,6 +44,10 @@ pub struct ProcessingTask {
     pub target_channel_id: Option<String>,
     pub custom_prompt: Option<String>,
     pub visible: bool,
+    // Destination flags for output routing
+    pub dest_canvas: bool,
+    pub dest_dm: bool,
+    pub dest_public_post: bool,
 }
 
 async fn send_to_sqs(task: &ProcessingTask) -> Result<(), SlackError> {
@@ -170,9 +173,12 @@ fn build_task_from_view(
     let message_count = v_str(view, &["state", "values", "lastn", "n", "value"])
         .and_then(|s| s.parse::<u32>().ok());
 
-    // Parse destination checkboxes to determine visibility
+    // Parse destination checkboxes to determine output routing
     // Path: state.values.dest.dest_flags.selected_options[]
-    let mut visible = false;
+    let mut dest_canvas = false;
+    let mut dest_dm = false;
+    let mut dest_public_post = false;
+
     if let Some(selected) = v_array(
         view,
         &["state", "values", "dest", "dest_flags", "selected_options"],
@@ -180,13 +186,17 @@ fn build_task_from_view(
         for opt in selected {
             if let Some(val) = opt.get("value").and_then(|s| s.as_str()) {
                 match val {
-                    "public_post" => visible = true, // Post publicly to channel
-                    "dm" => {}                       // Send via DM (default)
+                    "canvas" => dest_canvas = true,
+                    "dm" => dest_dm = true,
+                    "public_post" => dest_public_post = true,
                     _ => {}
                 }
             }
         }
     }
+
+    // visible flag is true if posting publicly
+    let visible = dest_public_post;
 
     // Extract and sanitize custom prompt if provided
     // Path: state.values.style.custom.value
@@ -212,6 +222,9 @@ fn build_task_from_view(
         target_channel_id: None,
         custom_prompt,
         visible,
+        dest_canvas,
+        dest_dm,
+        dest_public_post,
     })
 }
 
@@ -621,6 +634,7 @@ pub async fn function_handler(
 }
 
 #[tokio::main]
+#[allow(dead_code)]
 async fn main() -> Result<(), Error> {
     // Initialize JSON structured logging
     tldr::setup_logging();
@@ -678,7 +692,10 @@ mod tests {
                 "conv": { "conv_id": { "selected_conversation": "C123" } },
                 "range": { "mode": { "selected_option": { "value": "last_n" } } },
                 "lastn": { "n": { "value": "25" } },
-                "dest": { "dest_flags": { "selected_options": [ { "value": "dm" } ] } },
+                "dest": { "dest_flags": { "selected_options": [
+                    { "value": "canvas" },
+                    { "value": "dm" }
+                ] } },
                 "style": { "custom": { "value": "Please keep it brief" } }
             } }
         });
@@ -689,6 +706,9 @@ mod tests {
         assert_eq!(task.channel_id, "C123");
         assert_eq!(task.message_count, Some(25));
         assert!(!task.visible);
+        assert!(task.dest_canvas);
+        assert!(task.dest_dm);
+        assert!(!task.dest_public_post);
         assert!(task.response_url.is_none());
     }
 }
