@@ -179,7 +179,7 @@ impl BotHandler {
                                 "CST"
                             };
                             let heading = format!(
-                                "TL;DR - {} {} (God's time zone)", 
+                                "TLDR - {} {} (God's time zone)", 
                                 now.format("%Y-%m-%d %H:%M"),
                                 tz_abbr
                             );

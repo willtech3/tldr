@@ -15,11 +15,11 @@ features:
   shortcuts:
     - name: Summarize Channel
       type: global
-      callback_id: tldr_global_shortcut
-      description: Generate a summary of the current channel
+      callback_id: summarize_channel
+      description: Generate a summary of the current channel's unread messages
     - name: Summarize Thread
       type: message
-      callback_id: tldr_message_action
+      callback_id: summarize_thread
       description: Summarize this message thread
   slash_commands:
     - command: /tldr
@@ -44,19 +44,15 @@ oauth_config:
       - mpim:read
       - users:read
       - files:read
-      # Canvas permissions
-      - channels:manage
-      - channels:write.topic
-      - bookmarks:read
-      - bookmarks:write
+      # Canvas permissions (CRITICAL for Canvas API)
+      - canvases:read
+      - canvases:write
 
 settings:
   event_subscriptions:
     request_url: https://your-api-gateway-url/slack/events
     bot_events:
       - app_home_opened
-      - message.channels
-      - message.groups
   interactivity:
     is_enabled: true
     request_url: https://your-api-gateway-url/slack/interactive
