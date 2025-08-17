@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use slack_morphism::SlackApiToken;
 use std::time::Duration;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 // Static HTTP client for Canvas API calls (not supported by slack-morphism yet)
 static CANVAS_CLIENT: Lazy<Client> = Lazy::new(|| {
@@ -28,23 +28,6 @@ struct CanvasCreateResponse {
     ok: bool,
     canvas_id: Option<String>,
     error: Option<String>,
-}
-
-/// Response from canvases.sections.lookup
-#[derive(Debug, Deserialize)]
-struct SectionsLookupResponse {
-    ok: bool,
-    sections: Option<Vec<CanvasSection>>,
-    error: Option<String>,
-}
-
-/// Canvas section information
-#[derive(Debug, Deserialize)]
-struct CanvasSection {
-    id: String,
-    #[serde(rename = "type")]
-    #[allow(dead_code)]
-    section_type: String,
 }
 
 /// Response from canvases.edit
@@ -91,14 +74,18 @@ impl<'a> CanvasHelper<'a> {
         Self { token }
     }
 
-    /// Ensure a channel has a canvas, creating one if it doesn't exist.
+    /// Ensure a channel has a TLDR canvas with a custom title.
     /// Returns the canvas ID.
-    pub async fn ensure_channel_canvas(&self, channel_id: &str) -> Result<String, SlackError> {
-        info!("Ensuring canvas exists for channel: {}", channel_id);
+    pub async fn ensure_tldr_canvas(&self, channel_id: &str) -> Result<String, SlackError> {
+        info!("Ensuring TLDR canvas exists for channel: {}", channel_id);
 
-        // Try to create a new channel canvas
+        // Try to create a new canvas with a title
         let create_payload = json!({
-            "channel_id": channel_id
+            "channel_id": channel_id,
+            "document_content": {
+                "type": "markdown", 
+                "markdown": "# 📋 TLDR Summaries\n\n*This canvas contains AI-generated summaries of channel conversations. Latest summaries appear at the top.*\n\n---\n"
+            }
         });
 
         let resp = CANVAS_CLIENT
@@ -172,75 +159,33 @@ impl<'a> CanvasHelper<'a> {
         )))
     }
 
-    /// Upsert a section in a canvas. Looks for an existing section with the given heading,
-    /// and either replaces it or inserts a new one at the end.
-    pub async fn upsert_section(
+    /// Ensure a channel has a canvas, creating one if it doesn't exist.
+    /// Returns the canvas ID.
+    pub async fn ensure_channel_canvas(&self, channel_id: &str) -> Result<String, SlackError> {
+        self.ensure_tldr_canvas(channel_id).await
+    }
+
+    /// Prepend a new summary section at the top of the canvas.
+    /// Each summary gets its own timestamped section for history.
+    pub async fn prepend_summary_section(
         &self,
         canvas_id: &str,
         heading: &str,
         markdown_content: &str,
     ) -> Result<(), SlackError> {
-        info!("Upserting section '{}' in canvas {}", heading, canvas_id);
-
-        // First, look up existing sections to find if our heading exists
-        let lookup_payload = json!({
-            "canvas_id": canvas_id,
-            "criteria": {
-                "section_types": ["h2"],  // Look for h2 headings
-                "contains_text": heading
-            }
-        });
-
-        let lookup_resp = CANVAS_CLIENT
-            .post("https://slack.com/api/canvases.sections.lookup")
-            .bearer_auth(&self.token.token_value.0)
-            .json(&lookup_payload)
-            .send()
-            .await
-            .map_err(|e| SlackError::HttpError(format!("Section lookup failed: {}", e)))?;
-
-        let lookup_result: SectionsLookupResponse = lookup_resp.json().await.map_err(|e| {
-            SlackError::ParseError(format!("Failed to parse section lookup: {}", e))
-        })?;
-
-        let mut section_id_to_replace = None;
-
-        if lookup_result.ok {
-            if let Some(sections) = lookup_result.sections.filter(|s| !s.is_empty()) {
-                section_id_to_replace = Some(sections[0].id.clone());
-                debug!(
-                    "Found existing section to replace: {:?}",
-                    section_id_to_replace
-                );
-            }
-        } else {
-            warn!("Section lookup failed: {:?}", lookup_result.error);
-        }
+        info!("Prepending summary section '{}' to canvas {}", heading, canvas_id);
 
         // Prepare the markdown content with the heading
-        let full_content = format!("## {}\n\n{}", heading, markdown_content);
+        let full_content = format!("## {}\n\n{}\n\n---\n", heading, markdown_content);
 
-        // Prepare the edit operation
-        let change = if let Some(section_id) = section_id_to_replace {
-            // Replace existing section
-            CanvasEditChange {
-                operation: "replace".to_string(),
-                section_id: Some(section_id),
-                document_content: Some(DocumentContent {
-                    content_type: "markdown".to_string(),
-                    markdown: full_content,
-                }),
-            }
-        } else {
-            // Insert at the end if section doesn't exist
-            CanvasEditChange {
-                operation: "insert_at_end".to_string(),
-                section_id: None,
-                document_content: Some(DocumentContent {
-                    content_type: "markdown".to_string(),
-                    markdown: full_content,
-                }),
-            }
+        // Always insert at the beginning to keep latest summary at top
+        let change = CanvasEditChange {
+            operation: "insert_at_start".to_string(),
+            section_id: None,
+            document_content: Some(DocumentContent {
+                content_type: "markdown".to_string(),
+                markdown: full_content,
+            }),
         };
 
         let edit_payload = json!({

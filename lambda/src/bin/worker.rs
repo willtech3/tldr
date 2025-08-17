@@ -171,15 +171,16 @@ impl BotHandler {
                     match canvas_helper.ensure_channel_canvas(source_channel_id).await {
                         Ok(canvas_id) => {
                             // Create formatted summary for Canvas with timestamp
+                            let now = chrono::Utc::now();
+                            let heading = format!("TL;DR - {}", now.format("%Y-%m-%d %H:%M UTC"));
                             let canvas_content = format!(
-                                "**Generated**: {}\n\n{}\n\n---\n*Summary by <@{}> using TLDR bot*",
-                                chrono::Utc::now().format("%Y-%m-%d %H:%M UTC"),
+                                "{}\n\n*Summary by <@{}> using TLDR bot*",
                                 summary,
                                 task.user_id
                             );
 
                             if let Err(e) = canvas_helper
-                                .upsert_section(&canvas_id, "TL;DR", &canvas_content)
+                                .prepend_summary_section(&canvas_id, &heading, &canvas_content)
                                 .await
                             {
                                 error!("Failed to update Canvas: {}", e);

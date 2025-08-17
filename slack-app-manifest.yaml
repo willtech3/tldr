@@ -1,0 +1,65 @@
+display_information:
+  name: TLDR Bot
+  description: AI-powered message summarization for Slack
+  background_color: "#2C2D30"
+  long_description: TLDR Bot uses ChatGPT to generate intelligent summaries of your Slack conversations. Get quick TL;DR summaries of unread messages, long threads, or specific message ranges.
+
+features:
+  app_home:
+    home_tab_enabled: true
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: TLDR
+    always_online: true
+  shortcuts:
+    - name: Summarize Channel
+      type: global
+      callback_id: tldr_global_shortcut
+      description: Generate a summary of the current channel
+    - name: Summarize Thread
+      type: message
+      callback_id: tldr_message_action
+      description: Summarize this message thread
+  slash_commands:
+    - command: /tldr
+      description: Generate a summary of channel messages
+      usage_hint: "[count=N] [channel=#channel] [custom='prompt'] [--visible]"
+      should_escape: false
+
+oauth_config:
+  scopes:
+    bot:
+      - channels:history
+      - channels:read
+      - chat:write
+      - chat:write.public
+      - commands
+      - groups:history
+      - groups:read
+      - im:history
+      - im:read
+      - im:write
+      - mpim:history
+      - mpim:read
+      - users:read
+      - files:read
+      # Canvas permissions
+      - channels:manage
+      - channels:write.topic
+      - bookmarks:read
+      - bookmarks:write
+
+settings:
+  event_subscriptions:
+    request_url: https://your-api-gateway-url/slack/events
+    bot_events:
+      - app_home_opened
+      - message.channels
+      - message.groups
+  interactivity:
+    is_enabled: true
+    request_url: https://your-api-gateway-url/slack/interactive
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
