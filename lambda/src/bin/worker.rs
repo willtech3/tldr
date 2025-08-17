@@ -183,10 +183,16 @@ impl BotHandler {
                                 now.format("%Y-%m-%d %H:%M"),
                                 tz_abbr
                             );
+                            // Get user's display name for attribution
+                            let user_name = match self.slack_bot.get_user_info(&task.user_id).await {
+                                Ok(name) => name,
+                                Err(_) => format!("<@{}>", task.user_id), // Fallback to mention if lookup fails
+                            };
+                            
                             let canvas_content = format!(
-                                "{}\n\n*Summary by <@{}> using TLDR bot*",
+                                "{}\n\n*Summary by {} using TLDR bot*",
                                 summary,
-                                task.user_id
+                                user_name
                             );
 
                             if let Err(e) = canvas_helper
