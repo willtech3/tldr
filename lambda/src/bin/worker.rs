@@ -170,9 +170,19 @@ impl BotHandler {
 
                     match canvas_helper.ensure_channel_canvas(source_channel_id).await {
                         Ok(canvas_id) => {
-                            // Create formatted summary for Canvas with timestamp
-                            let now = chrono::Utc::now();
-                            let heading = format!("TL;DR - {}", now.format("%Y-%m-%d %H:%M UTC"));
+                            // Create formatted summary for Canvas with timestamp in Central Time
+                            use chrono_tz::US::Central;
+                            let now = chrono::Utc::now().with_timezone(&Central);
+                            let tz_abbr = if now.format("%Z").to_string() == "CDT" {
+                                "CDT"
+                            } else {
+                                "CST"
+                            };
+                            let heading = format!(
+                                "TL;DR - {} {} (God's time zone)", 
+                                now.format("%Y-%m-%d %H:%M"),
+                                tz_abbr
+                            );
                             let canvas_content = format!(
                                 "{}\n\n*Summary by <@{}> using TLDR bot*",
                                 summary,
