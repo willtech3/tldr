@@ -33,10 +33,10 @@ To enable automatic Slack app manifest deployment, you need to add these secrets
    - Generate at: api.slack.com → Your App → Basic Information → App-Level Tokens
    - Click "Generate Token and Scopes"
    - Token Name: "Manifest Deployment" (or any descriptive name)
-   - Add scope: `connections:write`
+   - Add scope: `app_configurations:write` (NOT `connections:write`)
    - Copy the token (starts with `xapp-`)
    - Format: `xapp-1-...`
-   - Note: These tokens expire after 12 hours but are only needed during deployment
+   - Note: These tokens don't expire but are only needed during deployment
 
 ## Understanding Token Types
 
@@ -66,7 +66,8 @@ To enable automatic Slack app manifest deployment, you need to add these secrets
 3. **Generate New Token**:
    - Click "Generate Token and Scopes"
    - Token Name: Enter "Manifest Deployment" (or any name you prefer)
-   - Scopes: Click "Add Scope" and select `connections:write`
+   - Scopes: Click "Add Scope" and select `app_configurations:write`
+     - **IMPORTANT**: Make sure you select `app_configurations:write`, NOT `connections:write`
    - Click "Generate"
 
 4. **Copy the Token**:
@@ -130,7 +131,7 @@ The bot will automatically:
 If manifest deployment fails:
 
 - Check that `SLACK_APP_ID` and `SLACK_APP_CONFIG_TOKEN` are set correctly
-- Ensure the app configuration token has `connections:write` scope  
+- Ensure the app configuration token has `app_configurations:write` scope  
 - Token format should be `xapp-1-...` (NOT `xoxb-...` which is the bot token)
 - Review GitHub Actions logs for specific error messages
 - Note: App config tokens expire after 12 hours but are regenerated each deployment
@@ -139,6 +140,6 @@ If manifest deployment fails:
 ## Common Mistakes to Avoid
 
 1. **Using Bot Token Instead of App Config Token**: The `SLACK_BOT_TOKEN` (xoxb-) cannot update manifests
-2. **Missing Scope**: App config token must have `connections:write` scope
+2. **Missing Scope**: App config token must have `app_configurations:write` scope
 3. **Wrong Token Format**: App config tokens start with `xapp-`, not `xoxb-`
 4. **Not Adding Both Secrets**: Both `SLACK_APP_ID` and `SLACK_APP_CONFIG_TOKEN` are required
