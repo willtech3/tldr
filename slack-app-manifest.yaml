@@ -23,6 +23,7 @@ features:
       description: Summarize this message thread
   slash_commands:
     - command: /tldr
+      request_url: "{{API_GATEWAY_URL}}/slack/commands"
       description: Generate a summary of channel messages
       usage_hint: "[count=N] [channel=#channel] [custom='prompt'] [--visible]"
       should_escape: false
