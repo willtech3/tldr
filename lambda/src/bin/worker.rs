@@ -179,21 +179,19 @@ impl BotHandler {
                                 "CST"
                             };
                             let heading = format!(
-                                "TLDR - {} {} (God's time zone)", 
+                                "TLDR - {} {} (God's time zone)",
                                 now.format("%Y-%m-%d %H:%M"),
                                 tz_abbr
                             );
                             // Get user's display name for attribution
-                            let user_name = match self.slack_bot.get_user_info(&task.user_id).await {
+                            let user_name = match self.slack_bot.get_user_info(&task.user_id).await
+                            {
                                 Ok(name) => name,
                                 Err(_) => format!("<@{}>", task.user_id), // Fallback to mention if lookup fails
                             };
-                            
-                            let canvas_content = format!(
-                                "{}\n\n*Summary by {} using TLDR bot*",
-                                summary,
-                                user_name
-                            );
+
+                            let canvas_content =
+                                format!("{}\n\n*Summary by {} using TLDR bot*", summary, user_name);
 
                             if let Err(e) = canvas_helper
                                 .prepend_summary_section(&canvas_id, &heading, &canvas_content)

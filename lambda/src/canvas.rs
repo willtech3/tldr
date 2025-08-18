@@ -83,7 +83,7 @@ impl<'a> CanvasHelper<'a> {
         let create_payload = json!({
             "channel_id": channel_id,
             "document_content": {
-                "type": "markdown", 
+                "type": "markdown",
                 "markdown": "# 📋 TLDR Summaries\n\n*This canvas contains AI-generated summaries of channel conversations. Latest summaries appear at the top.*\n\n---\n"
             }
         });
@@ -173,7 +173,10 @@ impl<'a> CanvasHelper<'a> {
         heading: &str,
         markdown_content: &str,
     ) -> Result<(), SlackError> {
-        info!("Prepending summary section '{}' to canvas {}", heading, canvas_id);
+        info!(
+            "Prepending summary section '{}' to canvas {}",
+            heading, canvas_id
+        );
 
         // Prepare the markdown content with the heading
         let full_content = format!("## {}\n\n{}\n\n---\n", heading, markdown_content);

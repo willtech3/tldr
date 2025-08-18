@@ -50,12 +50,12 @@ oauth_config:
 
 settings:
   event_subscriptions:
-    request_url: https://qp4xsgi1h7.execute-api.us-east-2.amazonaws.com/prod/slack/events
+    request_url: {{API_GATEWAY_URL}}/slack/events
     bot_events:
       - app_home_opened
   interactivity:
     is_enabled: true
-    request_url: https://qp4xsgi1h7.execute-api.us-east-2.amazonaws.com/prod/slack/interactive
+    request_url: {{API_GATEWAY_URL}}/slack/interactive
   org_deploy_enabled: false
   socket_mode_enabled: false
   token_rotation_enabled: false

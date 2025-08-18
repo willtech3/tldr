@@ -147,6 +147,13 @@ export class TldrStack extends cdk.Stack {
       description: 'URL of the API Gateway endpoint',
     });
 
+    // Output the API Gateway URL for Slack manifest deployment
+    new cdk.CfnOutput(this, 'ApiGatewayUrl', {
+      value: api.url.replace(/\/$/, ''), // Remove trailing slash
+      description: 'API Gateway URL for Slack app manifest',
+      exportName: 'TldrApiGatewayUrl',
+    });
+
     // Output the processing queue URL
     new cdk.CfnOutput(this, 'ProcessingQueueUrl', {
       value: processingQueue.queueUrl,
