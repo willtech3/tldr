@@ -40,3 +40,6 @@ lambda/zig.tar.xz
 
 # Secrets
 secrets
+
+# Slack configuration (contains environment-specific URLs)
+slack-app-manifest.yaml
