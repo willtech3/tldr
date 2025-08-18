@@ -62,7 +62,10 @@ impl SlackBot {
         let openai_api_key = env::var("OPENAI_API_KEY")?;
 
         // Initialize SlackHyperClient correctly using the connector
-        let client = SlackHyperClient::new(SlackClientHyperConnector::new());
+        let client = SlackHyperClient::new(
+            SlackClientHyperConnector::new()
+                .map_err(|e| anyhow::anyhow!("Failed to create Slack connector: {}", e))?,
+        );
         let token = SlackApiToken::new(SlackApiTokenValue::new(token));
 
         // Use the builder pattern and handle errors explicitly to avoid issues with Send/Sync constraints
@@ -382,7 +385,8 @@ Focus on key information, group related points, and preserve any useful links.",
             .map_err(|e| SlackError::Http(format!("Read body error: {}", e)))?;
 
         // Convert HTML → plain text (width 80) and trim to 4000 chars to save tokens
-        let text = html_to_text(body.as_bytes(), 80);
+        let text = html_to_text(body.as_bytes(), 80)
+            .map_err(|e| SlackError::Http(format!("HTML parse error: {}", e)))?;
         let trimmed = if text.len() > 4000 {
             format!("{}…", &text[..4000])
         } else {

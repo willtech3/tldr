@@ -57,8 +57,12 @@ pub fn estimate_tokens(text: &str) -> usize {
 }
 
 // Use once_cell to create static instances that are lazily initialized
-static SLACK_CLIENT: Lazy<SlackHyperClient> =
-    Lazy::new(|| SlackHyperClient::new(SlackClientHyperConnector::new()));
+static SLACK_CLIENT: Lazy<SlackHyperClient> = Lazy::new(|| {
+    SlackHyperClient::new(
+        SlackClientHyperConnector::new()
+            .expect("Failed to create Slack client connector"),
+    )
+});
 
 // Static HTTP client
 static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {

@@ -39,11 +39,11 @@ impl From<anyhow::Error> for SlackError {
 }
 
 // Generic implementation for AWS SDK errors
-impl<E> From<aws_sdk_sqs::types::SdkError<E>> for SlackError
+impl<E> From<aws_sdk_sqs::error::SdkError<E>> for SlackError
 where
     E: std::fmt::Display,
 {
-    fn from(error: aws_sdk_sqs::types::SdkError<E>) -> Self {
+    fn from(error: aws_sdk_sqs::error::SdkError<E>) -> Self {
         SlackError::AwsError(error.to_string())
     }
 }

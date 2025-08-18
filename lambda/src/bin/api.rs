@@ -11,7 +11,6 @@
 //! Correlation IDs (UUID v4) are propagated as part of the enqueued task to enable
 //! API→Worker traceability in logs.
 use anyhow::Result;
-use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_sqs::Client as SqsClient;
 use hmac::{Hmac, Mac};
 use lambda_runtime::{Error, LambdaEvent, run, service_fn};
@@ -56,9 +55,8 @@ async fn send_to_sqs(task: &ProcessingTask) -> Result<(), SlackError> {
         SlackError::AwsError("PROCESSING_QUEUE_URL environment variable not set".to_string())
     })?;
 
-    // Set up AWS SDK
-    let region_provider = RegionProviderChain::default_provider().or_else("us-east-1");
-    let shared_config = aws_config::from_env().region(region_provider).load().await;
+    // Set up AWS SDK with new API
+    let shared_config = aws_config::from_env().load().await;
     let client = SqsClient::new(&shared_config);
 
     // Serialize task to JSON string
