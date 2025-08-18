@@ -132,10 +132,10 @@ jobs:
           npm run cdk deploy -- --require-approval never --outputs-file cdk-outputs.json
           rm cdk.context.json
           
-          # Extract API Gateway URL from CDK outputs
-          echo "Extracting API Gateway URL from CDK outputs..."
-          export API_GATEWAY_URL=$(python3 -c "import json; data = json.load(open('cdk-outputs.json')); print(data['TldrStack']['ApiGatewayUrl'])")
-          echo "API_GATEWAY_URL=$API_GATEWAY_URL" >> $GITHUB_ENV
+          # Display API Gateway URL from CDK outputs for manual Slack manifest update
+          echo "📌 API Gateway URL for Slack manifest:"
+          python3 -c "import json; data = json.load(open('cdk-outputs.json')); print(data['TldrStack']['ApiGatewayUrl'])"
+          echo "ℹ️  Update your Slack app manifest with this URL at api.slack.com/apps"
         env:
           SLACK_BOT_TOKEN:      ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
@@ -143,29 +143,6 @@ jobs:
           OPENAI_ORG_ID:        ${{ secrets.OPENAI_ORG_ID }}
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
-      # Deploy Slack App Manifest (REQUIRED - do not skip)
-      - name: Deploy Slack App Manifest
-        run: |
-          echo "Deploying Slack app manifest..."
-          
-          # Verify required secrets are set
-          if [ -z "${{ secrets.SLACK_APP_ID }}" ]; then
-            echo "❌ Error: SLACK_APP_ID secret is not configured in GitHub"
-            echo "Please add SLACK_APP_ID to repository secrets"
-            exit 1
-          fi
-          
-          if [ -z "${{ secrets.SLACK_APP_CONFIG_TOKEN }}" ]; then
-            echo "❌ Error: SLACK_APP_CONFIG_TOKEN secret is not configured in GitHub"
-            echo "Please add SLACK_APP_CONFIG_TOKEN to repository secrets"
-            exit 1
-          fi
-          
-          chmod +x scripts/deploy-slack-manifest.sh
-          ./scripts/deploy-slack-manifest.sh
-        env:
-          SLACK_APP_ID: ${{ secrets.SLACK_APP_ID }}
-          SLACK_APP_CONFIG_TOKEN: ${{ secrets.SLACK_APP_CONFIG_TOKEN }}
-          API_GATEWAY_URL: ${{ env.API_GATEWAY_URL }}
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      # Slack manifest updates must be done manually
+      # See SLACK_APP_SETUP.md for instructions
 

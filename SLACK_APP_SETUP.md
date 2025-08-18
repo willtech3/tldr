@@ -20,24 +20,31 @@ The following secrets must be configured in your GitHub repository for automated
 - `OPENAI_API_KEY` - OpenAI API key for ChatGPT
 - `OPENAI_ORG_ID` - OpenAI organization ID
 
-### Slack App Manifest Deployment (Need to Add)
-To enable automatic Slack app manifest deployment, you need to add these secrets:
+### Slack App Manifest Updates (Manual Process)
 
-1. **`SLACK_APP_ID`** - Your Slack app's ID
-   - Find at: api.slack.com → Your App → Basic Information → App ID
-   - Format: `A01XXXXXX`
-   - Example: `A01ABC2D3EF`
+Since Slack's configuration token system is not suitable for CI/CD automation, manifest updates are done manually:
 
-2. **`SLACK_APP_CONFIG_TOKEN`** - Configuration token for manifest updates
-   - **IMPORTANT**: Configuration tokens are currently problematic:
-     - Slack's documentation references a token generator that doesn't exist in the UI
-     - These tokens expire after 12 hours
-     - No clear way to generate them programmatically for CI/CD
-   - **Alternative approaches**:
-     - **Option 1**: Update manifest manually through Slack UI (api.slack.com/apps → Your App → App Manifest)
-     - **Option 2**: Skip manifest updates in CI (comment out the deploy script)
-     - **Option 3**: Use Slack CLI locally: `slack app manifest update`
-   - **Note**: The Lambda deployment works fine without manifest updates - this only affects Slack configuration sync
+1. **Get Your API Gateway URL**:
+   ```bash
+   # Run this command after CDK deployment:
+   aws cloudformation describe-stacks --stack-name TldrStack \
+     --query "Stacks[0].Outputs[?OutputKey=='ApiGatewayUrl'].OutputValue" \
+     --output text
+   ```
+   Or check the GitHub Actions deployment logs for "API Gateway URL for Slack manifest"
+
+2. **Update the Manifest File**:
+   - Open `slack-app-manifest.yaml`
+   - Replace all instances of `YOUR-API-ID` with your actual API Gateway ID
+   - The URL format is: `https://<api-id>.execute-api.<region>.amazonaws.com/prod`
+
+3. **Apply to Slack**:
+   - Go to [api.slack.com/apps](https://api.slack.com/apps)
+   - Click on your TLDR app
+   - Click "App Manifest" in the left sidebar
+   - Copy the entire contents of your updated `slack-app-manifest.yaml`
+   - Paste into the manifest editor
+   - Click "Save Changes"
 
 ## Understanding Token Types
 
@@ -55,35 +62,6 @@ To enable automatic Slack app manifest deployment, you need to add these secrets
 3. Click "New repository secret"
 4. Add each secret with the exact name shown above
 
-## Alternative: Manual Manifest Updates
-
-Since Slack's configuration token system is problematic for CI/CD, here are practical alternatives:
-
-### Option 1: Manual Update (Recommended)
-1. Go to [api.slack.com/apps](https://api.slack.com/apps)
-2. Click on your TLDR app
-3. Click "App Manifest" in the left sidebar
-4. Update the manifest YAML/JSON as needed
-5. Click "Save Changes"
-
-### Option 2: Disable Manifest Updates in CI
-Comment out the manifest deployment step in `.github/workflows/deploy.yml`:
-```yaml
-# - name: Deploy Slack app manifest
-#   run: ./scripts/deploy-slack-manifest.sh
-```
-
-### Option 3: Use Slack CLI Locally
-Install Slack CLI and run:
-```bash
-slack app manifest update --app <APP_ID> --manifest manifest.yaml
-```
-
-### Why This Is Complex
-- Slack's configuration tokens require manual generation
-- No UI generator exists despite documentation claims
-- Tokens expire every 12 hours (impractical for CI/CD)
-- The "Slack Tooling Tokens Vendor" app installation is undocumented
 
 ## Initial Slack App Setup
 
