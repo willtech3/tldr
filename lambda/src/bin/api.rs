@@ -210,12 +210,33 @@ fn build_task_from_view(
         None
     };
 
+    // Build text representation of UI selections for attribution when posting publicly
+    let mut text_parts = Vec::new();
+    
+    // Add count if specified
+    if let Some(count) = effective_count {
+        text_parts.push(format!("count={}", count));
+    }
+    
+    // Add custom prompt indicator if present
+    if custom_prompt.is_some() {
+        text_parts.push("custom=[user provided]".to_string());
+    }
+    
+    // Add visibility flags
+    if dest_public_post {
+        text_parts.push("--visible".to_string());
+    }
+    
+    // Combine into text field for attribution
+    let text = text_parts.join(" ");
+
     Ok(ProcessingTask {
         correlation_id,
         user_id: user_id.to_string(),
         channel_id,
         response_url: None,
-        text: String::new(),
+        text,
         message_count: effective_count,
         target_channel_id: None,
         custom_prompt,
@@ -559,8 +580,9 @@ pub async fn function_handler(
 
     // Parse parameters from filtered text
     let mut message_count: Option<u32> = None;
-    // Note: channel targeting is now handled via modal; we intentionally skip parsing it here.
+    let mut target_channel_id: Option<String> = None;
     let mut custom_prompt: Option<String> = None;
+    let mut open_ui = false;
 
     // Use regex captures to properly handle quoted values
     for cap in KV_RE.captures_iter(&filtered_text) {
@@ -573,7 +595,15 @@ pub async fn function_handler(
                     message_count = Some(count);
                 }
             }
-            "channel" => {}
+            "channel" => {
+                // Parse channel parameter (e.g., #general or C1234567)
+                let channel = if raw.starts_with('#') {
+                    raw.trim_start_matches('#').to_string()
+                } else {
+                    raw.to_string()
+                };
+                target_channel_id = Some(channel);
+            }
             "custom" => {
                 // Sanitize custom prompt
                 match sanitize_custom_prompt(raw) {
@@ -589,44 +619,95 @@ pub async fn function_handler(
         }
     }
 
-    // Prefer UI per plan: open modal (must be within 3s trigger lifetime). Do it in background
-    // to ensure we ACK the slash command promptly.
-    let prefill = Prefill {
-        initial_conversation: Some(slack_event.channel_id.clone()),
-        last_n: message_count,
-        custom_prompt: custom_prompt.clone(),
-        dest_canvas: true,
-        dest_dm: !visible,
-        dest_public_post: visible,
-    };
+    // Check for UI flag to open modal instead of direct processing
+    if text_parts.iter().any(|&part| part == "--ui" || part == "--modal") {
+        open_ui = true;
+    }
 
-    let view = build_tldr_modal(&prefill);
+    // If --ui flag is present OR parameters are complex enough to warrant UI
+    // (but not for simple /tldr or /tldr count=N commands)
+    let should_open_modal = open_ui || 
+        (target_channel_id.is_some() && visible) || // Complex channel+visible combo
+        (custom_prompt.is_some() && (target_channel_id.is_some() || visible)); // Complex custom+other params
 
-    // Open modal using Slack Web API (3s trigger lifetime)
-    // Wait briefly to ensure the modal opens before Lambda container freezes
-    let trigger_id = slack_event.trigger_id.clone();
-    let view_clone = view.clone();
-    let modal_handle = tokio::spawn(async move {
-        match SlackBot::new().await {
-            Ok(bot) => {
-                if let Err(e) = bot.open_modal(&trigger_id, &view_clone).await {
-                    error!("Failed to open modal: {}", e);
+    if should_open_modal {
+        // Open modal for complex configuration
+        let prefill = Prefill {
+            initial_conversation: Some(slack_event.channel_id.clone()),
+            last_n: message_count,
+            custom_prompt: custom_prompt.clone(),
+            dest_canvas: false,
+            dest_dm: !visible,
+            dest_public_post: visible,
+        };
+
+        let view = build_tldr_modal(&prefill);
+        let trigger_id = slack_event.trigger_id.clone();
+        let view_clone = view.clone();
+        let modal_handle = tokio::spawn(async move {
+            match SlackBot::new().await {
+                Ok(bot) => {
+                    if let Err(e) = bot.open_modal(&trigger_id, &view_clone).await {
+                        error!("Failed to open modal: {}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to initialize SlackBot for views.open: {}", e);
                 }
             }
-            Err(e) => {
-                error!("Failed to initialize SlackBot for views.open: {}", e);
-            }
-        }
-    });
+        });
 
-    // Wait up to 2000ms for modal to open, providing safety margin within Slack's 3s limit
-    let _ = tokio::time::timeout(std::time::Duration::from_millis(2000), modal_handle).await;
+        // Wait up to 2000ms for modal to open
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(2000), modal_handle).await;
 
+        return Ok(json!({
+            "statusCode": 200,
+            "body": json!({
+                "response_type": "ephemeral",
+                "text": "Opening TLDR configuration…"
+            }).to_string()
+        }));
+    }
+
+    // Direct processing for simple slash commands (/tldr with basic params)
+    let correlation_id = Uuid::new_v4().to_string();
+    info!("Slash command direct processing, correlation_id={}", correlation_id);
+
+    // Build the processing task
+    let task = ProcessingTask {
+        correlation_id: correlation_id.clone(),
+        user_id: slack_event.user_id.clone(),
+        channel_id: slack_event.channel_id.clone(),
+        response_url: Some(slack_event.response_url.clone()),
+        text: slack_event.text.clone(),
+        message_count,
+        target_channel_id: target_channel_id.clone(),
+        custom_prompt,
+        visible,
+        // Default destinations for slash command
+        dest_canvas: false,
+        dest_dm: !visible && target_channel_id.is_none(), // DM by default unless visible or targeting channel
+        dest_public_post: visible || target_channel_id.is_some(), // Post to channel if visible or channel specified
+    };
+
+    // Send to SQS for processing
+    if let Err(e) = send_to_sqs(&task).await {
+        error!("Failed to enqueue task (correlation_id={}): {}", correlation_id, e);
+        return Ok(json!({
+            "statusCode": 200,
+            "body": json!({
+                "response_type": "ephemeral",
+                "text": format!("Failed to start summarization. Please try again. (ref: {})", &correlation_id[..8])
+            }).to_string()
+        }));
+    }
+
+    // Return success acknowledgment
     Ok(json!({
         "statusCode": 200,
         "body": json!({
             "response_type": "ephemeral",
-            "text": "Opening TLDR configuration…"
+            "text": "✨ Starting summarization... You'll receive the summary shortly."
         }).to_string()
     }))
 }

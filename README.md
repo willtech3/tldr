@@ -34,17 +34,25 @@ TLDR is a serverless, Rust-powered Slack bot that turns a wall of unread message
 ## 🚀  Usage
 
 1. **Install the Slack App** in your workspace (see *Slack Setup* below).
-2. In any channel type:
+2. Use either method to generate summaries:
+
+### Slash Command (Direct Processing)
+
+Type `/tldr` in any channel to get a DM with a summary of unread messages:
 
 ```text
 /tldr
 ```
 
-3. A DM will arrive with a neatly formatted summary of everything you missed. ✨
+The summary will be sent to your DM shortly. ✨
+
+### Message Shortcut (Interactive UI)
+
+Right-click any message and select **"Summarize"** from the shortcuts menu to open the interactive configuration UI with options for Canvas, DM, or public posting.
 
 ### Advanced Parameters
 
-You can tailor the summary by appending flags / key-value pairs after the command:
+For the slash command, you can append flags and parameters:
 
 | Parameter | Example | Description |
 |-----------|---------|-------------|
@@ -52,6 +60,7 @@ You can tailor the summary by appending flags / key-value pairs after the comman
 | `channel=<#channel>` | `/tldr channel=#general` | Post the summary to a different channel (defaults to DM). |
 | `--visible` / `--public` | `/tldr --visible` | Make the summary visible to everyone in the target channel. |
 | `custom="…"` | `/tldr custom="Write at an 8th-grade level"` | Provide a custom prompt (max 800 chars) to influence the writing style. |
+| `--ui` / `--modal` | `/tldr --ui` | Open the interactive configuration UI instead of direct processing. |
 
 Parameters can be combined:
 

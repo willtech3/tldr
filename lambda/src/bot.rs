@@ -836,7 +836,7 @@ impl SlackBot {
             .collect();
 
         // Build the full prompt using the new method with channel context
-        let messages_text = format!("{}\n\n{}", channel_name, formatted_messages.join("\n"));
+        let messages_text = format!("Channel: #{}\n\n{}", channel_name, formatted_messages.join("\n"));
 
         // 1. Base text portion
         let mut prompt = self.build_prompt(&messages_text, custom_prompt);
