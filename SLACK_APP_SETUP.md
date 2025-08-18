@@ -28,22 +28,23 @@ To enable automatic Slack app manifest deployment, you need to add these secrets
    - Format: `A01XXXXXX`
    - Example: `A01ABC2D3EF`
 
-2. **`SLACK_APP_CONFIG_TOKEN`** - App configuration token for manifest updates
-   - **IMPORTANT**: This is NOT the same as your bot token (`SLACK_BOT_TOKEN`)
-   - Generate at: api.slack.com → Your App → Basic Information → App-Level Tokens
-   - Click "Generate Token and Scopes"
-   - Token Name: "Manifest Deployment" (or any descriptive name)
-   - Add scope: `app_configurations:write` (NOT `connections:write`)
-   - Copy the token (starts with `xapp-`)
-   - Format: `xapp-1-...`
-   - Note: These tokens don't expire but are only needed during deployment
+2. **`SLACK_APP_CONFIG_TOKEN`** - Configuration token for manifest updates
+   - **IMPORTANT**: This is a special Configuration Token, NOT a bot token or app-level token
+   - Generate at: https://api.slack.com/reference/manifests#config_tokens
+   - Click "Generate Token" button on that page
+   - Select your workspace
+   - Copy the token immediately
+   - Format: `xoxe.xoxp-...` (configuration tokens have a unique format)
+   - **Warning**: These tokens expire after 12 hours, so you may need to regenerate for each deployment
+   - Alternative: Use refresh tokens for automated rotation (see Slack docs)
 
 ## Understanding Token Types
 
 | Token Type | Prefix | Purpose | Where to Find |
 |------------|--------|---------|---------------|
 | Bot Token | `xoxb-` | Runtime API calls (messages, Canvas) | OAuth & Permissions |
-| App Config Token | `xapp-` | Manifest updates only | App-Level Tokens |
+| Configuration Token | `xoxe.xoxp-` | Manifest updates only | [Token Generator](https://api.slack.com/reference/manifests#config_tokens) |
+| App-Level Token | `xapp-` | Socket mode, events (not used here) | Basic Information → App-Level Tokens |
 | Signing Secret | (no prefix) | Request verification | Basic Information |
 
 ## How to Add GitHub Secrets
@@ -53,35 +54,35 @@ To enable automatic Slack app manifest deployment, you need to add these secrets
 3. Click "New repository secret"
 4. Add each secret with the exact name shown above
 
-## Step-by-Step: Generating App Configuration Token
+## Step-by-Step: Generating Configuration Token
 
-1. **Navigate to Your App**:
-   - Go to [api.slack.com/apps](https://api.slack.com/apps)
-   - Click on your TLDR app
+1. **Navigate to Configuration Token Generator**:
+   - Go directly to: https://api.slack.com/reference/manifests#config_tokens
+   - Or go to [api.slack.com/reference/manifests](https://api.slack.com/reference/manifests) and scroll to "Configuration tokens" section
 
-2. **Go to App-Level Tokens Section**:
-   - Click "Basic Information" in the left sidebar
-   - Scroll down to "App-Level Tokens" section
-
-3. **Generate New Token**:
-   - Click "Generate Token and Scopes"
-   - Token Name: Enter "Manifest Deployment" (or any name you prefer)
-   - Scopes: Click "Add Scope" and select `app_configurations:write`
-     - **IMPORTANT**: Make sure you select `app_configurations:write`, NOT `connections:write`
+2. **Generate the Token**:
+   - Click the "Generate Token" button
+   - Select your workspace from the dropdown
    - Click "Generate"
+   - **IMPORTANT**: This will install the "Slack Tooling Tokens Vendor" app to your workspace
 
-4. **Copy the Token**:
-   - A token starting with `xapp-1-` will appear
+3. **Copy the Token**:
+   - A token starting with `xoxe.xoxp-` will appear
    - Click "Copy" to copy it to your clipboard
-   - **Save this immediately** - you won't be able to see it again
+   - **Save this immediately** - these tokens expire after 12 hours
 
-5. **Add to GitHub Secrets**:
+4. **Add to GitHub Secrets**:
    - Go to your GitHub repository
    - Settings → Secrets and variables → Actions
    - Click "New repository secret"
    - Name: `SLACK_APP_CONFIG_TOKEN`
-   - Value: Paste the `xapp-1-...` token
+   - Value: Paste the `xoxe.xoxp-...` token
    - Click "Add secret"
+
+5. **Important Notes**:
+   - These tokens expire after 12 hours
+   - You'll need to regenerate and update the GitHub secret periodically
+   - For production, consider implementing refresh token rotation
 
 ## Initial Slack App Setup
 
