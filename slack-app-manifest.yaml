@@ -2,7 +2,7 @@ display_information:
   name: TLDR Bot
   description: AI-powered message summarization for Slack
   background_color: "#2C2D30"
-  long_description: TLDR Bot uses ChatGPT to generate intelligent summaries of your Slack conversations. Get quick TL;DR summaries of unread messages, long threads, or specific message ranges.
+  long_description: TLDR Bot uses ChatGPT to generate intelligent summaries of your Slack conversations. Get quick TLDR summaries of unread messages, long threads, or specific message ranges. Features include customizable prompts, Canvas integration for persistent summaries, message count control, and flexible output destinations. Perfect for catching up on busy channels, understanding lengthy discussions, or creating meeting notes from chat history.
 
 features:
   app_home:
