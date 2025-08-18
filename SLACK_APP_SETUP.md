@@ -29,14 +29,15 @@ To enable automatic Slack app manifest deployment, you need to add these secrets
    - Example: `A01ABC2D3EF`
 
 2. **`SLACK_APP_CONFIG_TOKEN`** - Configuration token for manifest updates
-   - **IMPORTANT**: This is a special Configuration Token, NOT a bot token or app-level token
-   - Generate at: https://api.slack.com/reference/manifests#config_tokens
-   - Click "Generate Token" button on that page
-   - Select your workspace
-   - Copy the token immediately
-   - Format: `xoxe.xoxp-...` (configuration tokens have a unique format)
-   - **Warning**: These tokens expire after 12 hours, so you may need to regenerate for each deployment
-   - Alternative: Use refresh tokens for automated rotation (see Slack docs)
+   - **IMPORTANT**: Configuration tokens are currently problematic:
+     - Slack's documentation references a token generator that doesn't exist in the UI
+     - These tokens expire after 12 hours
+     - No clear way to generate them programmatically for CI/CD
+   - **Alternative approaches**:
+     - **Option 1**: Update manifest manually through Slack UI (api.slack.com/apps → Your App → App Manifest)
+     - **Option 2**: Skip manifest updates in CI (comment out the deploy script)
+     - **Option 3**: Use Slack CLI locally: `slack app manifest update`
+   - **Note**: The Lambda deployment works fine without manifest updates - this only affects Slack configuration sync
 
 ## Understanding Token Types
 
@@ -54,35 +55,35 @@ To enable automatic Slack app manifest deployment, you need to add these secrets
 3. Click "New repository secret"
 4. Add each secret with the exact name shown above
 
-## Step-by-Step: Generating Configuration Token
+## Alternative: Manual Manifest Updates
 
-1. **Navigate to Configuration Token Generator**:
-   - Go directly to: https://api.slack.com/reference/manifests#config_tokens
-   - Or go to [api.slack.com/reference/manifests](https://api.slack.com/reference/manifests) and scroll to "Configuration tokens" section
+Since Slack's configuration token system is problematic for CI/CD, here are practical alternatives:
 
-2. **Generate the Token**:
-   - Click the "Generate Token" button
-   - Select your workspace from the dropdown
-   - Click "Generate"
-   - **IMPORTANT**: This will install the "Slack Tooling Tokens Vendor" app to your workspace
+### Option 1: Manual Update (Recommended)
+1. Go to [api.slack.com/apps](https://api.slack.com/apps)
+2. Click on your TLDR app
+3. Click "App Manifest" in the left sidebar
+4. Update the manifest YAML/JSON as needed
+5. Click "Save Changes"
 
-3. **Copy the Token**:
-   - A token starting with `xoxe.xoxp-` will appear
-   - Click "Copy" to copy it to your clipboard
-   - **Save this immediately** - these tokens expire after 12 hours
+### Option 2: Disable Manifest Updates in CI
+Comment out the manifest deployment step in `.github/workflows/deploy.yml`:
+```yaml
+# - name: Deploy Slack app manifest
+#   run: ./scripts/deploy-slack-manifest.sh
+```
 
-4. **Add to GitHub Secrets**:
-   - Go to your GitHub repository
-   - Settings → Secrets and variables → Actions
-   - Click "New repository secret"
-   - Name: `SLACK_APP_CONFIG_TOKEN`
-   - Value: Paste the `xoxe.xoxp-...` token
-   - Click "Add secret"
+### Option 3: Use Slack CLI Locally
+Install Slack CLI and run:
+```bash
+slack app manifest update --app <APP_ID> --manifest manifest.yaml
+```
 
-5. **Important Notes**:
-   - These tokens expire after 12 hours
-   - You'll need to regenerate and update the GitHub secret periodically
-   - For production, consider implementing refresh token rotation
+### Why This Is Complex
+- Slack's configuration tokens require manual generation
+- No UI generator exists despite documentation claims
+- Tokens expire every 12 hours (impractical for CI/CD)
+- The "Slack Tooling Tokens Vendor" app installation is undocumented
 
 ## Initial Slack App Setup
 
