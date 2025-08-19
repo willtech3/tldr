@@ -112,4 +112,4 @@ fi
 
 echo "✨ Build complete!"
 echo "======================================================"
-echo "🔍 To deploy with CDK, run: cd cdk && npm run cdk deploy"
+echo "🔍 To deploy with CDK, run: cd cdk && npm run deploy"
