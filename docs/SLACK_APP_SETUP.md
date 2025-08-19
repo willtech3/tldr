@@ -24,13 +24,13 @@ The TLDR bot now supports multiple ways to trigger summaries, not just the `/tld
 
 ## 2. Update App Manifest
 
-Use the provided `slack-app-manifest.yaml` to configure your app with all necessary permissions and features:
+Use the provided `slack-app-manifest.yaml.template` to configure your app with all necessary permissions and features:
 
 ```bash
 # In your Slack app settings:
 1. Go to "App Manifest" 
 2. Switch to YAML mode
-3. Paste the contents of slack-app-manifest.yaml
+3. Paste the contents of slack-app-manifest.yaml.template (after replacing placeholders)
 4. Save changes
 ```
 

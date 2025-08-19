@@ -77,7 +77,7 @@ Parameters can be combined:
 - Rust (stable, Edition 2024)
 - `cargo-lambda` ≥ 0.17 for local Lambda builds
 - AWS CLI with a profile that can deploy Lambda + SQS
-- Node 18+ & npm (only for the CDK infrastructure)
+- Node 18+ & npm (only for the CDK stack)
 - A Slack workspace & OpenAI API key (and optional OpenAI Org ID)
 
 ### Steps
@@ -98,17 +98,11 @@ $ cargo lambda build --release
 $ cargo lambda watch   # default on :9000
 ```
 
-Invoke the API Lambda locally with a sample payload:
-
-```bash
-$ cargo lambda invoke --data-file test/fixtures/slash_command.json
-```
-
 ---
 
 ## ☁️  Deployment (AWS CDK)
 
-The **`infrastructure/`** folder contains an *AWS CDK* stack that provisions:
+The **`cdk/`** folder contains an *AWS CDK* stack that provisions:
 
 - API Gateway endpoint
 - Two Lambda functions (API + Worker)
@@ -118,9 +112,9 @@ The **`infrastructure/`** folder contains an *AWS CDK* stack that provisions:
 Deploy in one command:
 
 ```bash
-$ cd infrastructure
+$ cd cdk
 $ npm install             # first time only
-$ npm run cdk deploy
+$ npm run deploy
 ```
 
 After the stack is live, copy the API Gateway URL into your Slack slash-command configuration.
@@ -151,8 +145,9 @@ Environment variables (set in Lambda or an `.env` file for local runs):
 │   │   ├─ worker.rs
 │   │   └─ bot.rs  # SlackBot implementation (shared)
 │   └─ Cargo.toml
-├─ infrastructure/  # AWS CDK stack (TypeScript)
-├─ tests/           # Integration & fixture payloads
+├─ cdk/             # AWS CDK stack (TypeScript)
+├─ docs/            # Additional documentation
+├─ slack-app-manifest.yaml.template
 └─ README.md
 ```
 
