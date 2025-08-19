@@ -36,6 +36,16 @@ npm run cdk deploy           # Deploy to AWS
 npm run cdk diff             # Preview changes
 ```
 
+## Pre-commit Code Quality Rule
+
+Before committing any changes, always run the consolidated quality checks:
+
+```bash
+just qa
+```
+
+This runs `cargo fmt --check`, `cargo clippy` with strict warnings, `cargo test`, and builds the CDK TypeScript. Commits should only be made after this succeeds locally.
+
 ## Architecture
 
 ### Two-Lambda Design
@@ -121,3 +131,5 @@ cargo lambda invoke --data-file test/fixtures/slash_command.json
 - Mask debug logs in production (use `--debug-logs` flag carefully)
 - Parameterize all external inputs
 - Follow least-privilege IAM principles
+- never write persistent scripts unless specifically directed
+- only deploy using ci

@@ -43,3 +43,6 @@ secrets
 
 # Slack configuration (contains environment-specific URLs)
 slack-app-manifest.yaml
+
+# Local reports
+CODEBASE_CLEANUP_RECOMMENDATIONS.md

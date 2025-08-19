@@ -53,4 +53,12 @@
 24. Mention `cargo expand` when explaining macro output.
 25. Encourage `cargo doc --open` for API exploration.
 
+# Pre-commit Code Quality
+- Always run `just qa` before committing. This performs:
+  - Rust formatting check: `cargo fmt --all -- --check`
+  - Rust linting: `cargo clippy --all-targets -- -D warnings -W clippy::pedantic`
+  - Rust tests: `cargo test --all-features`
+  - CDK TypeScript build: `cd cdk && npm run build`
+- Do not commit if any of the above fail.
+
 # End of file – keep new rules above this line.
