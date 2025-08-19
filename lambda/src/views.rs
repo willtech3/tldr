@@ -162,10 +162,10 @@ pub fn validate_view_submission(view: &Value) -> Result<(), serde_json::Map<Stri
         let trimmed = n_str.trim();
         if !trimmed.is_empty() {
             match trimmed.parse::<i32>() {
-                Ok(n) if !(10..=500).contains(&n) => {
+                Ok(n) if !(2..=500).contains(&n) => {
                     errors.insert(
                         "lastn".to_string(),
-                        Value::String("Please enter a number between 10 and 500".to_string()),
+                        Value::String("Please enter a number between 2 and 500".to_string()),
                     );
                 }
                 Err(_) => {

@@ -218,9 +218,15 @@ fn build_task_from_view(
         text_parts.push(format!("count={}", count));
     }
 
-    // Add custom prompt indicator if present
-    if custom_prompt.is_some() {
-        text_parts.push("custom=[user provided]".to_string());
+    // Add custom prompt if present
+    if let Some(ref prompt) = custom_prompt {
+        // Truncate long prompts for display (max 100 chars)
+        let display_prompt = if prompt.len() > 100 {
+            format!("custom=\"{}...\"", &prompt[..97])
+        } else {
+            format!("custom=\"{}\"", prompt)
+        };
+        text_parts.push(display_prompt);
     }
 
     // Add visibility flags
@@ -565,10 +571,12 @@ pub async fn function_handler(
         .iter()
         .any(|&part| part == "--visible" || part == "--public");
 
-    // Filter out the visibility flags from the text for other processing
+    // Filter out the visibility and UI flags from the text for other processing
     let filtered_text: String = text_parts
         .iter()
-        .filter(|&&part| part != "--visible" && part != "--public")
+        .filter(|&&part| {
+            part != "--visible" && part != "--public" && part != "--ui" && part != "--modal"
+        })
         .cloned()
         .collect::<Vec<&str>>()
         .join(" ");
@@ -627,13 +635,8 @@ pub async fn function_handler(
         open_ui = true;
     }
 
-    // If --ui flag is present OR parameters are complex enough to warrant UI
-    // (but not for simple /tldr or /tldr count=N commands)
-    let should_open_modal = open_ui ||
-        (target_channel_id.is_some() && visible) || // Complex channel+visible combo
-        (custom_prompt.is_some() && (target_channel_id.is_some() || visible)); // Complex custom+other params
-
-    if should_open_modal {
+    // Only open modal if --ui or --modal flag is explicitly provided
+    if open_ui {
         // Open modal for complex configuration
         let prefill = Prefill {
             initial_conversation: Some(slack_event.channel_id.clone()),

@@ -119,13 +119,6 @@ Navigate to **Interactivity & Shortcuts**:
 
 ## Step 9: Create Shortcuts
 
-### Global Shortcut (Lightning Bolt Menu)
-1. Click **Create New Shortcut** → **Global**
-2. Configure:
-   - **Name**: Summarize Channel
-   - **Short Description**: Generate a summary of the current channel
-   - **Callback ID**: `tldr_global_shortcut`
-
 ### Message Shortcut (Three-Dot Menu)
 1. Click **Create New Shortcut** → **On Messages**
 2. Configure:
