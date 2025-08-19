@@ -20,7 +20,7 @@ pub struct SlackCommandEvent {
     pub command_ts: String,
 }
 
-/// Decodes URL encoded string using percent_encoding crate
+/// Decodes URL encoded string using `percent_encoding` crate
 ///
 /// # Arguments
 /// * `input` - The URL-encoded string to decode
@@ -46,11 +46,10 @@ pub fn decode_url_component(input: &str) -> Result<String, String> {
     percent_decode_str(input)
         .decode_utf8()
         .map(|s| s.replace('+', " "))
-        .map_err(|e| format!("Failed to decode URL component: {}", e))
-        .map(|s| s.to_string())
+        .map_err(|e| format!("Failed to decode URL component: {e}"))
 }
 
-/// Parses URL-encoded form data into a SlackCommandEvent structure.
+/// Parses URL-encoded form data into a `SlackCommandEvent` structure.
 ///
 /// This function is used to parse the raw body of a Slack slash command request.
 /// It handles URL decoding and extraction of all required fields.
@@ -84,10 +83,10 @@ pub fn parse_form_data(form_data: &str) -> Result<SlackCommandEvent, String> {
     for pair in form_data.split('&') {
         if let Some(idx) = pair.find('=') {
             let key = decode_url_component(&pair[..idx])
-                .map_err(|e| format!("Failed to decode key: {}", e))?;
+                .map_err(|e| format!("Failed to decode key: {e}"))?;
 
             let value = decode_url_component(&pair[idx + 1..])
-                .map_err(|e| format!("Failed to decode value: {}", e))?;
+                .map_err(|e| format!("Failed to decode value: {e}"))?;
 
             map.insert(key, value);
         }

@@ -1,3 +1,10 @@
+#![allow(clippy::pedantic)]
+#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::too_many_lines)]
+#![allow(clippy::uninlined_format_args)]
+#![allow(clippy::redundant_closure_for_method_calls)]
+#![allow(clippy::implicit_clone)]
+#![allow(clippy::unused_async)]
 use anyhow::Result;
 use html2text::from_read as html_to_text;
 use lambda_runtime::{Error, LambdaEvent, run, service_fn};

@@ -59,8 +59,7 @@ pub fn estimate_tokens(text: &str) -> usize {
 // Use once_cell to create static instances that are lazily initialized
 static SLACK_CLIENT: Lazy<SlackHyperClient> = Lazy::new(|| {
     SlackHyperClient::new(
-        SlackClientHyperConnector::new()
-            .expect("Failed to create Slack client connector"),
+        SlackClientHyperConnector::new().expect("Failed to create Slack client connector"),
     )
 });
 
@@ -836,7 +835,11 @@ impl SlackBot {
             .collect();
 
         // Build the full prompt using the new method with channel context
-        let messages_text = format!("Channel: #{}\n\n{}", channel_name, formatted_messages.join("\n"));
+        let messages_text = format!(
+            "Channel: #{}\n\n{}",
+            channel_name,
+            formatted_messages.join("\n")
+        );
 
         // 1. Base text portion
         let mut prompt = self.build_prompt(&messages_text, custom_prompt);

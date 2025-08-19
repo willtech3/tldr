@@ -212,22 +212,22 @@ fn build_task_from_view(
 
     // Build text representation of UI selections for attribution when posting publicly
     let mut text_parts = Vec::new();
-    
+
     // Add count if specified
     if let Some(count) = effective_count {
         text_parts.push(format!("count={}", count));
     }
-    
+
     // Add custom prompt indicator if present
     if custom_prompt.is_some() {
         text_parts.push("custom=[user provided]".to_string());
     }
-    
+
     // Add visibility flags
     if dest_public_post {
         text_parts.push("--visible".to_string());
     }
-    
+
     // Combine into text field for attribution
     let text = text_parts.join(" ");
 
@@ -620,13 +620,16 @@ pub async fn function_handler(
     }
 
     // Check for UI flag to open modal instead of direct processing
-    if text_parts.iter().any(|&part| part == "--ui" || part == "--modal") {
+    if text_parts
+        .iter()
+        .any(|&part| part == "--ui" || part == "--modal")
+    {
         open_ui = true;
     }
 
     // If --ui flag is present OR parameters are complex enough to warrant UI
     // (but not for simple /tldr or /tldr count=N commands)
-    let should_open_modal = open_ui || 
+    let should_open_modal = open_ui ||
         (target_channel_id.is_some() && visible) || // Complex channel+visible combo
         (custom_prompt.is_some() && (target_channel_id.is_some() || visible)); // Complex custom+other params
 
@@ -636,8 +639,8 @@ pub async fn function_handler(
             initial_conversation: Some(slack_event.channel_id.clone()),
             last_n: message_count,
             custom_prompt: custom_prompt.clone(),
-            dest_canvas: true,  // Default to Canvas for better UX
-            dest_dm: true,      // Also allow DM as an option
+            dest_canvas: true, // Default to Canvas for better UX
+            dest_dm: true,     // Also allow DM as an option
             dest_public_post: visible,
         };
 
@@ -671,7 +674,10 @@ pub async fn function_handler(
 
     // Direct processing for simple slash commands (/tldr with basic params)
     let correlation_id = Uuid::new_v4().to_string();
-    info!("Slash command direct processing, correlation_id={}", correlation_id);
+    info!(
+        "Slash command direct processing, correlation_id={}",
+        correlation_id
+    );
 
     // Build the processing task
     let task = ProcessingTask {
@@ -692,7 +698,10 @@ pub async fn function_handler(
 
     // Send to SQS for processing
     if let Err(e) = send_to_sqs(&task).await {
-        error!("Failed to enqueue task (correlation_id={}): {}", correlation_id, e);
+        error!(
+            "Failed to enqueue task (correlation_id={}): {}",
+            correlation_id, e
+        );
         return Ok(json!({
             "statusCode": 200,
             "body": json!({

@@ -40,7 +40,7 @@ pub fn build_tldr_modal(prefill: &Prefill) -> Value {
     }
 
     let mut dest_initial_options: Vec<Value> = vec![];
-    
+
     if prefill.dest_canvas {
         dest_initial_options.push(json!({
             "text": { "type": "plain_text", "text": "Update channel Canvas (recommended)" },

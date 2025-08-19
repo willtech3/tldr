@@ -74,10 +74,49 @@ impl<'a> CanvasHelper<'a> {
         Self { token }
     }
 
+    /// Try to fetch the existing canvas ID for a channel via conversations.info
+    async fn get_existing_canvas_id(&self, channel_id: &str) -> Result<Option<String>, SlackError> {
+        let info_payload = json!({
+            "channel": channel_id,
+        });
+
+        let info_resp = CANVAS_CLIENT
+            .post("https://slack.com/api/conversations.info")
+            .bearer_auth(&self.token.token_value.0)
+            .json(&info_payload)
+            .send()
+            .await
+            .map_err(|e| SlackError::HttpError(format!("Channel info request failed: {}", e)))?;
+
+        let info_data: Value = info_resp
+            .json()
+            .await
+            .map_err(|e| SlackError::ParseError(format!("Failed to parse channel info: {e}")))?;
+
+        let canvas_id_opt = info_data
+            .get("channel")
+            .and_then(|c| c.get("properties"))
+            .and_then(|p| p.get("canvas"))
+            .and_then(|c| c.get("id"))
+            .and_then(|id| id.as_str())
+            .map(std::string::ToString::to_string);
+
+        if let Some(ref cid) = canvas_id_opt {
+            info!("Found existing canvas: {}", cid);
+        }
+
+        Ok(canvas_id_opt)
+    }
+
     /// Ensure a channel has a TLDR canvas with a custom title.
     /// Returns the canvas ID.
     pub async fn ensure_tldr_canvas(&self, channel_id: &str) -> Result<String, SlackError> {
         info!("Ensuring TLDR canvas exists for channel: {}", channel_id);
+
+        // 1) Prefer reusing an existing channel canvas if one is already present
+        if let Some(existing) = self.get_existing_canvas_id(channel_id).await? {
+            return Ok(existing);
+        }
 
         // Try to create a new canvas with a title
         let create_payload = json!({
@@ -94,10 +133,10 @@ impl<'a> CanvasHelper<'a> {
             .json(&create_payload)
             .send()
             .await
-            .map_err(|e| SlackError::HttpError(format!("Canvas create request failed: {}", e)))?;
+            .map_err(|e| SlackError::HttpError(format!("Canvas create request failed: {e}")))?;
 
         let create_result: CanvasCreateResponse = resp.json().await.map_err(|e| {
-            SlackError::ParseError(format!("Failed to parse canvas create response: {}", e))
+            SlackError::ParseError(format!("Failed to parse canvas create response: {e}"))
         })?;
 
         if create_result.ok {
@@ -114,38 +153,9 @@ impl<'a> CanvasHelper<'a> {
         // Handle the case where canvas already exists
         if create_result.error.as_deref() == Some("channel_canvas_already_exists") {
             debug!("Canvas already exists for channel, fetching existing canvas ID");
-
-            // Get channel info to find existing canvas ID
-            // Using conversations.info to get canvas ID from channel properties
-            let info_payload = json!({
-                "channel": channel_id
-            });
-
-            let info_resp = CANVAS_CLIENT
-                .post("https://slack.com/api/conversations.info")
-                .bearer_auth(&self.token.token_value.0)
-                .json(&info_payload)
-                .send()
-                .await
-                .map_err(|e| {
-                    SlackError::HttpError(format!("Channel info request failed: {}", e))
-                })?;
-
-            let info_data: Value = info_resp.json().await.map_err(|e| {
-                SlackError::ParseError(format!("Failed to parse channel info: {}", e))
-            })?;
-
-            if let Some(canvas_id) = info_data
-                .get("channel")
-                .and_then(|c| c.get("properties"))
-                .and_then(|p| p.get("canvas"))
-                .and_then(|c| c.get("id"))
-                .and_then(|id| id.as_str())
-            {
-                info!("Found existing canvas: {}", canvas_id);
-                return Ok(canvas_id.to_string());
+            if let Some(existing) = self.get_existing_canvas_id(channel_id).await? {
+                return Ok(existing);
             }
-
             return Err(SlackError::ApiError(
                 "Canvas exists but couldn't retrieve its ID".to_string(),
             ));
@@ -179,7 +189,7 @@ impl<'a> CanvasHelper<'a> {
         );
 
         // Prepare the markdown content with the heading
-        let full_content = format!("## {}\n\n{}\n\n---\n", heading, markdown_content);
+        let full_content = format!("## {heading}\n\n{markdown_content}\n\n---\n");
 
         // Always insert at the beginning to keep latest summary at top
         let change = CanvasEditChange {
@@ -202,10 +212,10 @@ impl<'a> CanvasHelper<'a> {
             .json(&edit_payload)
             .send()
             .await
-            .map_err(|e| SlackError::HttpError(format!("Canvas edit failed: {}", e)))?;
+            .map_err(|e| SlackError::HttpError(format!("Canvas edit failed: {e}")))?;
 
         let edit_result: CanvasEditResponse = edit_resp.json().await.map_err(|e| {
-            SlackError::ParseError(format!("Failed to parse canvas edit response: {}", e))
+            SlackError::ParseError(format!("Failed to parse canvas edit response: {e}"))
         })?;
 
         if edit_result.ok {
@@ -238,10 +248,10 @@ impl<'a> CanvasHelper<'a> {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| SlackError::HttpError(format!("Permalink request failed: {}", e)))?;
+            .map_err(|e| SlackError::HttpError(format!("Permalink request failed: {e}")))?;
 
         let result: PermalinkResponse = resp.json().await.map_err(|e| {
-            SlackError::ParseError(format!("Failed to parse permalink response: {}", e))
+            SlackError::ParseError(format!("Failed to parse permalink response: {e}"))
         })?;
 
         if result.ok {

@@ -22,7 +22,7 @@ fn test_sanitize_custom_prompt_disallowed_patterns() {
 
     for prompt in &invalid_prompts {
         let result = sanitize_custom_prompt(prompt);
-        assert!(result.is_err(), "Should reject prompt: {}", prompt);
+        assert!(result.is_err(), "Should reject prompt: {prompt}");
     }
 }
 

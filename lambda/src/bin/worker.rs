@@ -1,3 +1,7 @@
+#![allow(clippy::struct_excessive_bools)]
+#![allow(clippy::too_many_lines)]
+#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::uninlined_format_args)]
 use anyhow::Result;
 use lambda_runtime::{Error, LambdaEvent};
 use reqwest::Client as HttpClient;
@@ -191,7 +195,7 @@ impl BotHandler {
                             };
 
                             let canvas_content =
-                                format!("{}\n\n*Summary by {} using TLDR bot*", summary, user_name);
+                                format!("{summary}\n\n*Summary by {user_name} using TLDR bot*");
 
                             if let Err(e) = canvas_helper
                                 .prepend_summary_section(&canvas_id, &heading, &canvas_content)

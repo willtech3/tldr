@@ -84,7 +84,8 @@ fn test_ephemeral_payload() {
 fn test_replace_original_payload_blank_min() {
     let v = create_replace_original_payload(None);
     assert_eq!(
-        v.get("replace_original").and_then(|b| b.as_bool()),
+        v.get("replace_original")
+            .and_then(serde_json::Value::as_bool),
         Some(true)
     );
 }
