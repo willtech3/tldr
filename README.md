@@ -101,14 +101,14 @@ $ cargo lambda watch   # default on :9000
 Invoke the API Lambda locally with a sample payload:
 
 ```bash
-$ cargo lambda invoke --data-file test/fixtures/slash_command.json
+$ cargo lambda invoke --data-file path/to/slack_event.json
 ```
 
 ---
 
 ## ☁️  Deployment (AWS CDK)
 
-The **`infrastructure/`** folder contains an *AWS CDK* stack that provisions:
+The **`cdk/`** folder contains an *AWS CDK* stack that provisions:
 
 - API Gateway endpoint
 - Two Lambda functions (API + Worker)
@@ -118,7 +118,7 @@ The **`infrastructure/`** folder contains an *AWS CDK* stack that provisions:
 Deploy in one command:
 
 ```bash
-$ cd infrastructure
+$ cd cdk
 $ npm install             # first time only
 $ npm run cdk deploy
 ```
@@ -137,7 +137,6 @@ Environment variables (set in Lambda or an `.env` file for local runs):
 | `SLACK_SIGNING_SECRET` | Verifies Slack requests |
 | `OPENAI_API_KEY` | Access token for the OpenAI API |
 | `OPENAI_ORG_ID` | Optional, sets OpenAI-Organization header |
-| `OPENAI_MODEL` | Optional, override model (defaults to `gpt-5`) |
 | `PROCESSING_QUEUE_URL` | URL of the SQS queue |
 
 ---
@@ -151,8 +150,8 @@ Environment variables (set in Lambda or an `.env` file for local runs):
 │   │   ├─ worker.rs
 │   │   └─ bot.rs  # SlackBot implementation (shared)
 │   └─ Cargo.toml
-├─ infrastructure/  # AWS CDK stack (TypeScript)
-├─ tests/           # Integration & fixture payloads
+├─ cdk/             # AWS CDK stack (TypeScript)
+├─ docs/            # Additional documentation
 └─ README.md
 ```
 

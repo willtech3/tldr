@@ -1,6 +1,12 @@
-# Slack Message Summarizer Lambda Function
+# Slack Message Summarizer Lambda Functions
 
-This is the Rust implementation of the AWS Lambda function that powers the Slack Message Summarizer bot.
+This crate contains the Rust Lambda binaries that power the TLDR Slack bot. It
+provides two handlers:
+
+* **API Lambda** – verifies slash commands or interactive requests and enqueues
+  jobs to SQS.
+* **Worker Lambda** – consumes SQS tasks, summarises messages with OpenAI and
+  delivers the result back to Slack.
 
 ## Prerequisites
 
@@ -26,32 +32,31 @@ cargo lambda build --release
 # Run local tests
 cargo test
 
-# Start local Lambda server for testing
-cargo lambda watch
+# Start local API Lambda server for testing
+cargo lambda watch --bin api
 
 # In another terminal, invoke the function with test data
-cargo lambda invoke --data-file test_data/sample_request.json
+cargo lambda invoke --data-file path/to/slack_event.json --bin api
 ```
 
 ### Deployment
 
-The Lambda function is automatically deployed via GitHub Actions. See the workflow in `.github/workflows/deploy.yml`.
+The functions are automatically deployed via GitHub Actions. See the workflow in
+`.github/workflows/deploy.yml`.
 
-For manual deployment:
+For manual deployment of both binaries:
 
 ```bash
-cargo lambda deploy
+cargo lambda deploy --bin api
+cargo lambda deploy --bin worker
 ```
 
 ## Architecture
 
-The Lambda function:
-1. Receives events from Slack (via API Gateway)
-2. Authenticates and verifies requests using Slack signing secrets
-3. Processes slash commands like `/tldr`
-4. Fetches unread messages from specified channels
-5. Generates summaries
-6. Responds back to Slack
+1. **API Lambda** receives events from Slack (via API Gateway), verifies the
+   request and pushes a task to SQS.
+2. **Worker Lambda** pulls tasks from SQS, fetches unread messages, generates a
+   summary with OpenAI's GPT‑5 model and posts the result back to Slack.
 
 ## Configuration
 
@@ -59,3 +64,4 @@ The following environment variables are required:
 - `SLACK_BOT_TOKEN`: OAuth token for the Slack bot
 - `SLACK_SIGNING_SECRET`: Used to verify requests from Slack
 - `OPENAI_API_KEY`: API key for OpenAI services
+- `PROCESSING_QUEUE_URL`: SQS queue URL used between the Lambdas
