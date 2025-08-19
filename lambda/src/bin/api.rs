@@ -636,8 +636,8 @@ pub async fn function_handler(
             initial_conversation: Some(slack_event.channel_id.clone()),
             last_n: message_count,
             custom_prompt: custom_prompt.clone(),
-            dest_canvas: false,
-            dest_dm: !visible,
+            dest_canvas: true,  // Default to Canvas for better UX
+            dest_dm: true,      // Also allow DM as an option
             dest_public_post: visible,
         };
 

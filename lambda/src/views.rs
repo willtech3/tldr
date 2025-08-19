@@ -39,11 +39,14 @@ pub fn build_tldr_modal(prefill: &Prefill) -> Value {
             .remove("default_to_current_conversation");
     }
 
-    let mut dest_initial_options: Vec<Value> = vec![json!({
-        "text": { "type": "plain_text", "text": "Update channel Canvas (recommended)" },
-        "value": "canvas"
-    })];
-
+    let mut dest_initial_options: Vec<Value> = vec![];
+    
+    if prefill.dest_canvas {
+        dest_initial_options.push(json!({
+            "text": { "type": "plain_text", "text": "Update channel Canvas (recommended)" },
+            "value": "canvas"
+        }));
+    }
     if prefill.dest_dm {
         dest_initial_options.push(json!({
             "text": { "type": "plain_text", "text": "DM me the summary" },
@@ -57,7 +60,7 @@ pub fn build_tldr_modal(prefill: &Prefill) -> Value {
         }));
     }
 
-    let mut blocks = vec![
+    let blocks = vec![
         json!({
             "type": "input",
             "block_id": "conv",
@@ -123,17 +126,6 @@ pub fn build_tldr_modal(prefill: &Prefill) -> Value {
             "element": { "type": "plain_text_input", "action_id": "custom", "multiline": true, "initial_value": prefill.custom_prompt.clone().unwrap_or_default() }
         }),
     ];
-
-    // If user explicitly does not want Canvas destination, remove it from initial options.
-    if let Some(arr) = Some(())
-        .filter(|_| !prefill.dest_canvas)
-        .and_then(|_| blocks.get_mut(5))
-        .and_then(|section| section.get_mut("accessory"))
-        .and_then(|accessory| accessory.get_mut("initial_options"))
-        .and_then(|initial| initial.as_array_mut())
-    {
-        arr.retain(|opt| opt.get("value").and_then(|v| v.as_str()) != Some("canvas"));
-    }
 
     json!({
         "type": "modal",
