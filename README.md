@@ -120,7 +120,7 @@ Deploy in one command:
 ```bash
 $ cd cdk
 $ npm install             # first time only
-$ npm run cdk deploy
+$ npm run deploy
 ```
 
 After the stack is live, copy the API Gateway URL into your Slack slash-command configuration.

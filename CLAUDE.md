@@ -32,8 +32,8 @@ cargo lambda invoke --data-file test/fixtures/slash_command.json  # Test with fi
 # CDK deployment (from cdk/ directory)
 npm install                   # Install dependencies
 npm run build                 # Compile TypeScript
-npm run cdk deploy           # Deploy to AWS
-npm run cdk diff             # Preview changes
+npm run deploy               # Deploy to AWS
+npm run diff                 # Preview changes
 ```
 
 ## Pre-commit Code Quality Rule
