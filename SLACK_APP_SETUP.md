@@ -34,7 +34,7 @@ Since Slack's configuration token system is not suitable for CI/CD automation, m
    Or check the GitHub Actions deployment logs for "API Gateway URL for Slack manifest"
 
 2. **Update the Manifest File**:
-   - Open `slack-app-manifest.yaml`
+   - Copy `slack-app-manifest.yaml.template` to `slack-app-manifest.yaml`
    - Replace all instances of `YOUR-API-ID` with your actual API Gateway ID
    - The URL format is: `https://<api-id>.execute-api.<region>.amazonaws.com/prod`
 
@@ -70,7 +70,7 @@ Since Slack's configuration token system is not suitable for CI/CD automation, m
 1. Go to [api.slack.com/apps](https://api.slack.com/apps)
 2. Click "Create New App" → "From an app manifest"
 3. Choose your workspace
-4. Paste the contents of `slack-app-manifest.yaml`
+4. Paste the contents of `slack-app-manifest.yaml` (after copying from the template)
 5. Review and create the app
 6. Install the app to your workspace
 

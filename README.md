@@ -87,7 +87,7 @@ Parameters can be combined:
 $ git clone https://github.com/your-org/tldr.git && cd tldr
 
 # 2. Configure environment
-$ cp .env.example .env   # then edit the values
+$ cp cdk/env.example .env   # then edit the values
 
 # 3. Build & test the Lambda crate
 $ cd lambda
@@ -108,7 +108,7 @@ $ cargo lambda invoke --data-file test/fixtures/slash_command.json
 
 ## ☁️  Deployment (AWS CDK)
 
-The **`infrastructure/`** folder contains an *AWS CDK* stack that provisions:
+The **`cdk/`** folder contains an *AWS CDK* stack that provisions:
 
 - API Gateway endpoint
 - Two Lambda functions (API + Worker)
@@ -118,7 +118,7 @@ The **`infrastructure/`** folder contains an *AWS CDK* stack that provisions:
 Deploy in one command:
 
 ```bash
-$ cd infrastructure
+$ cd cdk
 $ npm install             # first time only
 $ npm run cdk deploy
 ```
@@ -147,13 +147,15 @@ Environment variables (set in Lambda or an `.env` file for local runs):
 ```
 ├─ lambda/          # Rust crate with both Lambda handlers
 │   ├─ src/
-│   │   ├─ api.rs
-│   │   ├─ worker.rs
-│   │   └─ bot.rs  # SlackBot implementation (shared)
+│   │   ├─ bin/
+│   │   │   ├─ api.rs        # API Lambda entrypoint
+│   │   │   └─ bootstrap.rs  # Worker Lambda entrypoint
+│   │   ├─ bot.rs            # SlackBot implementation
+│   │   └─ ...
 │   └─ Cargo.toml
-├─ infrastructure/  # AWS CDK stack (TypeScript)
-├─ tests/           # Integration & fixture payloads
-└─ README.md
+├─ cdk/             # AWS CDK stack (TypeScript)
+├─ docs/            # Additional documentation
+└─ slack-app-manifest.yaml.template  # Slack app manifest template
 ```
 
 ---
