@@ -46,9 +46,9 @@ Type `/tldr` in any channel to get a DM with a summary of unread messages:
 
 The summary will be sent to your DM shortly. ✨
 
-### Message Shortcut (Interactive UI)
+### Message Shortcut
 
-Right-click any message and select **"Summarize"** from the shortcuts menu to open the interactive configuration UI with options for Canvas, DM, or public posting.
+Right-click any message and select **"Summarize Thread"** from the shortcuts menu to summarize that specific message thread.
 
 ### Advanced Parameters
 

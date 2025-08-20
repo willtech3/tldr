@@ -34,9 +34,9 @@ fn build_modal_prefill_values() {
 
 #[test]
 fn validate_view_submission_lastn_errors() {
-    // Too low
+    // Too low (less than 2)
     let view = json!({
-        "state": { "values": { "lastn": { "n": { "value": "5" } } } }
+        "state": { "values": { "lastn": { "n": { "value": "1" } } } }
     });
     let err = validate_view_submission(&view).unwrap_err();
     assert!(err.contains_key("lastn"));

@@ -13,10 +13,6 @@ features:
     display_name: TLDR
     always_online: true
   shortcuts:
-    - name: Summarize Channel
-      type: global
-      callback_id: summarize_channel
-      description: Generate a summary of the current channel's unread messages
     - name: Summarize Thread
       type: message
       callback_id: summarize_thread
@@ -27,7 +23,7 @@ features:
       # Get it by running: aws cloudformation describe-stacks --stack-name TldrStack --query "Stacks[0].Outputs[?OutputKey=='ApiGatewayUrl'].OutputValue" --output text
       url: "https://YOUR-API-ID.execute-api.YOUR-REGION.amazonaws.com/prod/slack/commands"
       description: Generate a summary of channel messages
-      usage_hint: "[count=N] [channel=#channel] [custom='prompt'] [--visible]"
+      usage_hint: "[count=N] [channel=#channel] [custom='prompt'] [--visible] [--ui]"
       should_escape: false
 
 oauth_config:
