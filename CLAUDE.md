@@ -10,12 +10,11 @@ TLDR is a serverless Rust-powered Slack bot that generates AI summaries of unrea
 
 ### Development Commands
 ```bash
-# Local development (from lambda/ directory)
-cargo check                    # Quick syntax & type check
-cargo test --all-features      # Run all tests
-cargo test bot_tests::         # Run specific test module
-cargo clippy -- -D warnings    # Run linter with strict warnings
-cargo fmt                      # Format code (rustfmt edition 2024)
+# Local development
+just check      # Quick syntax & type check
+just test       # Run all tests
+just clippy     # Run linter with strict warnings
+just fmt        # Format code
 
 # Lambda local testing
 cargo lambda build --release   # Build Lambda locally
@@ -31,7 +30,7 @@ cargo lambda invoke --data-file test/fixtures/slash_command.json  # Test with fi
 
 # CDK deployment (from cdk/ directory)
 npm install                   # Install dependencies
-npm run build                 # Compile TypeScript
+just cdk-build                # Compile TypeScript
 npm run deploy               # Deploy to AWS
 npm run diff                 # Preview changes
 ```
