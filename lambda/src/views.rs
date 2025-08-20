@@ -87,7 +87,7 @@ pub fn build_tldr_modal(prefill: &Prefill) -> Value {
             "block_id": "lastn",
             "optional": true,
             "label": { "type": "plain_text", "text": "How many messages?" },
-            "element": { "type": "number_input", "is_decimal_allowed": false, "action_id": "n", "initial_value": prefill.last_n.map(|n| n.to_string()).unwrap_or_else(|| "100".to_string()), "min_value": "10", "max_value": "500" }
+            "element": { "type": "number_input", "is_decimal_allowed": false, "action_id": "n", "initial_value": prefill.last_n.map(|n| n.to_string()).unwrap_or_else(|| "100".to_string()), "min_value": "2", "max_value": "500" }
         }),
         json!({
             "type": "input",

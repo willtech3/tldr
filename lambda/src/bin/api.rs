@@ -1,7 +1,7 @@
 //! Slack API Lambda handler for slash commands and interactive payloads.
 //!
-//! - Slash command (`/tldr`) path: verifies signature, opens modal with prefill,
-//!   returns ephemeral ACK.
+//! - Slash command (`/tldr`) path: verifies signature, processes directly or opens modal
+//!   with `--ui`/`--modal` flag, returns ephemeral ACK.
 //! - Interactive path (`/slack/interactive`):
 //!   - `shortcut` / `message_action`: opens the TLDR modal via `views.open`
 //!   - `view_submission`: validates input, enqueues a job to SQS, and responds
@@ -221,8 +221,10 @@ fn build_task_from_view(
     // Add custom prompt if present
     if let Some(ref prompt) = custom_prompt {
         // Truncate long prompts for display (max 100 chars)
-        let display_prompt = if prompt.len() > 100 {
-            format!("custom=\"{}...\"", &prompt[..97])
+        // Use char-boundary-safe truncation to avoid panic
+        let display_prompt = if prompt.chars().count() > 100 {
+            let truncated: String = prompt.chars().take(97).collect();
+            format!("custom=\"{}...\"", truncated)
         } else {
             format!("custom=\"{}\"", prompt)
         };

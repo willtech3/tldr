@@ -57,7 +57,9 @@ pub fn format_summary_message(
 
         // Add additional parameters if specified
         if !text.is_empty() {
-            parameter_text = format!("{} with parameters: `{}`", parameter_text, text);
+            // Sanitize backticks to prevent breaking Slack's code formatting
+            let sanitized_text = text.replace('`', "'");
+            parameter_text = format!("{} with parameters: `{}`", parameter_text, sanitized_text);
         }
 
         // Format with parameter text and summary

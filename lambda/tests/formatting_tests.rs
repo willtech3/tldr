@@ -80,3 +80,28 @@ fn test_empty_text_format() {
         "Response should not contain parameters section when text is empty"
     );
 }
+
+#[test]
+fn test_backtick_sanitization() {
+    // Test that backticks in parameters are sanitized to prevent breaking Slack formatting
+    let user_id = "U12345";
+    let source_channel_id = "C12345";
+    // Use text with backticks that would break Slack formatting
+    let text = "test with `backticks` in text";
+    let summary = "Test summary";
+    let visible = true;
+
+    let formatted = format_summary_message(user_id, source_channel_id, text, summary, visible);
+
+    // Verify backticks are replaced with single quotes
+    assert!(
+        formatted.contains("with parameters: `test with 'backticks' in text`"),
+        "Backticks in parameters should be replaced with single quotes. Actual: {formatted}"
+    );
+
+    // Verify that the original backticks were replaced to avoid breaking Slack formatting
+    assert!(
+        !formatted.contains("`backticks`"),
+        "Original backticks should be replaced with single quotes"
+    );
+}

@@ -5,8 +5,7 @@ This guide covers the complete Slack app setup for TLDR, including app creation,
 ## Overview
 
 TLDR uses:
-- **Slash Command**: `/tldr`
-- **Global Shortcut**: Lightning bolt → "Summarize Channel"
+- **Slash Command**: `/tldr` (use `--ui` flag to open modal)
 - **Message Shortcut**: Three-dot menu → "Summarize Thread"
 - **Modals**: Interactive UI for configuration
 - **Canvas Integration**: Automatic summary storage in channel canvases
@@ -109,7 +108,7 @@ Navigate to **Slash Commands** → **Create New Command**:
 - **Command**: `/tldr`
 - **Request URL**: `https://{api-gateway}/commands`
 - **Short Description**: Summarize unread or recent messages
-- **Usage Hint**: `count=100 --visible custom="Use bullet points"`
+- **Usage Hint**: `count=100 --visible custom="Use bullet points" --ui`
 
 ## Step 8: Enable Interactivity
 
@@ -142,11 +141,6 @@ After all configuration:
 /tldr --visible         # Post publicly to channel
 /tldr --ui              # Force modal to open
 ```
-
-### Global Shortcut
-1. Click ⚡ (Lightning Bolt) in message composer
-2. Search for "Summarize Channel"
-3. Click to open configuration modal
 
 ### Message Shortcut
 1. Hover over any message
@@ -205,7 +199,6 @@ Reference: [Slack Request Verification](https://api.slack.com/authentication/ver
 ## Testing Checklist
 
 - [ ] `/tldr` command opens modal
-- [ ] Global shortcut accessible from Lightning Bolt menu
 - [ ] Message shortcut appears in three-dot menu
 - [ ] Modal submission processes successfully
 - [ ] Canvas creation works (if enabled)
