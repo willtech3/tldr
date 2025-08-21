@@ -36,10 +36,14 @@ pub struct SlackBot {
 impl SlackBot {
     pub async fn new(config: &AppConfig) -> Result<Self, SlackError> {
         let slack_client = SlackClient::new(config.slack_bot_token.clone());
+        let model = config
+            .openai_model
+            .clone()
+            .unwrap_or_else(|| "gpt-5".to_string());
         let llm_client = LlmClient::new(
             config.openai_api_key.clone(),
             config.openai_org_id.clone(),
-            "o3-mini".to_string(),
+            model,
         );
 
         Ok(Self {
