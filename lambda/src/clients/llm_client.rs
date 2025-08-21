@@ -282,8 +282,6 @@ impl LlmClient {
         URL_IMAGE_MAX_BYTES
     }
 }
-<<<<<<< HEAD
-
 /// Build Responses API input payload from a chat-style prompt.
 /// - Filters out assistant messages (Responses treats assistant content as output)
 /// - Emits typed parts: { type: "input_text", text } and { type: "input_image", image_url }
@@ -422,5 +420,3 @@ mod tests {
         );
     }
 }
-=======
->>>>>>> 54824da (refactor: isolate Slack and LLM clients into dedicated modules (#67))
