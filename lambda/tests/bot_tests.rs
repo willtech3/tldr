@@ -19,22 +19,23 @@ fn test_estimate_tokens() {
 // Test to ensure the base prompt doesn't change during refactoring
 #[test]
 fn test_base_prompt_consistency() {
-    // Read the bot.rs file to extract the base prompt directly from the source code
-    let bot_source_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+    // Read the llm_client.rs file to extract the base prompt directly from the source code
+    let llm_client_source_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("src")
-        .join("bot.rs");
+        .join("clients")
+        .join("llm_client.rs");
 
-    let bot_source =
-        fs::read_to_string(bot_source_path).expect("Should be able to read bot.rs source file");
+    let llm_client_source = fs::read_to_string(llm_client_source_path)
+        .expect("Should be able to read llm_client.rs source file");
 
     // Extract the base prompt using string patterns
     // Looking for the system message that contains "You are TLDR-bot"
-    let base_prompt_start = bot_source
+    let base_prompt_start = llm_client_source
         .find("You are TLDR-bot")
         .expect("Base prompt beginning should be found in source");
 
     // Read until the closing quote
-    let relevant_section = &bot_source[base_prompt_start..];
+    let relevant_section = &llm_client_source[base_prompt_start..];
 
     // Find the end of the string literal (which should be a quote followed by `.to_string()`)
     let prompt_end = if let Some(pos) = relevant_section.find("\".to_string()") {

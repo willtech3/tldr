@@ -158,7 +158,7 @@ impl BotHandler {
                         "Writing summary to Canvas for channel {}",
                         source_channel_id
                     );
-                    let canvas_helper = CanvasHelper::new(self.slack_bot.token());
+                    let canvas_helper = CanvasHelper::new(self.slack_bot.slack_client());
 
                     match canvas_helper.ensure_channel_canvas(source_channel_id).await {
                         Ok(canvas_id) => {

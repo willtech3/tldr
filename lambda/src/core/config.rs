@@ -7,6 +7,7 @@ pub struct AppConfig {
     pub slack_bot_token: String,
     pub openai_api_key: String,
     pub openai_org_id: Option<String>,
+    pub openai_model: Option<String>,
 }
 
 impl AppConfig {
@@ -21,6 +22,7 @@ impl AppConfig {
             openai_api_key: env::var("OPENAI_API_KEY")
                 .map_err(|e| format!("OPENAI_API_KEY: {}", e))?,
             openai_org_id: env::var("OPENAI_ORG_ID").ok(),
+            openai_model: env::var("OPENAI_MODEL").ok(),
         })
     }
 }
