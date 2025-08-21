@@ -33,6 +33,7 @@
 /// ```no_run
 /// use tldr::SlackBot;
 /// use tldr::core::config::AppConfig;
+/// use tldr::core::features::{collect, summarize};
 ///
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -52,9 +53,9 @@
 ///     let mut bot = SlackBot::new(&config).await?;
 ///
 ///     // Get and summarize unread messages in a channel
-///     let messages = bot.get_unread_messages("C12345678").await?;
+///     let messages = collect::get_unread_messages(&bot, "C12345678").await?;
 ///     if !messages.is_empty() {
-///         let summary = bot.summarize_messages_with_chatgpt(&config, &messages, "C12345678", None).await?;
+///         let summary = summarize::summarize(&mut bot, &config, &messages, "C12345678", None).await?;
 ///         println!("Summary: {}", summary);
 ///     }
 ///
