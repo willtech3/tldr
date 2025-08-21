@@ -167,7 +167,9 @@ impl LlmClient {
 
         info!("Estimated input tokens: {}", estimated_input_tokens);
 
-        let max_output_tokens = (MAX_CONTEXT_TOKENS - estimated_input_tokens)
+        // Use saturating math to avoid underflow when input exceeds context
+        let max_output_tokens = MAX_CONTEXT_TOKENS
+            .saturating_sub(estimated_input_tokens)
             .saturating_sub(TOKEN_BUFFER)
             .min(MAX_OUTPUT_TOKENS);
 
@@ -295,9 +297,7 @@ impl LlmClient {
 /// Build Responses API input payload from a chat-style prompt.
 /// - Filters out assistant messages (Responses treats assistant content as output)
 /// - Emits typed parts: { type: "input_text", text } and { type: "input_image", image_url }
-pub(crate) fn build_responses_input_from_prompt(
-    prompt: &[ChatCompletionMessage],
-) -> Vec<Value> {
+pub(crate) fn build_responses_input_from_prompt(prompt: &[ChatCompletionMessage]) -> Vec<Value> {
     prompt
         .iter()
         .filter(|m| !matches!(m.role, MessageRole::assistant))
@@ -372,9 +372,11 @@ mod tests {
         });
 
         let img = ImageUrl {
-            r#type: None,
+            r#type: openai_api_rs::v1::chat_completion::ContentType::image_url,
             text: None,
-            image_url: Some(ImageUrlType { url: "https://example.com/img.png".to_string() }),
+            image_url: Some(ImageUrlType {
+                url: "https://example.com/img.png".to_string(),
+            }),
         };
 
         prompt.push(ChatCompletionMessage {
@@ -388,7 +390,11 @@ mod tests {
         let input = build_responses_input_from_prompt(&prompt);
 
         // No assistant role entries
-        assert!(input.iter().all(|m| m["role"].as_str().unwrap() != "assistant"));
+        assert!(
+            input
+                .iter()
+                .all(|m| m["role"].as_str().unwrap() != "assistant")
+        );
 
         // Find user text entry
         let user_text = input
@@ -399,10 +405,15 @@ mod tests {
         assert!(parts.iter().any(|p| p["type"] == "input_text"));
 
         // Find user image entry
-        let maybe_img = input
-            .iter()
-            .find(|m| m["role"].as_str().unwrap() == "user" && m["content"].is_array()
-                && m["content"].as_array().unwrap().iter().any(|p| p["type"] == "input_image"));
+        let maybe_img = input.iter().find(|m| {
+            m["role"].as_str().unwrap() == "user"
+                && m["content"].is_array()
+                && m["content"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|p| p["type"] == "input_image")
+        });
         assert!(maybe_img.is_some());
     }
 
