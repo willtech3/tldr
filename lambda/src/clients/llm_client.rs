@@ -178,47 +178,8 @@ impl LlmClient {
             return Ok("The conversation is too long to summarize in full. Please use the `/tldr last N` command to summarize the most recent N messages instead.".to_string());
         }
 
-        // Build input messages for Responses API format
-        // Filter out assistant messages and format as required
-        let input_messages: Vec<Value> = prompt
-            .iter()
-            .filter(|m| !matches!(m.role, MessageRole::assistant))
-            .map(|m| {
-                let role_str = match m.role {
-                    MessageRole::system => "system",
-                    MessageRole::user => "user",
-                    MessageRole::assistant => "assistant",
-                    MessageRole::function => "user",
-                    MessageRole::tool => "user",
-                };
-
-                let mut parts: Vec<Value> = Vec::new();
-                match &m.content {
-                    Content::Text(t) => {
-                        parts.push(json!({
-                            "type": "input_text",
-                            "text": t
-                        }));
-                    }
-                    Content::ImageUrl(imgs) => {
-                        for img in imgs {
-                            if let Some(ref iu) = img.image_url {
-                                // Per Responses API, image_url must be a string URL or data URI
-                                parts.push(json!({
-                                    "type": "input_image",
-                                    "image_url": iu.url
-                                }));
-                            }
-                        }
-                    }
-                }
-
-                json!({
-                    "role": role_str,
-                    "content": parts
-                })
-            })
-            .collect();
+        // Build input messages for Responses API format via helper
+        let input_messages = build_responses_input_from_prompt(&prompt);
 
         let request_body = json!({
             "model": self.model_name,
@@ -328,5 +289,135 @@ impl LlmClient {
 
     pub fn get_url_image_max_bytes(&self) -> usize {
         URL_IMAGE_MAX_BYTES
+    }
+}
+
+/// Build Responses API input payload from a chat-style prompt.
+/// - Filters out assistant messages (Responses treats assistant content as output)
+/// - Emits typed parts: { type: "input_text", text } and { type: "input_image", image_url }
+pub(crate) fn build_responses_input_from_prompt(
+    prompt: &[ChatCompletionMessage],
+) -> Vec<Value> {
+    prompt
+        .iter()
+        .filter(|m| !matches!(m.role, MessageRole::assistant))
+        .map(|m| {
+            let role_str = match m.role {
+                MessageRole::system => "system",
+                MessageRole::user => "user",
+                MessageRole::assistant => "assistant",
+                MessageRole::function => "user",
+                MessageRole::tool => "user",
+            };
+
+            let mut parts: Vec<Value> = Vec::new();
+            match &m.content {
+                Content::Text(t) => {
+                    parts.push(json!({
+                        "type": "input_text",
+                        "text": t
+                    }));
+                }
+                Content::ImageUrl(imgs) => {
+                    for img in imgs {
+                        if let Some(ref iu) = img.image_url {
+                            parts.push(json!({
+                                "type": "input_image",
+                                "image_url": iu.url
+                            }));
+                        }
+                    }
+                }
+            }
+
+            json!({
+                "role": role_str,
+                "content": parts
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use openai_api_rs::v1::chat_completion::{ImageUrlType, MessageRole};
+
+    #[test]
+    fn test_build_responses_input_filters_assistant_and_uses_typed_parts() {
+        // Build a prompt containing system, user text, user image, and assistant (which should be filtered)
+        let mut prompt: Vec<ChatCompletionMessage> = Vec::new();
+        prompt.push(ChatCompletionMessage {
+            role: MessageRole::system,
+            content: Content::Text("policy".to_string()),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        });
+
+        prompt.push(ChatCompletionMessage {
+            role: MessageRole::assistant,
+            content: Content::Text("ack".to_string()),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        });
+
+        prompt.push(ChatCompletionMessage {
+            role: MessageRole::user,
+            content: Content::Text("hello".to_string()),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        });
+
+        let img = ImageUrl {
+            r#type: None,
+            text: None,
+            image_url: Some(ImageUrlType { url: "https://example.com/img.png".to_string() }),
+        };
+
+        prompt.push(ChatCompletionMessage {
+            role: MessageRole::user,
+            content: Content::ImageUrl(vec![img]),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        });
+
+        let input = build_responses_input_from_prompt(&prompt);
+
+        // No assistant role entries
+        assert!(input.iter().all(|m| m["role"].as_str().unwrap() != "assistant"));
+
+        // Find user text entry
+        let user_text = input
+            .iter()
+            .find(|m| m["role"].as_str().unwrap() == "user" && m["content"].is_array())
+            .unwrap();
+        let parts = user_text["content"].as_array().unwrap();
+        assert!(parts.iter().any(|p| p["type"] == "input_text"));
+
+        // Find user image entry
+        let maybe_img = input
+            .iter()
+            .find(|m| m["role"].as_str().unwrap() == "user" && m["content"].is_array()
+                && m["content"].as_array().unwrap().iter().any(|p| p["type"] == "input_image"));
+        assert!(maybe_img.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_generate_summary_fallback_on_large_input() {
+        // Create a very large user message to exceed token budget
+        let big_text = "a".repeat(1_600_000);
+        let client = LlmClient::new("test_key".to_string(), None, "gpt-5".to_string());
+        let prompt = client.build_prompt(&big_text, None);
+
+        // Should return early with the friendly fallback without performing a network call
+        let res = client.generate_summary(prompt, "chan").await.unwrap();
+        assert_eq!(
+            res,
+            "The conversation is too long to summarize in full. Please use the `/tldr last N` command to summarize the most recent N messages instead.".to_string()
+        );
     }
 }

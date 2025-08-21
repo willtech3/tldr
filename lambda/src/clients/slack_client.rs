@@ -18,14 +18,20 @@ use slack_morphism::{
 use std::time::Duration;
 use tokio_retry::strategy::jitter;
 use tokio_retry::{Retry, strategy::ExponentialBackoff};
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::errors::SlackError;
 
-static SLACK_CLIENT: Lazy<SlackHyperClient> = Lazy::new(|| {
-    let connector =
-        SlackClientHyperConnector::new().expect("Failed to create Slack HTTP connector");
-    SlackHyperClient::new(connector)
+// Build the Slack client connector safely without panicking.
+// If connector construction fails, store None and surface a SlackError at call sites.
+static SLACK_CLIENT: Lazy<Option<SlackHyperClient>> = Lazy::new(|| {
+    match SlackClientHyperConnector::new() {
+        Ok(connector) => Some(SlackHyperClient::new(connector)),
+        Err(e) => {
+            warn!("Failed to create Slack HTTP connector: {}", e);
+            None
+        }
+    }
 });
 
 static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
@@ -85,7 +91,10 @@ impl SlackClient {
 
     pub async fn get_user_im_channel(&self, user_id: &str) -> Result<String, SlackError> {
         self.with_retry(|| async {
-            let session = SLACK_CLIENT.open_session(&self.token);
+            let client = SLACK_CLIENT
+                .as_ref()
+                .ok_or_else(|| SlackError::GeneralError("Slack HTTP connector not initialized".to_string()))?;
+            let session = client.open_session(&self.token);
             let open_req = SlackApiConversationsOpenRequest::new()
                 .with_users(vec![SlackUserId(user_id.to_string())]);
 
@@ -98,7 +107,10 @@ impl SlackClient {
 
     pub async fn get_bot_user_id(&self) -> Result<String, SlackError> {
         self.with_retry(|| async {
-            let session = SLACK_CLIENT.open_session(&self.token);
+            let client = SLACK_CLIENT
+                .as_ref()
+                .ok_or_else(|| SlackError::GeneralError("Slack HTTP connector not initialized".to_string()))?;
+            let session = client.open_session(&self.token);
 
             let test_resp = session.auth_test().await?;
 
@@ -114,7 +126,10 @@ impl SlackClient {
         channel_id: &str,
     ) -> Result<Vec<SlackHistoryMessage>, SlackError> {
         self.with_retry(|| async {
-            let session = SLACK_CLIENT.open_session(&self.token);
+            let client = SLACK_CLIENT
+                .as_ref()
+                .ok_or_else(|| SlackError::GeneralError("Slack HTTP connector not initialized".to_string()))?;
+            let session = client.open_session(&self.token);
 
             // First get channel info to determine last_read timestamp
             let info_req =
@@ -127,6 +142,10 @@ impl SlackClient {
                 .last_read
                 .unwrap_or_else(|| {
                     // Fallback to 12 hours ago if no last_read
+                    info!(
+                        "last_read not present; falling back to ~12h window for channel {}",
+                        channel_id
+                    );
                     let twelve_hours_ago = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_secs())
@@ -153,7 +172,10 @@ impl SlackClient {
         channel_id: &str,
     ) -> Result<Vec<SlackHistoryMessage>, SlackError> {
         self.with_retry(|| async {
-            let session = SLACK_CLIENT.open_session(&self.token);
+            let client = SLACK_CLIENT
+                .as_ref()
+                .ok_or_else(|| SlackError::GeneralError("Slack HTTP connector not initialized".to_string()))?;
+            let session = client.open_session(&self.token);
 
             let twelve_hours_ago = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -174,7 +196,10 @@ impl SlackClient {
 
     pub async fn get_user_info(&self, user_id: &str) -> Result<String, SlackError> {
         self.with_retry(|| async {
-            let session = SLACK_CLIENT.open_session(&self.token);
+            let client = SLACK_CLIENT
+                .as_ref()
+                .ok_or_else(|| SlackError::GeneralError("Slack HTTP connector not initialized".to_string()))?;
+            let session = client.open_session(&self.token);
             let user_info_req = SlackApiUsersInfoRequest::new(SlackUserId(user_id.to_string()));
 
             match session.users_info(&user_info_req).await {
@@ -209,7 +234,10 @@ impl SlackClient {
         count: u32,
     ) -> Result<Vec<SlackHistoryMessage>, SlackError> {
         self.with_retry(|| async {
-            let session = SLACK_CLIENT.open_session(&self.token);
+            let client = SLACK_CLIENT
+                .as_ref()
+                .ok_or_else(|| SlackError::GeneralError("Slack HTTP connector not initialized".to_string()))?;
+            let session = client.open_session(&self.token);
 
             let request = SlackApiConversationsHistoryRequest::new()
                 .with_channel(SlackChannelId(channel_id.to_string()))
@@ -226,7 +254,10 @@ impl SlackClient {
 
     pub async fn send_dm(&self, user_id: &str, message: &str) -> Result<(), SlackError> {
         self.with_retry(|| async {
-            let session = SLACK_CLIENT.open_session(&self.token);
+            let client = SLACK_CLIENT
+                .as_ref()
+                .ok_or_else(|| SlackError::GeneralError("Slack HTTP connector not initialized".to_string()))?;
+            let session = client.open_session(&self.token);
             let im_channel = self.get_user_im_channel(user_id).await?;
 
             let post_req = SlackApiChatPostMessageRequest::new(
@@ -243,7 +274,10 @@ impl SlackClient {
 
     pub async fn post_message(&self, channel_id: &str, message: &str) -> Result<(), SlackError> {
         self.with_retry(|| async {
-            let session = SLACK_CLIENT.open_session(&self.token);
+            let client = SLACK_CLIENT
+                .as_ref()
+                .ok_or_else(|| SlackError::GeneralError("Slack HTTP connector not initialized".to_string()))?;
+            let session = client.open_session(&self.token);
 
             let post_req = SlackApiChatPostMessageRequest::new(
                 SlackChannelId(channel_id.to_string()),
@@ -259,7 +293,10 @@ impl SlackClient {
 
     pub async fn delete_message(&self, channel_id: &str, ts: &str) -> Result<(), SlackError> {
         self.with_retry(|| async {
-            let session = SLACK_CLIENT.open_session(&self.token);
+            let client = SLACK_CLIENT
+                .as_ref()
+                .ok_or_else(|| SlackError::GeneralError("Slack HTTP connector not initialized".to_string()))?;
+            let session = client.open_session(&self.token);
 
             let delete_req = SlackApiChatDeleteRequest::new(
                 SlackChannelId(channel_id.to_string()),
