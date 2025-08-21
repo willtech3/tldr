@@ -46,6 +46,7 @@
 ///         slack_bot_token: "dummy_token".to_string(),
 ///         openai_api_key: "dummy_openai_key".to_string(),
 ///         openai_org_id: None,
+///         openai_model: None,
 ///     };
 ///
 ///     // Initialize the Slack bot

@@ -174,47 +174,48 @@ impl LlmClient {
         info!("Calculated max output tokens: {}", max_output_tokens);
 
         if max_output_tokens < 500 {
-            info!("Input too large, truncating to the most recent messages");
+            // Return friendly message when input is too large
+            return Ok("The conversation is too long to summarize in full. Please use the `/tldr last N` command to summarize the most recent N messages instead.".to_string());
         }
 
+        // Build input messages for Responses API format
+        // Filter out assistant messages and format as required
         let input_messages: Vec<Value> = prompt
             .iter()
-            .map(|msg| {
-                let role_str = match msg.role {
+            .filter(|m| !matches!(m.role, MessageRole::assistant))
+            .map(|m| {
+                let role_str = match m.role {
                     MessageRole::system => "system",
                     MessageRole::user => "user",
                     MessageRole::assistant => "assistant",
-                    MessageRole::function => "function",
-                    MessageRole::tool => "tool",
+                    MessageRole::function => "user",
+                    MessageRole::tool => "user",
                 };
 
-                let content_val = match &msg.content {
-                    Content::Text(text) => json!(text),
-                    Content::ImageUrl(urls) => {
-                        let url_objects: Vec<Value> = urls
-                            .iter()
-                            .map(|u| {
-                                // ImageUrl has fields: type, text, image_url
-                                // The image_url field contains the actual URL
-                                if let Some(ref img_url) = u.image_url {
-                                    json!({
-                                        "type": "image_url",
-                                        "image_url": {
-                                            "url": img_url.url
-                                        }
-                                    })
-                                } else {
-                                    json!({})
-                                }
-                            })
-                            .collect();
-                        json!(url_objects)
+                let mut parts: Vec<Value> = Vec::new();
+                match &m.content {
+                    Content::Text(t) => {
+                        parts.push(json!({
+                            "type": "input_text",
+                            "text": t
+                        }));
                     }
-                };
+                    Content::ImageUrl(imgs) => {
+                        for img in imgs {
+                            if let Some(ref iu) = img.image_url {
+                                // Per Responses API, image_url must be a string URL or data URI
+                                parts.push(json!({
+                                    "type": "input_image",
+                                    "image_url": iu.url
+                                }));
+                            }
+                        }
+                    }
+                }
 
                 json!({
                     "role": role_str,
-                    "content": content_val
+                    "content": parts
                 })
             })
             .collect();
@@ -233,12 +234,23 @@ impl LlmClient {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             "Authorization",
-            format!("Bearer {}", self.api_key).parse().unwrap(),
+            format!("Bearer {}", self.api_key)
+                .parse()
+                .map_err(|e| SlackError::GeneralError(format!("Invalid auth header: {}", e)))?,
         );
-        headers.insert("Content-Type", "application/json".parse().unwrap());
+        headers.insert(
+            "Content-Type",
+            "application/json"
+                .parse()
+                .map_err(|e| SlackError::GeneralError(format!("Invalid content-type: {}", e)))?,
+        );
 
         if let Some(org) = &self.org_id {
-            headers.insert("OpenAI-Organization", org.parse().unwrap());
+            headers.insert(
+                "OpenAI-Organization",
+                org.parse()
+                    .map_err(|e| SlackError::GeneralError(format!("Invalid org header: {}", e)))?,
+            );
         }
 
         let response = client

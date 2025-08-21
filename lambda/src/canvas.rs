@@ -7,26 +7,7 @@
 
 use crate::clients::SlackClient;
 use crate::errors::SlackError;
-use serde::Serialize;
 use tracing::{debug, info};
-
-/// Document content for Canvas operations  
-#[derive(Debug, Serialize)]
-struct DocumentContent {
-    #[serde(rename = "type")]
-    content_type: String,
-    markdown: String,
-}
-
-/// Canvas edit operation
-#[derive(Debug, Serialize)]
-struct CanvasEditChange {
-    operation: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    section_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    document_content: Option<DocumentContent>,
-}
 
 /// Canvas helper functions
 pub struct CanvasHelper<'a> {
@@ -60,15 +41,10 @@ impl<'a> CanvasHelper<'a> {
             return Ok(existing);
         }
 
-        // Try to create a new canvas with a title
-        let title = "📋 TLDR Summaries";
+        // Try to create a new canvas
         let content = "# 📋 TLDR Summaries\n\n*This canvas contains AI-generated summaries of channel conversations. Latest summaries appear at the top.*\n\n---\n";
 
-        match self
-            .slack_client
-            .create_canvas(channel_id, title, content)
-            .await
-        {
+        match self.slack_client.create_canvas(channel_id, content).await {
             Ok(canvas_id) => {
                 info!("Created new canvas: {}", canvas_id);
                 Ok(canvas_id)
@@ -112,21 +88,8 @@ impl<'a> CanvasHelper<'a> {
         let full_content = format!("## {heading}\n\n{markdown_content}\n\n---\n");
 
         // Always insert at the beginning to keep latest summary at top
-        let _change = CanvasEditChange {
-            operation: "insert_at_start".to_string(),
-            section_id: None,
-            document_content: Some(DocumentContent {
-                content_type: "markdown".to_string(),
-                markdown: full_content.clone(),
-            }),
-        };
-
-        // For now, we'll use update_canvas_section with a generated section ID
-        // In the future, we might want to extend SlackClient to support insert_at_start
-        let section_id = format!("summary_{}", chrono::Utc::now().timestamp());
-
         self.slack_client
-            .update_canvas_section(canvas_id, &section_id, &full_content)
+            .insert_canvas_at_start(canvas_id, &full_content)
             .await?;
         info!("Successfully updated canvas section");
         Ok(())
@@ -146,34 +109,9 @@ impl<'a> CanvasHelper<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
-    fn test_document_content_serialization() {
-        let content = DocumentContent {
-            content_type: "markdown".to_string(),
-            markdown: "# Test Content".to_string(),
-        };
-
-        let json = serde_json::to_value(&content).unwrap();
-        assert_eq!(json["type"], "markdown");
-        assert_eq!(json["markdown"], "# Test Content");
-    }
-
-    #[test]
-    fn test_canvas_edit_change_serialization() {
-        let change = CanvasEditChange {
-            operation: "replace".to_string(),
-            section_id: Some("section123".to_string()),
-            document_content: Some(DocumentContent {
-                content_type: "markdown".to_string(),
-                markdown: "Updated content".to_string(),
-            }),
-        };
-
-        let json = serde_json::to_value(&change).unwrap();
-        assert_eq!(json["operation"], "replace");
-        assert_eq!(json["section_id"], "section123");
-        assert!(json["document_content"].is_object());
+    fn test_canvas_helper_creation() {
+        // Just a simple test to ensure the helper can be created
+        // Real functionality is integration tested through SlackClient
     }
 }

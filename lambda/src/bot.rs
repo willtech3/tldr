@@ -39,7 +39,10 @@ impl SlackBot {
         let llm_client = LlmClient::new(
             config.openai_api_key.clone(),
             config.openai_org_id.clone(),
-            "o3-mini".to_string(),
+            config
+                .openai_model
+                .clone()
+                .unwrap_or_else(|| "gpt-5".to_string()),
         );
 
         Ok(Self {
@@ -66,8 +69,8 @@ impl SlackBot {
         &self,
         channel_id: &str,
     ) -> Result<Vec<SlackHistoryMessage>, SlackError> {
-        // Get channel history from last 12 hours (this is what get_channel_history does)
-        let messages = self.slack_client.get_channel_history(channel_id).await?;
+        // Get messages since last_read timestamp (or last 12 hours as fallback)
+        let messages = self.slack_client.get_unread_messages(channel_id).await?;
 
         // Try to get bot user ID for filtering
         let bot_user_id = self.get_bot_user_id().await.ok();
@@ -197,7 +200,7 @@ impl SlackBot {
             crate::clients::llm_client::canonicalize_mime(header_mime.unwrap_or(fallback_mime));
 
         // Ensure final mime is supported & canonical; fallback to provided mime otherwise
-        if !is_supported_image_mime(&mime) {
+        if !self.llm_client.is_allowed_image_mime(&mime) {
             mime = crate::clients::llm_client::canonicalize_mime(fallback_mime);
         }
 
@@ -262,7 +265,10 @@ impl SlackBot {
         let mut candidate = direct.clone();
 
         // Inner helper – returns Ok(url) if supported image mime obtained
-        async fn validate_candidate(url: &Url) -> Result<Option<String>, SlackError> {
+        async fn validate_candidate(
+            url: &Url,
+            llm_client: &crate::clients::llm_client::LlmClient,
+        ) -> Result<Option<String>, SlackError> {
             if let Ok(resp) = HTTP_CLIENT
                 .head(url.clone())
                 .timeout(Duration::from_secs(10))
@@ -281,7 +287,7 @@ impl SlackBot {
                     return Ok(None);
                 }
                 let canon_ct = crate::clients::llm_client::canonicalize_mime(ct);
-                if is_supported_image_mime(&canon_ct) {
+                if llm_client.is_allowed_image_mime(&canon_ct) {
                     return Ok(Some(canon_ct));
                 }
             } else {
@@ -290,7 +296,7 @@ impl SlackBot {
             Ok(None)
         }
 
-        let is_supported = validate_candidate(&candidate).await?;
+        let is_supported = validate_candidate(&candidate, &self.llm_client).await?;
 
         // If first candidate was unsupported, try without "/download/" segment
         if is_supported.is_none() && candidate.path().contains("/download/") {
@@ -301,7 +307,7 @@ impl SlackBot {
             let mut alt = candidate.clone();
             alt.set_path(&new_path);
 
-            if let Some(_ct) = validate_candidate(&alt).await? {
+            if let Some(_ct) = validate_candidate(&alt, &self.llm_client).await? {
                 candidate = alt;
             } else {
                 warn!("Both download and non-download variants had unsupported MIME types");
@@ -430,7 +436,7 @@ impl SlackBot {
                             });
 
                         let canon = crate::clients::llm_client::canonicalize_mime(&raw_mime);
-                        if !is_supported_image_mime(&canon) {
+                        if !self.llm_client.is_allowed_image_mime(&canon) {
                             continue; // Skip unsupported formats like HEIC, TIFF, etc.
                         }
 
@@ -520,12 +526,4 @@ impl SlackBot {
         let formatted_summary = format!("*Summary from #{}*\n\n{}", channel_name, summary_text);
         Ok(formatted_summary)
     }
-}
-
-/// Returns whether a given MIME type is supported for image uploads.
-fn is_supported_image_mime(mime: &str) -> bool {
-    // Use the canonicalize_mime from the llm_client module
-    let canon = crate::clients::llm_client::canonicalize_mime(mime);
-    // Check against the allowed MIME types
-    ["image/jpeg", "image/png", "image/gif", "image/webp"].contains(&canon.as_str())
 }

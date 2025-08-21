@@ -7,7 +7,10 @@ use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use slack_morphism::hyper_tokio::{SlackClientHyperConnector, SlackHyperClient};
-use slack_morphism::prelude::*;
+use slack_morphism::prelude::{
+    SlackApiChatDeleteRequest, SlackApiChatPostMessageRequest, SlackApiConversationsHistoryRequest,
+    SlackApiConversationsInfoRequest, SlackApiConversationsOpenRequest, SlackApiUsersInfoRequest,
+};
 use slack_morphism::{
     SlackApiToken, SlackApiTokenValue, SlackChannelId, SlackFile, SlackHistoryMessage,
     SlackMessageContent, SlackTs, SlackUserId,
@@ -20,16 +23,16 @@ use tracing::warn;
 use crate::errors::SlackError;
 
 static SLACK_CLIENT: Lazy<SlackHyperClient> = Lazy::new(|| {
-    SlackHyperClient::new(
-        SlackClientHyperConnector::new().expect("Failed to create Slack client connector"),
-    )
+    let connector =
+        SlackClientHyperConnector::new().expect("Failed to create Slack HTTP connector");
+    SlackHyperClient::new(connector)
 });
 
 static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
     Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
-        .expect("Failed to create HTTP client")
+        .unwrap_or_else(|_| Client::new())
 });
 
 /// Canvas API response types
@@ -105,6 +108,46 @@ impl SlackClient {
         .await
     }
 
+    /// Get messages from channel since last read timestamp
+    pub async fn get_unread_messages(
+        &self,
+        channel_id: &str,
+    ) -> Result<Vec<SlackHistoryMessage>, SlackError> {
+        self.with_retry(|| async {
+            let session = SLACK_CLIENT.open_session(&self.token);
+
+            // First get channel info to determine last_read timestamp
+            let info_req =
+                SlackApiConversationsInfoRequest::new(SlackChannelId(channel_id.to_string()));
+            let channel_info = session.conversations_info(&info_req).await?;
+
+            let last_read_ts = channel_info
+                .channel
+                .last_state
+                .last_read
+                .unwrap_or_else(|| {
+                    // Fallback to 12 hours ago if no last_read
+                    let twelve_hours_ago = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0)
+                        .saturating_sub(12 * 3600);
+                    SlackTs(format!("{}.000000", twelve_hours_ago))
+                });
+
+            // Get messages since last_read
+            let request = SlackApiConversationsHistoryRequest::new()
+                .with_channel(SlackChannelId(channel_id.to_string()))
+                .with_oldest(last_read_ts)
+                .with_limit(1000);
+
+            let result = session.conversations_history(&request).await?;
+            Ok(result.messages)
+        })
+        .await
+    }
+
+    /// Get messages from channel in the last 12 hours (for compatibility)
     pub async fn get_channel_history(
         &self,
         channel_id: &str,
@@ -112,22 +155,19 @@ impl SlackClient {
         self.with_retry(|| async {
             let session = SLACK_CLIENT.open_session(&self.token);
 
-            let mut request = SlackApiConversationsHistoryRequest::new()
-                .with_channel(SlackChannelId(channel_id.to_string()));
-
             let twelve_hours_ago = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-                - 12 * 3600;
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+                .saturating_sub(12 * 3600);
 
-            request = request.with_oldest(SlackTs(twelve_hours_ago.to_string()));
+            let request = SlackApiConversationsHistoryRequest::new()
+                .with_channel(SlackChannelId(channel_id.to_string()))
+                .with_oldest(SlackTs(format!("{}.000000", twelve_hours_ago)))
+                .with_limit(1000);
 
             let result = session.conversations_history(&request).await?;
-
-            let messages = result.messages;
-
-            Ok(messages)
+            Ok(result.messages)
         })
         .await
     }
@@ -322,7 +362,6 @@ impl SlackClient {
     pub async fn create_canvas(
         &self,
         channel_id: &str,
-        _title: &str,
         content: &str,
     ) -> Result<String, SlackError> {
         let create_payload = json!({
@@ -361,17 +400,15 @@ impl SlackClient {
             .ok_or_else(|| SlackError::GeneralError("No canvas ID in response".to_string()))
     }
 
-    pub async fn update_canvas_section(
+    pub async fn insert_canvas_at_start(
         &self,
         canvas_id: &str,
-        section_id: &str,
         content: &str,
     ) -> Result<(), SlackError> {
         let edit_payload = json!({
             "canvas_id": canvas_id,
             "changes": [{
-                "operation": "replace",
-                "section_id": section_id,
+                "operation": "insert_at_start",
                 "document_content": {
                     "type": "markdown",
                     "markdown": content,
