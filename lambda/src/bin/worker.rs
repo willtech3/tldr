@@ -100,7 +100,7 @@ impl BotHandler {
         // This prevents the bot's response from being included in the summary
         if task.visible || task.dest_public_post {
             // Get the bot's own user ID
-            let bot_user_id = (self.slack_bot.get_bot_user_id().await).ok();
+            let bot_user_id = (self.slack_bot.slack_client().get_bot_user_id().await).ok();
 
             // Filter out messages from the bot
             if let Some(bot_id) = bot_user_id {
@@ -162,7 +162,12 @@ impl BotHandler {
                         tz_abbr
                     );
                     // Get user's display name for attribution
-                    let user_name = match self.slack_bot.get_user_info(&task.user_id).await {
+                    let user_name = match self
+                        .slack_bot
+                        .slack_client()
+                        .get_user_info(&task.user_id)
+                        .await
+                    {
                         Ok(name) => name,
                         Err(_) => format!("<@{}>", task.user_id),
                     };

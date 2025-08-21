@@ -14,7 +14,7 @@ pub async fn get_unread_messages(
     let messages = bot.slack_client().get_unread_messages(channel_id).await?;
 
     // Try to get bot user ID for filtering
-    let bot_user_id = bot.get_bot_user_id().await.ok();
+    let bot_user_id = bot.slack_client().get_bot_user_id().await.ok();
 
     // Filter messages using the consolidated filter function
     let filtered_messages: Vec<_> = filter_user_messages(messages, bot_user_id.as_deref());
@@ -40,7 +40,7 @@ pub async fn get_last_n_messages(
         .await?;
 
     // Get the bot's own user ID to filter out its messages
-    let bot_user_id = bot.get_bot_user_id().await.ok();
+    let bot_user_id = bot.slack_client().get_bot_user_id().await.ok();
 
     // Filter messages using the consolidated filter function and limit to `count`
     let filtered_messages: Vec<_> = filter_user_messages(messages, bot_user_id.as_deref())

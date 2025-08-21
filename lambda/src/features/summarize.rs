@@ -35,7 +35,11 @@ pub async fn summarize(
 
     let mut user_cache: HashMap<String, String> = HashMap::new();
     for uid in user_ids {
-        let name = bot.get_user_info(&uid).await.unwrap_or(uid.clone());
+        let name = bot
+            .slack_client()
+            .get_user_info(&uid)
+            .await
+            .unwrap_or(uid.clone());
         user_cache.insert(uid, name);
     }
 

@@ -5,7 +5,7 @@ use tracing::info;
 
 /// Send a direct message to a user.
 pub async fn send_dm(client: &SlackBot, user_id: &str, message: &str) -> Result<(), SlackError> {
-    client.send_dm(user_id, message).await
+    client.slack_client().send_dm(user_id, message).await
 }
 
 /// Send a message to a channel.
@@ -14,7 +14,10 @@ pub async fn send_message_to_channel(
     channel_id: &str,
     message: &str,
 ) -> Result<(), SlackError> {
-    client.send_message_to_channel(channel_id, message).await
+    client
+        .slack_client()
+        .post_message(channel_id, message)
+        .await
 }
 
 /// Ensure a Canvas exists for a channel and prepend a summary section.

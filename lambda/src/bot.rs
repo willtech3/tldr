@@ -47,34 +47,19 @@ impl SlackBot {
         &self.llm_client
     }
 
-    pub async fn get_user_im_channel(&self, user_id: &str) -> Result<String, SlackError> {
-        self.slack_client.get_user_im_channel(user_id).await
-    }
+    // removed: use SlackClient::get_user_im_channel directly
 
-    /// Get the bot's own user ID for filtering purposes
-    pub async fn get_bot_user_id(&self) -> Result<String, SlackError> {
-        self.slack_client.get_bot_user_id().await
-    }
+    // removed: use SlackClient::get_bot_user_id directly
 
     // deprecated: moved to features::collect::get_unread_messages
 
-    pub async fn get_user_info(&self, user_id: &str) -> Result<String, SlackError> {
-        self.slack_client.get_user_info(user_id).await
-    }
+    // removed: use SlackClient::get_user_info directly
 
     // deprecated: moved to features::collect::get_last_n_messages
 
-    pub async fn send_dm(&self, user_id: &str, message: &str) -> Result<(), SlackError> {
-        self.slack_client.send_dm(user_id, message).await
-    }
+    // removed: use SlackClient::send_dm directly
 
-    pub async fn send_message_to_channel(
-        &self,
-        channel_id: &str,
-        message: &str,
-    ) -> Result<(), SlackError> {
-        self.slack_client.post_message(channel_id, message).await
-    }
+    // removed: use SlackClient::post_message directly
 
     /// Opens a Block Kit modal using Slack's `views.open` API.
     pub async fn open_modal(&self, trigger_id: &str, view: &Value) -> Result<(), SlackError> {
