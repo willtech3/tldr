@@ -52,10 +52,10 @@
 ///     // Initialize the Slack bot
 ///     let mut bot = SlackBot::new(&config).await?;
 ///
-///     // Get and summarize unread messages in a channel
-///     let messages = bot.get_unread_messages("C12345678").await?;
+///     // Get and summarize unread messages in a channel via features
+///     let messages = tldr::features::collect::get_unread_messages(&bot, "C12345678").await?;
 ///     if !messages.is_empty() {
-///         let summary = bot.summarize_messages_with_chatgpt(&config, &messages, "C12345678", None).await?;
+///         let summary = tldr::features::summarize::summarize(&bot, &config, &messages, "C12345678", None).await?;
 ///         println!("Summary: {}", summary);
 ///     }
 ///
