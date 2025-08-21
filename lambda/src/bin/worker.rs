@@ -11,7 +11,7 @@ use tracing::{error, info};
 
 // Import shared modules
 use tldr::features::{collect, deliver, summarize};
-use tldr::{CanvasHelper, SlackBot, SlackError, create_ephemeral_payload, format_summary_message};
+use tldr::{SlackBot, SlackError, create_ephemeral_payload, format_summary_message};
 
 use tldr::core::config::AppConfig;
 use tldr::core::models::ProcessingTask;
@@ -149,46 +149,42 @@ impl BotHandler {
                         "Writing summary to Canvas for channel {}",
                         source_channel_id
                     );
-                    let canvas_helper = CanvasHelper::new(self.slack_bot.slack_client());
+                    // Create formatted summary for Canvas with timestamp in Central Time
+                    let now = chrono::Utc::now().with_timezone(&chrono_tz::US::Central);
+                    let tz_abbr = if now.format("%Z").to_string() == "CDT" {
+                        "CDT"
+                    } else {
+                        "CST"
+                    };
+                    let heading = format!(
+                        "TLDR - {} {} (God's time zone)",
+                        now.format("%Y-%m-%d %H:%M"),
+                        tz_abbr
+                    );
+                    // Get user's display name for attribution
+                    let user_name = match self.slack_bot.get_user_info(&task.user_id).await {
+                        Ok(name) => name,
+                        Err(_) => format!("<@{}>", task.user_id),
+                    };
 
-                    match canvas_helper.ensure_channel_canvas(source_channel_id).await {
-                        Ok(canvas_id) => {
-                            // Create formatted summary for Canvas with timestamp in Central Time
-                            use chrono_tz::US::Central;
-                            let now = chrono::Utc::now().with_timezone(&Central);
-                            let tz_abbr = if now.format("%Z").to_string() == "CDT" {
-                                "CDT"
-                            } else {
-                                "CST"
-                            };
-                            let heading = format!(
-                                "TLDR - {} {} (God's time zone)",
-                                now.format("%Y-%m-%d %H:%M"),
-                                tz_abbr
-                            );
-                            // Get user's display name for attribution
-                            let user_name = match self.slack_bot.get_user_info(&task.user_id).await
-                            {
-                                Ok(name) => name,
-                                Err(_) => format!("<@{}>", task.user_id), // Fallback to mention if lookup fails
-                            };
+                    let canvas_content =
+                        format!("{summary}\n\n*Summary by {user_name} using TLDR bot*");
 
-                            let canvas_content =
-                                format!("{summary}\n\n*Summary by {user_name} using TLDR bot*");
-
-                            if let Err(e) = canvas_helper
-                                .prepend_summary_section(&canvas_id, &heading, &canvas_content)
-                                .await
-                            {
-                                error!("Failed to update Canvas: {}", e);
-                            } else {
-                                info!("Successfully updated Canvas {}", canvas_id);
-                                sent_successfully = true;
-                            }
-                        }
-                        Err(e) => {
-                            error!("Failed to ensure Canvas exists: {}", e);
-                        }
+                    if let Err(e) = deliver::deliver_to_canvas(
+                        &self.slack_bot,
+                        source_channel_id,
+                        &heading,
+                        &canvas_content,
+                    )
+                    .await
+                    {
+                        error!("Failed to update Canvas: {}", e);
+                    } else {
+                        info!(
+                            "Successfully updated Canvas for channel {}",
+                            source_channel_id
+                        );
+                        sent_successfully = true;
                     }
                 }
 

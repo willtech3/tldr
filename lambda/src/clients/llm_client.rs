@@ -195,14 +195,21 @@ impl LlmClient {
             .unwrap_or_else(|_| Client::new());
 
         let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            "Authorization",
-            format!("Bearer {}", self.api_key).parse().unwrap(),
-        );
-        headers.insert("Content-Type", "application/json".parse().unwrap());
+        let auth_value = format!("Bearer {}", self.api_key)
+            .parse()
+            .map_err(|e| SlackError::HttpError(format!("Invalid Authorization header: {}", e)))?;
+        headers.insert("Authorization", auth_value);
+
+        let content_type_value = "application/json"
+            .parse()
+            .map_err(|e| SlackError::HttpError(format!("Invalid Content-Type header: {}", e)))?;
+        headers.insert("Content-Type", content_type_value);
 
         if let Some(org) = &self.org_id {
-            headers.insert("OpenAI-Organization", org.parse().unwrap());
+            let org_value = org.parse().map_err(|e| {
+                SlackError::HttpError(format!("Invalid OpenAI-Organization header: {}", e))
+            })?;
+            headers.insert("OpenAI-Organization", org_value);
         }
 
         let response = client
