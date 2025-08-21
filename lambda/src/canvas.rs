@@ -8,7 +8,6 @@
 use crate::clients::SlackClient;
 use crate::errors::SlackError;
 use tracing::{debug, info};
-
 /// Canvas helper functions
 pub struct CanvasHelper<'a> {
     slack_client: &'a SlackClient,

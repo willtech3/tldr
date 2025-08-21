@@ -197,23 +197,12 @@ impl LlmClient {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             "Authorization",
-            format!("Bearer {}", self.api_key)
-                .parse()
-                .map_err(|e| SlackError::GeneralError(format!("Invalid auth header: {}", e)))?,
+            format!("Bearer {}", self.api_key).parse().unwrap(),
         );
-        headers.insert(
-            "Content-Type",
-            "application/json"
-                .parse()
-                .map_err(|e| SlackError::GeneralError(format!("Invalid content-type: {}", e)))?,
-        );
+        headers.insert("Content-Type", "application/json".parse().unwrap());
 
         if let Some(org) = &self.org_id {
-            headers.insert(
-                "OpenAI-Organization",
-                org.parse()
-                    .map_err(|e| SlackError::GeneralError(format!("Invalid org header: {}", e)))?,
-            );
+            headers.insert("OpenAI-Organization", org.parse().unwrap());
         }
 
         let response = client
@@ -293,6 +282,7 @@ impl LlmClient {
         URL_IMAGE_MAX_BYTES
     }
 }
+<<<<<<< HEAD
 
 /// Build Responses API input payload from a chat-style prompt.
 /// - Filters out assistant messages (Responses treats assistant content as output)
@@ -432,3 +422,5 @@ mod tests {
         );
     }
 }
+=======
+>>>>>>> 54824da (refactor: isolate Slack and LLM clients into dedicated modules (#67))

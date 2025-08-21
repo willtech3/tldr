@@ -7,10 +7,14 @@ use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use slack_morphism::hyper_tokio::{SlackClientHyperConnector, SlackHyperClient};
+<<<<<<< HEAD
 use slack_morphism::prelude::{
     SlackApiChatDeleteRequest, SlackApiChatPostMessageRequest, SlackApiConversationsHistoryRequest,
     SlackApiConversationsInfoRequest, SlackApiConversationsOpenRequest, SlackApiUsersInfoRequest,
 };
+=======
+use slack_morphism::prelude::*;
+>>>>>>> 54824da (refactor: isolate Slack and LLM clients into dedicated modules (#67))
 use slack_morphism::{
     SlackApiToken, SlackApiTokenValue, SlackChannelId, SlackFile, SlackHistoryMessage,
     SlackMessageContent, SlackTs, SlackUserId,
@@ -18,6 +22,7 @@ use slack_morphism::{
 use std::time::Duration;
 use tokio_retry::strategy::jitter;
 use tokio_retry::{Retry, strategy::ExponentialBackoff};
+<<<<<<< HEAD
 use tracing::{info, warn};
 
 use crate::errors::SlackError;
@@ -32,12 +37,27 @@ static SLACK_CLIENT: Lazy<Option<SlackHyperClient>> =
             None
         }
     });
+=======
+use tracing::warn;
+
+use crate::errors::SlackError;
+
+static SLACK_CLIENT: Lazy<SlackHyperClient> = Lazy::new(|| {
+    SlackHyperClient::new(
+        SlackClientHyperConnector::new().expect("Failed to create Slack client connector"),
+    )
+});
+>>>>>>> 54824da (refactor: isolate Slack and LLM clients into dedicated modules (#67))
 
 static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
     Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
+<<<<<<< HEAD
         .unwrap_or_else(|_| Client::new())
+=======
+        .expect("Failed to create HTTP client")
+>>>>>>> 54824da (refactor: isolate Slack and LLM clients into dedicated modules (#67))
 });
 
 /// Canvas API response types
@@ -90,10 +110,14 @@ impl SlackClient {
 
     pub async fn get_user_im_channel(&self, user_id: &str) -> Result<String, SlackError> {
         self.with_retry(|| async {
+<<<<<<< HEAD
             let client = SLACK_CLIENT.as_ref().ok_or_else(|| {
                 SlackError::GeneralError("Slack HTTP connector not initialized".to_string())
             })?;
             let session = client.open_session(&self.token);
+=======
+            let session = SLACK_CLIENT.open_session(&self.token);
+>>>>>>> 54824da (refactor: isolate Slack and LLM clients into dedicated modules (#67))
             let open_req = SlackApiConversationsOpenRequest::new()
                 .with_users(vec![SlackUserId(user_id.to_string())]);
 
@@ -106,10 +130,14 @@ impl SlackClient {
 
     pub async fn get_bot_user_id(&self) -> Result<String, SlackError> {
         self.with_retry(|| async {
+<<<<<<< HEAD
             let client = SLACK_CLIENT.as_ref().ok_or_else(|| {
                 SlackError::GeneralError("Slack HTTP connector not initialized".to_string())
             })?;
             let session = client.open_session(&self.token);
+=======
+            let session = SLACK_CLIENT.open_session(&self.token);
+>>>>>>> 54824da (refactor: isolate Slack and LLM clients into dedicated modules (#67))
 
             let test_resp = session.auth_test().await?;
 
@@ -119,6 +147,7 @@ impl SlackClient {
         .await
     }
 
+<<<<<<< HEAD
     /// Get messages from channel since last read timestamp
     pub async fn get_unread_messages(
         &self,
@@ -166,11 +195,14 @@ impl SlackClient {
     }
 
     /// Get messages from channel in the last 12 hours (for compatibility)
+=======
+>>>>>>> 54824da (refactor: isolate Slack and LLM clients into dedicated modules (#67))
     pub async fn get_channel_history(
         &self,
         channel_id: &str,
     ) -> Result<Vec<SlackHistoryMessage>, SlackError> {
         self.with_retry(|| async {
+<<<<<<< HEAD
             let client = SLACK_CLIENT.as_ref().ok_or_else(|| {
                 SlackError::GeneralError("Slack HTTP connector not initialized".to_string())
             })?;
@@ -189,16 +221,40 @@ impl SlackClient {
 
             let result = session.conversations_history(&request).await?;
             Ok(result.messages)
+=======
+            let session = SLACK_CLIENT.open_session(&self.token);
+
+            let mut request = SlackApiConversationsHistoryRequest::new()
+                .with_channel(SlackChannelId(channel_id.to_string()));
+
+            let twelve_hours_ago = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                - 12 * 3600;
+
+            request = request.with_oldest(SlackTs(twelve_hours_ago.to_string()));
+
+            let result = session.conversations_history(&request).await?;
+
+            let messages = result.messages;
+
+            Ok(messages)
+>>>>>>> 54824da (refactor: isolate Slack and LLM clients into dedicated modules (#67))
         })
         .await
     }
 
     pub async fn get_user_info(&self, user_id: &str) -> Result<String, SlackError> {
         self.with_retry(|| async {
+<<<<<<< HEAD
             let client = SLACK_CLIENT.as_ref().ok_or_else(|| {
                 SlackError::GeneralError("Slack HTTP connector not initialized".to_string())
             })?;
             let session = client.open_session(&self.token);
+=======
+            let session = SLACK_CLIENT.open_session(&self.token);
+>>>>>>> 54824da (refactor: isolate Slack and LLM clients into dedicated modules (#67))
             let user_info_req = SlackApiUsersInfoRequest::new(SlackUserId(user_id.to_string()));
 
             match session.users_info(&user_info_req).await {
@@ -233,10 +289,14 @@ impl SlackClient {
         count: u32,
     ) -> Result<Vec<SlackHistoryMessage>, SlackError> {
         self.with_retry(|| async {
+<<<<<<< HEAD
             let client = SLACK_CLIENT.as_ref().ok_or_else(|| {
                 SlackError::GeneralError("Slack HTTP connector not initialized".to_string())
             })?;
             let session = client.open_session(&self.token);
+=======
+            let session = SLACK_CLIENT.open_session(&self.token);
+>>>>>>> 54824da (refactor: isolate Slack and LLM clients into dedicated modules (#67))
 
             let request = SlackApiConversationsHistoryRequest::new()
                 .with_channel(SlackChannelId(channel_id.to_string()))
@@ -253,10 +313,14 @@ impl SlackClient {
 
     pub async fn send_dm(&self, user_id: &str, message: &str) -> Result<(), SlackError> {
         self.with_retry(|| async {
+<<<<<<< HEAD
             let client = SLACK_CLIENT.as_ref().ok_or_else(|| {
                 SlackError::GeneralError("Slack HTTP connector not initialized".to_string())
             })?;
             let session = client.open_session(&self.token);
+=======
+            let session = SLACK_CLIENT.open_session(&self.token);
+>>>>>>> 54824da (refactor: isolate Slack and LLM clients into dedicated modules (#67))
             let im_channel = self.get_user_im_channel(user_id).await?;
 
             let post_req = SlackApiChatPostMessageRequest::new(
@@ -273,10 +337,14 @@ impl SlackClient {
 
     pub async fn post_message(&self, channel_id: &str, message: &str) -> Result<(), SlackError> {
         self.with_retry(|| async {
+<<<<<<< HEAD
             let client = SLACK_CLIENT.as_ref().ok_or_else(|| {
                 SlackError::GeneralError("Slack HTTP connector not initialized".to_string())
             })?;
             let session = client.open_session(&self.token);
+=======
+            let session = SLACK_CLIENT.open_session(&self.token);
+>>>>>>> 54824da (refactor: isolate Slack and LLM clients into dedicated modules (#67))
 
             let post_req = SlackApiChatPostMessageRequest::new(
                 SlackChannelId(channel_id.to_string()),
@@ -292,10 +360,14 @@ impl SlackClient {
 
     pub async fn delete_message(&self, channel_id: &str, ts: &str) -> Result<(), SlackError> {
         self.with_retry(|| async {
+<<<<<<< HEAD
             let client = SLACK_CLIENT.as_ref().ok_or_else(|| {
                 SlackError::GeneralError("Slack HTTP connector not initialized".to_string())
             })?;
             let session = client.open_session(&self.token);
+=======
+            let session = SLACK_CLIENT.open_session(&self.token);
+>>>>>>> 54824da (refactor: isolate Slack and LLM clients into dedicated modules (#67))
 
             let delete_req = SlackApiChatDeleteRequest::new(
                 SlackChannelId(channel_id.to_string()),
@@ -398,6 +470,10 @@ impl SlackClient {
     pub async fn create_canvas(
         &self,
         channel_id: &str,
+<<<<<<< HEAD
+=======
+        _title: &str,
+>>>>>>> 54824da (refactor: isolate Slack and LLM clients into dedicated modules (#67))
         content: &str,
     ) -> Result<String, SlackError> {
         let create_payload = json!({
@@ -436,15 +512,27 @@ impl SlackClient {
             .ok_or_else(|| SlackError::GeneralError("No canvas ID in response".to_string()))
     }
 
+<<<<<<< HEAD
     pub async fn insert_canvas_at_start(
         &self,
         canvas_id: &str,
+=======
+    pub async fn update_canvas_section(
+        &self,
+        canvas_id: &str,
+        section_id: &str,
+>>>>>>> 54824da (refactor: isolate Slack and LLM clients into dedicated modules (#67))
         content: &str,
     ) -> Result<(), SlackError> {
         let edit_payload = json!({
             "canvas_id": canvas_id,
             "changes": [{
+<<<<<<< HEAD
                 "operation": "insert_at_start",
+=======
+                "operation": "replace",
+                "section_id": section_id,
+>>>>>>> 54824da (refactor: isolate Slack and LLM clients into dedicated modules (#67))
                 "document_content": {
                     "type": "markdown",
                     "markdown": content,
