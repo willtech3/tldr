@@ -66,6 +66,7 @@ pub mod canvas;
 pub mod core;
 pub mod domains;
 pub mod errors;
+pub mod features;
 pub mod formatting;
 pub mod prompt;
 pub mod response;
