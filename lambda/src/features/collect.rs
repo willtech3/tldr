@@ -19,4 +19,3 @@ pub async fn get_last_n_messages(
 ) -> Result<Vec<SlackHistoryMessage>, SlackError> {
     bot.get_last_n_messages(channel_id, count).await
 }
-

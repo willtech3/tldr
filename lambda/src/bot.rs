@@ -5,7 +5,6 @@ use once_cell::sync::Lazy;
 use slack_morphism::{SlackFile, SlackHistoryMessage};
 
 use base64::{Engine as _, engine::general_purpose};
-use once_cell::sync::Lazy;
 use openai_api_rs::v1::chat_completion::{
     self, ChatCompletionMessage, Content, ContentType, ImageUrl, ImageUrlType, MessageRole,
 };

@@ -45,7 +45,10 @@ pub async fn summarize(
                 .user
                 .as_ref()
                 .map_or("Unknown User", |u| u.as_ref());
-            let author = user_cache.get(uid).cloned().unwrap_or_else(|| uid.to_string());
+            let author = user_cache
+                .get(uid)
+                .cloned()
+                .unwrap_or_else(|| uid.to_string());
             let ts = msg.origin.ts.clone();
             let text = msg.content.text.as_deref().unwrap_or("");
             format!("[{}] {}: {}", ts, author, text)
@@ -61,5 +64,8 @@ pub async fn summarize(
     // Collect image urls (optional enhancement) — omitted for brevity; bot::summarize handles images already
 
     let summary_text = llm.generate_summary(prompt, &channel_name).await?;
-    Ok(format!("*Summary from #{}*\n\n{}", channel_name, summary_text))
+    Ok(format!(
+        "*Summary from #{}*\n\n{}",
+        channel_name, summary_text
+    ))
 }
