@@ -131,7 +131,7 @@ impl BotHandler {
 
         // Generate summary
         match summarize::summarize(
-            &mut self.slack_bot,
+            &self.slack_bot,
             &self.config,
             &messages,
             source_channel_id,

@@ -533,8 +533,5 @@ impl SlackBot {
 
 /// Returns whether a given MIME type is supported for image uploads.
 fn is_supported_image_mime(mime: &str) -> bool {
-    // Use the canonicalize_mime from the llm_client module
-    let canon = crate::clients::llm_client::canonicalize_mime(mime);
-    // Check against the allowed MIME types
-    ["image/jpeg", "image/png", "image/gif", "image/webp"].contains(&canon.as_str())
+    crate::utils::mime::is_supported_image_mime(mime)
 }

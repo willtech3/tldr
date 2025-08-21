@@ -41,6 +41,22 @@ SQS → Worker Lambda → Slack Web API (history) → OpenAI Responses (GPT‑5)
   → chat.postMessage(thread_ts) (+ optional channel/Canvas)
 ```
 
+### Access points to the configuration modal
+- Configure button in first reply
+  - On `assistant_thread_started`, post an initial bot message with an Actions block containing a “Configure summary” button.
+  - Clicking the button yields a `trigger_id`; use `views.open` to show a modal with fields:
+    - Mode (Unread vs Last N)
+    - Count
+    - Custom prompt text
+  - On `view_submission`, run the summary with the submitted values (no storage needed).
+
+- “Customize” suggested prompt → button handoff
+  - Suggested prompts cannot directly open a modal (no `trigger_id`). Include a “Customize” suggested prompt that, when selected, posts a message with an “Open config” button.
+  - The button click provides the `trigger_id` to open the same modal.
+
+- Optional shortcut
+  - Add a global or message shortcut (e.g., “TLDR: Configure”) that opens the same modal anywhere as a convenience. This is optional for the AI split view.
+
 Internal task schema additions (modeled after earlier docs):
 - `thread_ts: String`
 - `mode: enum { Unread, LastN }`

@@ -8,7 +8,7 @@ use url::Url;
 
 /// Generate a summary for the provided messages using the LlmClient, including image handling.
 pub async fn summarize(
-    bot: &mut SlackBot,
+    bot: &SlackBot,
     _config: &AppConfig,
     messages: &[SlackHistoryMessage],
     channel_id: &str,
@@ -87,7 +87,7 @@ pub async fn summarize(
                         });
 
                     let canon = crate::clients::llm_client::canonicalize_mime(&raw_mime);
-                    if !is_supported_image_mime_local(&canon) {
+                    if !crate::utils::mime::is_supported_image_mime(&canon) {
                         continue;
                     }
 
@@ -159,8 +159,4 @@ pub async fn summarize(
     ))
 }
 
-// Local helper to avoid cross-module privacy issues
-fn is_supported_image_mime_local(mime: &str) -> bool {
-    let canon = crate::clients::llm_client::canonicalize_mime(mime);
-    ["image/jpeg", "image/png", "image/gif", "image/webp"].contains(&canon.as_str())
-}
+// removed local helper; use crate::utils::mime::is_supported_image_mime
