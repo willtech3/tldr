@@ -247,7 +247,7 @@ async fn get_latest_message_ts(
     let slack_bot = SlackBot::new(config).await?;
 
     // Get the most recent message in the channel (limit to 1)
-    let messages = slack_bot.get_last_n_messages(channel_id, 1).await?;
+    let messages = tldr::features::collect::get_last_n_messages(&slack_bot, channel_id, 1).await?;
 
     // Return the timestamp of the most recent message if available
     if let Some(latest_msg) = messages.first() {

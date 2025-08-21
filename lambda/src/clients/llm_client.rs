@@ -195,25 +195,21 @@ impl LlmClient {
             .unwrap_or_else(|_| Client::new());
 
         let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            "Authorization",
-            format!("Bearer {}", self.api_key)
-                .parse()
-                .map_err(|e| SlackError::GeneralError(format!("Invalid auth header: {}", e)))?,
-        );
-        headers.insert(
-            "Content-Type",
-            "application/json"
-                .parse()
-                .map_err(|e| SlackError::GeneralError(format!("Invalid content-type: {}", e)))?,
-        );
+        let auth_value = format!("Bearer {}", self.api_key)
+            .parse()
+            .map_err(|e| SlackError::HttpError(format!("Invalid Authorization header: {}", e)))?;
+        headers.insert("Authorization", auth_value);
+
+        let content_type_value = "application/json"
+            .parse()
+            .map_err(|e| SlackError::HttpError(format!("Invalid Content-Type header: {}", e)))?;
+        headers.insert("Content-Type", content_type_value);
 
         if let Some(org) = &self.org_id {
-            headers.insert(
-                "OpenAI-Organization",
-                org.parse()
-                    .map_err(|e| SlackError::GeneralError(format!("Invalid org header: {}", e)))?,
-            );
+            let org_value = org.parse().map_err(|e| {
+                SlackError::HttpError(format!("Invalid OpenAI-Organization header: {}", e))
+            })?;
+            headers.insert("OpenAI-Organization", org_value);
         }
 
         let response = client
@@ -293,7 +289,6 @@ impl LlmClient {
         URL_IMAGE_MAX_BYTES
     }
 }
-
 /// Build Responses API input payload from a chat-style prompt.
 /// - Filters out assistant messages (Responses treats assistant content as output)
 /// - Emits typed parts: { type: "input_text", text } and { type: "input_image", image_url }

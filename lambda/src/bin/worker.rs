@@ -10,7 +10,8 @@ use serde_json::Value;
 use tracing::{error, info};
 
 // Import shared modules
-use tldr::{CanvasHelper, SlackBot, SlackError, create_ephemeral_payload, format_summary_message};
+use tldr::features::{collect, deliver, summarize};
+use tldr::{SlackBot, SlackError, create_ephemeral_payload, format_summary_message};
 
 use tldr::core::config::AppConfig;
 use tldr::core::models::ProcessingTask;
@@ -66,9 +67,7 @@ impl BotHandler {
 
             // Try DM fallback if provided
             if let Some(user_id) = dm_fallback_user {
-                let _ = self
-                    .slack_bot
-                    .send_dm(user_id, message)
+                let _ = deliver::send_dm(&self.slack_bot, user_id, message)
                     .await
                     .map_err(|dm_err| {
                         error!("DM fallback failed for user {}: {}", user_id, dm_err);
@@ -91,21 +90,17 @@ impl BotHandler {
         // Get messages based on the parameters
         let mut messages = if let Some(count) = task.message_count {
             // If count is specified, always get the last N messages regardless of read/unread status
-            self.slack_bot
-                .get_last_n_messages(source_channel_id, count)
-                .await?
+            collect::get_last_n_messages(&self.slack_bot, source_channel_id, count).await?
         } else {
             // If no count specified, default to unread messages (traditional behavior)
-            self.slack_bot
-                .get_unread_messages(source_channel_id)
-                .await?
+            collect::get_unread_messages(&self.slack_bot, source_channel_id).await?
         };
 
         // If visible/public flag is used, filter out the bot's own messages
         // This prevents the bot's response from being included in the summary
         if task.visible || task.dest_public_post {
             // Get the bot's own user ID
-            let bot_user_id = (self.slack_bot.get_bot_user_id().await).ok();
+            let bot_user_id = (self.slack_bot.slack_client().get_bot_user_id().await).ok();
 
             // Filter out messages from the bot
             if let Some(bot_id) = bot_user_id {
@@ -126,10 +121,7 @@ impl BotHandler {
 
             // Send notification based on destination preferences
             if task.dest_dm {
-                let _ = self
-                    .slack_bot
-                    .send_dm(&task.user_id, no_messages_text)
-                    .await;
+                let _ = deliver::send_dm(&self.slack_bot, &task.user_id, no_messages_text).await;
             } else if let Some(resp_url) = &task.response_url {
                 self.send_response_url(resp_url, no_messages_text, Some(&task.user_id))
                     .await?;
@@ -138,15 +130,14 @@ impl BotHandler {
         }
 
         // Generate summary
-        match self
-            .slack_bot
-            .summarize_messages_with_chatgpt(
-                &self.config,
-                &messages,
-                source_channel_id,
-                task.custom_prompt.as_deref(),
-            )
-            .await
+        match summarize::summarize(
+            &self.slack_bot,
+            &self.config,
+            &messages,
+            source_channel_id,
+            task.custom_prompt.as_deref(),
+        )
+        .await
         {
             Ok(summary) => {
                 // Track if we've sent to at least one destination
@@ -158,53 +149,55 @@ impl BotHandler {
                         "Writing summary to Canvas for channel {}",
                         source_channel_id
                     );
-                    let canvas_helper = CanvasHelper::new(self.slack_bot.slack_client());
+                    // Create formatted summary for Canvas with timestamp in Central Time
+                    let now = chrono::Utc::now().with_timezone(&chrono_tz::US::Central);
+                    let tz_abbr = if now.format("%Z").to_string() == "CDT" {
+                        "CDT"
+                    } else {
+                        "CST"
+                    };
+                    let heading = format!(
+                        "TLDR - {} {} (God's time zone)",
+                        now.format("%Y-%m-%d %H:%M"),
+                        tz_abbr
+                    );
+                    // Get user's display name for attribution
+                    let user_name = match self
+                        .slack_bot
+                        .slack_client()
+                        .get_user_info(&task.user_id)
+                        .await
+                    {
+                        Ok(name) => name,
+                        Err(_) => format!("<@{}>", task.user_id),
+                    };
 
-                    match canvas_helper.ensure_channel_canvas(source_channel_id).await {
-                        Ok(canvas_id) => {
-                            // Create formatted summary for Canvas with timestamp in Central Time
-                            use chrono_tz::US::Central;
-                            let now = chrono::Utc::now().with_timezone(&Central);
-                            let tz_abbr = if now.format("%Z").to_string() == "CDT" {
-                                "CDT"
-                            } else {
-                                "CST"
-                            };
-                            let heading = format!(
-                                "TLDR - {} {} (God's time zone)",
-                                now.format("%Y-%m-%d %H:%M"),
-                                tz_abbr
-                            );
-                            // Get user's display name for attribution
-                            let user_name = match self.slack_bot.get_user_info(&task.user_id).await
-                            {
-                                Ok(name) => name,
-                                Err(_) => format!("<@{}>", task.user_id), // Fallback to mention if lookup fails
-                            };
+                    let canvas_content =
+                        format!("{summary}\n\n*Summary by {user_name} using TLDR bot*");
 
-                            let canvas_content =
-                                format!("{summary}\n\n*Summary by {user_name} using TLDR bot*");
-
-                            if let Err(e) = canvas_helper
-                                .prepend_summary_section(&canvas_id, &heading, &canvas_content)
-                                .await
-                            {
-                                error!("Failed to update Canvas: {}", e);
-                            } else {
-                                info!("Successfully updated Canvas {}", canvas_id);
-                                sent_successfully = true;
-                            }
-                        }
-                        Err(e) => {
-                            error!("Failed to ensure Canvas exists: {}", e);
-                        }
+                    if let Err(e) = deliver::deliver_to_canvas(
+                        &self.slack_bot,
+                        source_channel_id,
+                        &heading,
+                        &canvas_content,
+                    )
+                    .await
+                    {
+                        error!("Failed to update Canvas: {}", e);
+                    } else {
+                        info!(
+                            "Successfully updated Canvas for channel {}",
+                            source_channel_id
+                        );
+                        sent_successfully = true;
                     }
                 }
 
                 // Handle DM destination if requested
                 if task.dest_dm {
                     info!("Sending summary via DM to user {}", task.user_id);
-                    if let Err(e) = self.slack_bot.send_dm(&task.user_id, &summary).await {
+                    if let Err(e) = deliver::send_dm(&self.slack_bot, &task.user_id, &summary).await
+                    {
                         error!("Failed to send DM: {}", e);
                     } else {
                         sent_successfully = true;
@@ -222,10 +215,12 @@ impl BotHandler {
                         true,
                     );
 
-                    if let Err(e) = self
-                        .slack_bot
-                        .send_message_to_channel(source_channel_id, &message_content)
-                        .await
+                    if let Err(e) = deliver::send_message_to_channel(
+                        &self.slack_bot,
+                        source_channel_id,
+                        &message_content,
+                    )
+                    .await
                     {
                         error!("Failed to send public message: {}", e);
                     } else {
@@ -248,10 +243,12 @@ impl BotHandler {
                         task.visible,
                     );
 
-                    if let Err(e) = self
-                        .slack_bot
-                        .send_message_to_channel(target_channel, &message_content)
-                        .await
+                    if let Err(e) = deliver::send_message_to_channel(
+                        &self.slack_bot,
+                        target_channel,
+                        &message_content,
+                    )
+                    .await
                     {
                         error!("Failed to send to target channel: {}", e);
                     } else {
@@ -273,10 +270,12 @@ impl BotHandler {
                         true,
                     );
 
-                    if let Err(e) = self
-                        .slack_bot
-                        .send_message_to_channel(source_channel_id, &message_content)
-                        .await
+                    if let Err(e) = deliver::send_message_to_channel(
+                        &self.slack_bot,
+                        source_channel_id,
+                        &message_content,
+                    )
+                    .await
                     {
                         error!("Failed to send legacy visible message: {}", e);
                     } else {
@@ -291,7 +290,8 @@ impl BotHandler {
                     && !task.dest_public_post
                 {
                     info!("No destinations selected or all failed, defaulting to DM");
-                    if let Err(e) = self.slack_bot.send_dm(&task.user_id, &summary).await {
+                    if let Err(e) = deliver::send_dm(&self.slack_bot, &task.user_id, &summary).await
+                    {
                         error!("Failed to send fallback DM: {}", e);
                         // Last resort: try response_url
                         if let Some(resp_url) = &task.response_url {
@@ -311,7 +311,7 @@ impl BotHandler {
                     "Sorry, I couldn't generate a summary at this time. Please try again later.";
 
                 if task.dest_dm {
-                    let _ = self.slack_bot.send_dm(&task.user_id, error_message).await;
+                    let _ = deliver::send_dm(&self.slack_bot, &task.user_id, error_message).await;
                 } else if let Some(resp_url) = &task.response_url {
                     self.send_response_url(resp_url, error_message, Some(&task.user_id))
                         .await?;
