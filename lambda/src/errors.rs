@@ -18,6 +18,9 @@ pub enum SlackError {
 
     #[error("Failed to interact with AWS services: {0}")]
     AwsError(String),
+
+    #[error("General error: {0}")]
+    GeneralError(String),
 }
 
 impl From<SlackClientError> for SlackError {

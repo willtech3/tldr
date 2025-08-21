@@ -63,6 +63,7 @@
 /// // Re-export the module components as a public API
 pub mod bot;
 pub mod canvas;
+pub mod clients;
 pub mod core;
 pub mod domains;
 pub mod errors;
@@ -74,8 +75,9 @@ pub mod utils;
 pub mod views;
 
 // Public exports
-pub use bot::{SlackBot, estimate_tokens};
+pub use bot::SlackBot;
 pub use canvas::CanvasHelper;
+pub use clients::llm_client::estimate_tokens;
 pub use errors::SlackError;
 pub use formatting::format_summary_message;
 pub use prompt::{sanitize_custom_internal, sanitize_custom_prompt};
