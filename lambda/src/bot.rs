@@ -1,5 +1,6 @@
 use crate::clients::{LlmClient, SlackClient};
 use crate::utils::filters::filter_user_messages;
+use once_cell::sync::Lazy;
 
 use slack_morphism::{SlackFile, SlackHistoryMessage};
 
@@ -51,6 +52,11 @@ impl SlackBot {
     /// Get a reference to the Slack client for Canvas operations
     pub fn slack_client(&self) -> &SlackClient {
         &self.slack_client
+    }
+
+    /// Get a reference to the LLM client
+    pub fn llm_client(&self) -> &LlmClient {
+        &self.llm_client
     }
 
     pub async fn get_user_im_channel(&self, user_id: &str) -> Result<String, SlackError> {
