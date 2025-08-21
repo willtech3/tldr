@@ -16,11 +16,11 @@ use hmac::{Hmac, Mac};
 use lambda_runtime::{Error, LambdaEvent, run, service_fn};
 use once_cell::sync::Lazy;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::Sha256;
-use std::env;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tldr::core::config::AppConfig;
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -32,28 +32,11 @@ use tldr::{
     validate_view_submission,
 };
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ProcessingTask {
-    pub correlation_id: String,
-    pub user_id: String,
-    pub channel_id: String,
-    pub response_url: Option<String>,
-    pub text: String,
-    pub message_count: Option<u32>,
-    pub target_channel_id: Option<String>,
-    pub custom_prompt: Option<String>,
-    pub visible: bool,
-    // Destination flags for output routing
-    pub dest_canvas: bool,
-    pub dest_dm: bool,
-    pub dest_public_post: bool,
-}
+use tldr::core::models::ProcessingTask;
 
-async fn send_to_sqs(task: &ProcessingTask) -> Result<(), SlackError> {
+async fn send_to_sqs(task: &ProcessingTask, config: &AppConfig) -> Result<(), SlackError> {
     // Get queue URL from environment
-    let queue_url = env::var("PROCESSING_QUEUE_URL").map_err(|_| {
-        SlackError::AwsError("PROCESSING_QUEUE_URL environment variable not set".to_string())
-    })?;
+    let queue_url = &config.processing_queue_url;
 
     // Set up AWS SDK with new API
     let shared_config = aws_config::from_env().load().await;
@@ -256,9 +239,12 @@ fn build_task_from_view(
 }
 
 #[allow(dead_code)]
-async fn get_latest_message_ts(channel_id: &str) -> Result<Option<String>, SlackError> {
+async fn get_latest_message_ts(
+    channel_id: &str,
+    config: &AppConfig,
+) -> Result<Option<String>, SlackError> {
     // Initialize the SlackBot
-    let slack_bot = SlackBot::new().await?;
+    let slack_bot = SlackBot::new(config).await?;
 
     // Get the most recent message in the channel (limit to 1)
     let messages = slack_bot.get_last_n_messages(channel_id, 1).await?;
@@ -297,15 +283,14 @@ fn get_header_value<'a>(headers: &'a serde_json::Value, name: &str) -> Option<&'
 
 /// Verify Slack request signature to ensure authenticity
 /// Based on Slack's security guidelines: https://api.slack.com/authentication/verifying-requests-from-slack
-fn verify_slack_signature(request_body: &str, timestamp: &str, signature: &str) -> bool {
+fn verify_slack_signature(
+    request_body: &str,
+    timestamp: &str,
+    signature: &str,
+    config: &AppConfig,
+) -> bool {
     // Get signing secret from environment
-    let signing_secret = match env::var("SLACK_SIGNING_SECRET") {
-        Ok(secret) => secret,
-        Err(_) => {
-            error!("SLACK_SIGNING_SECRET environment variable not set");
-            return false;
-        }
-    };
+    let signing_secret = &config.slack_signing_secret;
 
     // Check if timestamp is within 5 minutes to prevent replay attacks
     if let Ok(ts) = timestamp.parse::<u64>() {
@@ -354,6 +339,10 @@ pub use self::function_handler as handler;
 pub async fn function_handler(
     event: LambdaEvent<serde_json::Value>,
 ) -> Result<impl Serialize, Error> {
+    let config = AppConfig::from_env().map_err(|e| {
+        error!("Config error: {}", e);
+        Error::from(e)
+    })?;
     info!("API Lambda received request: {:?}", event);
 
     // Extract headers and body from the Lambda event
@@ -412,7 +401,7 @@ pub async fn function_handler(
     };
 
     // Verify the Slack signature
-    if !verify_slack_signature(body, timestamp, signature) {
+    if !verify_slack_signature(body, timestamp, signature, &config) {
         error!("Slack signature verification failed");
         return Ok(json!({
             "statusCode": 401,
@@ -454,8 +443,9 @@ pub async fn function_handler(
                     .unwrap_or("")
                     .to_string();
                 let view_clone = view.clone();
+                let config_clone = config.clone();
                 let modal_handle = tokio::spawn(async move {
-                    match SlackBot::new().await {
+                    match SlackBot::new(&config_clone).await {
                         Ok(bot) => {
                             if let Err(e) = bot.open_modal(&trigger_id, &view_clone).await {
                                 error!("Failed to open modal: {}", e);
@@ -509,7 +499,7 @@ pub async fn function_handler(
                                     }));
                                 }
                             };
-                            if let Err(e) = send_to_sqs(&task).await {
+                            if let Err(e) = send_to_sqs(&task, &config).await {
                                 error!("Enqueue failed (correlation_id={}): {}", correlation_id, e);
                                 return Ok(json!({
                                     "statusCode": 200,
@@ -652,8 +642,9 @@ pub async fn function_handler(
         let view = build_tldr_modal(&prefill);
         let trigger_id = slack_event.trigger_id.clone();
         let view_clone = view.clone();
+        let config_clone = config.clone();
         let modal_handle = tokio::spawn(async move {
-            match SlackBot::new().await {
+            match SlackBot::new(&config_clone).await {
                 Ok(bot) => {
                     if let Err(e) = bot.open_modal(&trigger_id, &view_clone).await {
                         error!("Failed to open modal: {}", e);
@@ -702,7 +693,7 @@ pub async fn function_handler(
     };
 
     // Send to SQS for processing
-    if let Err(e) = send_to_sqs(&task).await {
+    if let Err(e) = send_to_sqs(&task, &config).await {
         error!(
             "Failed to enqueue task (correlation_id={}): {}",
             correlation_id, e

@@ -1,5 +1,6 @@
+use crate::utils::filters::filter_user_messages;
 use once_cell::sync::Lazy;
-use slack_morphism::events::SlackMessageEventType;
+
 use slack_morphism::hyper_tokio::{SlackClientHyperConnector, SlackHyperClient};
 use slack_morphism::prelude::*;
 use slack_morphism::{
@@ -14,13 +15,13 @@ use openai_api_rs::v1::chat_completion::{
 use reqwest::Client;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::env;
 use std::time::Duration;
 use tokio_retry::strategy::jitter;
 use tokio_retry::{Retry, strategy::ExponentialBackoff};
 use tracing::{debug, error, info, warn};
 use url::Url;
 
+use crate::core::config::AppConfig;
 use crate::errors::SlackError;
 use crate::prompt::sanitize_custom_internal;
 use crate::response::create_replace_original_payload;
@@ -80,11 +81,8 @@ pub struct SlackBot {
 }
 
 impl SlackBot {
-    pub async fn new() -> Result<Self, SlackError> {
-        let token = env::var("SLACK_BOT_TOKEN")
-            .map_err(|_| SlackError::ApiError("SLACK_BOT_TOKEN not found".to_string()))?;
-
-        let token = SlackApiToken::new(SlackApiTokenValue::new(token));
+    pub async fn new(config: &AppConfig) -> Result<Self, SlackError> {
+        let token = SlackApiToken::new(SlackApiTokenValue::new(config.slack_bot_token.clone()));
 
         Ok(Self { token })
     }
@@ -171,46 +169,9 @@ impl SlackBot {
             // Try to get bot user ID for filtering - do this BEFORE the filter operation
             let bot_user_id = self.get_bot_user_id().await.ok();
 
-            // Filter messages: Keep only those from users, exclude system messages AND bot's own messages
-            let filtered_messages: Vec<SlackHistoryMessage> = result
-                .messages
-                .into_iter()
-                .filter(|msg| {
-                    // Check if the sender is a user (not a bot or system)
-                    let is_user_message = msg.sender.user.is_some();
-
-                    // Check for common system subtypes to exclude (add more as needed)
-                    let is_system_message = match &msg.subtype {
-                        Some(subtype) => matches!(
-                            subtype,
-                            SlackMessageEventType::ChannelJoin
-                                | SlackMessageEventType::ChannelLeave
-                                | SlackMessageEventType::BotMessage // Add other subtypes like SlackMessageEventType::FileShare etc. if desired
-                        ),
-                        None => false, // Regular message, no subtype
-                    };
-
-                    // Check if it's a message from this bot
-                    let is_from_this_bot = if let Some(ref bot_id) = bot_user_id {
-                        msg.sender.user.as_ref().is_some_and(|uid| uid.0 == *bot_id)
-                    } else {
-                        false
-                    };
-
-                    // Check if the message contains "/tldr" (to exclude bot commands from summaries)
-                    let contains_tldr_command = msg
-                        .content
-                        .text
-                        .as_deref()
-                        .map(|text| text.contains("/tldr"))
-                        .unwrap_or(false);
-
-                    is_user_message
-                        && !is_system_message
-                        && !is_from_this_bot
-                        && !contains_tldr_command
-                })
-                .collect();
+            // Filter messages using the consolidated filter function
+            let filtered_messages: Vec<_> =
+                filter_user_messages(result.messages, bot_user_id.as_deref());
 
             info!(
                 "Fetched {} total messages, filtered down to {} user messages for summarization",
@@ -280,47 +241,12 @@ impl SlackBot {
             // Capture original length before processing
             let original_message_count = result.messages.len();
 
-            // Filter messages: Keep only those from users, exclude system messages AND bot's own messages
-            let filtered_messages: Vec<SlackHistoryMessage> = result
-                .messages
-                .into_iter()
-                .filter(|msg| {
-                    // Check if the sender is a user (not a bot or system)
-                    let is_user_message = msg.sender.user.is_some();
-
-                    // Check for common system subtypes to exclude (add more as needed)
-                    let is_system_message = match &msg.subtype {
-                        Some(subtype) => matches!(
-                            subtype,
-                            SlackMessageEventType::ChannelJoin
-                                | SlackMessageEventType::ChannelLeave
-                                | SlackMessageEventType::BotMessage // Add other subtypes like SlackMessageEventType::FileShare etc. if desired
-                        ),
-                        None => false, // Regular message, no subtype
-                    };
-
-                    // Check if it's a message from this bot
-                    let is_from_this_bot = if let Some(ref bot_id) = bot_user_id {
-                        msg.sender.user.as_ref().is_some_and(|uid| uid.0 == *bot_id)
-                    } else {
-                        false
-                    };
-
-                    // Check if the message contains "/tldr" (to exclude bot commands from summaries)
-                    let contains_tldr_command = msg
-                        .content
-                        .text
-                        .as_deref()
-                        .map(|text| text.contains("/tldr"))
-                        .unwrap_or(false);
-
-                    is_user_message
-                        && !is_system_message
-                        && !is_from_this_bot
-                        && !contains_tldr_command
-                })
-                .take(count as usize) // Limit to requested count after filtering
-                .collect();
+            // Filter messages using the consolidated filter function
+            let filtered_messages: Vec<_> =
+                filter_user_messages(result.messages, bot_user_id.as_deref())
+                    .into_iter()
+                    .take(count as usize)
+                    .collect();
 
             info!(
                 "Fetched {} total messages, filtered down to {} user messages for summarization",
@@ -759,6 +685,7 @@ impl SlackBot {
 
     pub async fn summarize_messages_with_chatgpt(
         &mut self,
+        config: &AppConfig,
         messages: &[SlackHistoryMessage],
         channel_id: &str,
         custom_prompt: Option<&str>,
@@ -1028,10 +955,8 @@ impl SlackBot {
         });
 
         // Get the OpenAI API key for direct HTTP request
-        let api_key = env::var("OPENAI_API_KEY")
-            .map_err(|_| SlackError::OpenAIError("OPENAI_API_KEY not found".to_string()))?;
-
-        let org_id = env::var("OPENAI_ORG_ID").ok();
+        let api_key = &config.openai_api_key;
+        let org_id = config.openai_org_id.as_ref();
 
         // Make direct HTTP request to OpenAI API with a short, defensive timeout
         let client = reqwest::Client::builder()

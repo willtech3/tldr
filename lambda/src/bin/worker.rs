@@ -6,43 +6,30 @@ use anyhow::Result;
 use lambda_runtime::{Error, LambdaEvent};
 use reqwest::Client as HttpClient;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{error, info};
 
 // Import shared modules
 use tldr::{CanvasHelper, SlackBot, SlackError, create_ephemeral_payload, format_summary_message};
 
-#[derive(Debug, Serialize, Deserialize)]
-struct ProcessingTask {
-    correlation_id: String,
-    user_id: String,
-    channel_id: String,
-    response_url: Option<String>,
-    text: String,
-    message_count: Option<u32>,
-    target_channel_id: Option<String>,
-    custom_prompt: Option<String>,
-    visible: bool,
-    // Destination flags for output routing
-    dest_canvas: bool,
-    dest_dm: bool,
-    dest_public_post: bool,
-}
+use tldr::core::config::AppConfig;
+use tldr::core::models::ProcessingTask;
 
 struct BotHandler {
     slack_bot: SlackBot,
     http_client: HttpClient,
+    config: AppConfig,
 }
 
 impl BotHandler {
-    async fn new() -> Result<Self, SlackError> {
-        let slack_bot = SlackBot::new().await?;
+    async fn new(config: &AppConfig) -> Result<Self, SlackError> {
+        let slack_bot = SlackBot::new(config).await?;
         let http_client = HttpClient::new();
 
         Ok(Self {
             slack_bot,
             http_client,
+            config: config.clone(),
         })
     }
 
@@ -154,6 +141,7 @@ impl BotHandler {
         match self
             .slack_bot
             .summarize_messages_with_chatgpt(
+                &self.config,
                 &messages,
                 source_channel_id,
                 task.custom_prompt.as_deref(),
@@ -338,6 +326,10 @@ impl BotHandler {
 pub use self::function_handler as handler;
 
 pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
+    let config = AppConfig::from_env().map_err(|e| {
+        error!("Config error: {}", e);
+        Error::from(e)
+    })?;
     info!(
         "Worker Lambda received SQS event payload: {:?}",
         event.payload
@@ -365,7 +357,7 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
     info!("Successfully parsed ProcessingTask: {:?}", task);
 
     // Create bot handler and process task using proper question mark error propagation
-    let mut handler = BotHandler::new()
+    let mut handler = BotHandler::new(&config)
         .await
         .map_err(|e| Error::from(format!("Failed to initialize bot: {}", e)))?;
 

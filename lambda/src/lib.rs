@@ -32,19 +32,29 @@
 ///
 /// ```no_run
 /// use tldr::SlackBot;
+/// use tldr::core::config::AppConfig;
 ///
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     // Set up structured logging
 ///     tldr::setup_logging();
 ///
+///     // Create a dummy AppConfig for the example
+///     let config = AppConfig {
+///         processing_queue_url: "dummy_url".to_string(),
+///         slack_signing_secret: "dummy_secret".to_string(),
+///         slack_bot_token: "dummy_token".to_string(),
+///         openai_api_key: "dummy_openai_key".to_string(),
+///         openai_org_id: None,
+///     };
+///
 ///     // Initialize the Slack bot
-///     let mut bot = SlackBot::new().await?;
+///     let mut bot = SlackBot::new(&config).await?;
 ///
 ///     // Get and summarize unread messages in a channel
 ///     let messages = bot.get_unread_messages("C12345678").await?;
 ///     if !messages.is_empty() {
-///         let summary = bot.summarize_messages_with_chatgpt(&messages, "C12345678", None).await?;
+///         let summary = bot.summarize_messages_with_chatgpt(&config, &messages, "C12345678", None).await?;
 ///         println!("Summary: {}", summary);
 ///     }
 ///
@@ -53,12 +63,14 @@
 /// // Re-export the module components as a public API
 pub mod bot;
 pub mod canvas;
+pub mod core;
 pub mod domains;
 pub mod errors;
 pub mod formatting;
 pub mod prompt;
 pub mod response;
 pub mod slack_parser;
+pub mod utils;
 pub mod views;
 
 // Public exports
