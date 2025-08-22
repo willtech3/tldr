@@ -57,8 +57,8 @@ pub async fn deliver_summary(
 
     if task.dest_canvas {
         info!(
-            "Writing summary to Canvas for channel {}",
-            source_channel_id
+            "Writing summary to Canvas for channel {} (corr_id={})",
+            source_channel_id, task.correlation_id
         );
         let canvas_helper = CanvasHelper::new(slack_bot.slack_client());
         match canvas_helper.ensure_channel_canvas(source_channel_id).await {
@@ -85,9 +85,15 @@ pub async fn deliver_summary(
                     .prepend_summary_section(&canvas_id, &heading, &canvas_content)
                     .await
                 {
-                    error!("Failed to update Canvas: {}", e);
+                    error!(
+                        "Failed to update Canvas: {} (corr_id={})",
+                        e, task.correlation_id
+                    );
                 } else {
-                    info!("Successfully updated Canvas {}", canvas_id);
+                    info!(
+                        "Successfully updated Canvas {} (corr_id={})",
+                        canvas_id, task.correlation_id
+                    );
                     sent_successfully = true;
                 }
             }
@@ -98,23 +104,32 @@ pub async fn deliver_summary(
     }
 
     if task.dest_dm {
-        info!("Sending summary via DM to user {}", task.user_id);
+        info!(
+            "Sending summary via DM to user {} (corr_id={})",
+            task.user_id, task.correlation_id
+        );
         if let Err(e) = slack_bot.send_dm(&task.user_id, summary).await {
-            error!("Failed to send DM: {}", e);
+            error!("Failed to send DM: {} (corr_id={})", e, task.correlation_id);
         } else {
             sent_successfully = true;
         }
     }
 
     if task.dest_public_post {
-        info!("Posting summary publicly to channel {}", source_channel_id);
+        info!(
+            "Posting summary publicly to channel {} (corr_id={})",
+            source_channel_id, task.correlation_id
+        );
         let message_content =
             format_summary_message(&task.user_id, source_channel_id, &task.text, summary, true);
         if let Err(e) = slack_bot
             .send_message_to_channel(source_channel_id, &message_content)
             .await
         {
-            error!("Failed to send public message: {}", e);
+            error!(
+                "Failed to send public message: {} (corr_id={})",
+                e, task.correlation_id
+            );
         } else {
             sent_successfully = true;
         }
@@ -125,7 +140,10 @@ pub async fn deliver_summary(
         .as_ref()
         .filter(|tc| *tc != source_channel_id)
     {
-        info!("Sending to target channel {}", target_channel);
+        info!(
+            "Sending to target channel {} (corr_id={})",
+            target_channel, task.correlation_id
+        );
         let message_content = format_summary_message(
             &task.user_id,
             source_channel_id,
@@ -137,7 +155,10 @@ pub async fn deliver_summary(
             .send_message_to_channel(target_channel, &message_content)
             .await
         {
-            error!("Failed to send to target channel: {}", e);
+            error!(
+                "Failed to send to target channel: {} (corr_id={})",
+                e, task.correlation_id
+            );
         } else {
             sent_successfully = true;
         }
@@ -145,8 +166,8 @@ pub async fn deliver_summary(
 
     if task.visible && !task.dest_public_post && task.target_channel_id.is_none() {
         info!(
-            "Legacy visible flag: posting publicly to {}",
-            source_channel_id
+            "Legacy visible flag: posting publicly to {} (corr_id={})",
+            source_channel_id, task.correlation_id
         );
         let message_content =
             format_summary_message(&task.user_id, source_channel_id, &task.text, summary, true);
@@ -154,16 +175,25 @@ pub async fn deliver_summary(
             .send_message_to_channel(source_channel_id, &message_content)
             .await
         {
-            error!("Failed to send legacy visible message: {}", e);
+            error!(
+                "Failed to send legacy visible message: {} (corr_id={})",
+                e, task.correlation_id
+            );
         } else {
             sent_successfully = true;
         }
     }
 
     if !sent_successfully && !task.dest_canvas && !task.dest_dm && !task.dest_public_post {
-        info!("No destinations selected or all failed, defaulting to DM");
+        info!(
+            "No destinations selected or all failed, defaulting to DM (corr_id={})",
+            task.correlation_id
+        );
         if let Err(e) = slack_bot.send_dm(&task.user_id, summary).await {
-            error!("Failed to send fallback DM: {}", e);
+            error!(
+                "Failed to send fallback DM: {} (corr_id={})",
+                e, task.correlation_id
+            );
             if let Some(resp_url) = &task.response_url {
                 send_response_url(
                     http_client,

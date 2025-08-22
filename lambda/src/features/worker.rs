@@ -10,6 +10,7 @@ use crate::core::config::AppConfig;
 use crate::core::models::ProcessingTask;
 use crate::features::{deliver, summarize};
 
+/// Lambda handler for the Worker entrypoint. Parses SQS message, summarizes, and delivers.
 pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
     let config = AppConfig::from_env().map_err(|e| {
         error!("Config error: {}", e);
