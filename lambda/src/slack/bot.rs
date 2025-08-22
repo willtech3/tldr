@@ -1,6 +1,6 @@
-use crate::ai::LlmClient;
 use super::client::SlackClient;
 use super::response_builder::create_replace_original_payload;
+use crate::ai::LlmClient;
 use crate::utils::filters::filter_user_messages;
 
 // no direct slack_morphism types needed after refactor
@@ -109,8 +109,7 @@ impl SlackBot {
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok());
-        let mut mime =
-            crate::ai::client::canonicalize_mime(header_mime.unwrap_or(fallback_mime));
+        let mut mime = crate::ai::client::canonicalize_mime(header_mime.unwrap_or(fallback_mime));
 
         // Ensure final mime is supported & canonical; fallback to provided mime otherwise
         if !self.llm_client.is_allowed_image_mime(&mime) {

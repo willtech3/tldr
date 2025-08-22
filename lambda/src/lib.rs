@@ -31,7 +31,7 @@
 /// # Example
 ///
 /// ```no_run
-/// use tldr::SlackBot;
+/// use tldr::slack::SlackBot;
 /// use tldr::core::config::AppConfig;
 ///
 /// #[tokio::main]
@@ -61,7 +61,8 @@
 ///
 ///     Ok(())
 /// }
-/// // Re-export the module components as a public API
+/// ```
+// Re-export the module components as a public API
 pub mod ai;
 pub mod api;
 pub mod core;
@@ -72,12 +73,12 @@ pub mod worker;
 
 // Backward compatibility re-exports (maintains existing public API)
 pub use ai::estimate_tokens;
+pub use ai::prompt_builder::{sanitize_custom_internal, sanitize_custom_prompt};
 pub use errors::SlackError;
-pub use slack::{SlackBot, CanvasHelper};
 pub use slack::message_formatter::format_summary_message;
 pub use slack::modal_builder::{Prefill, build_tldr_modal, validate_view_submission};
 pub use slack::response_builder::{create_ephemeral_payload, create_replace_original_payload};
-pub use ai::prompt_builder::{sanitize_custom_internal, sanitize_custom_prompt};
+pub use slack::{CanvasHelper, SlackBot};
 
 /// Configure structured logging with JSON format for AWS Lambda environments.
 ///

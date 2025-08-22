@@ -3,8 +3,8 @@
 use super::{parsing, signature, sqs, view_submission};
 use crate::core::config::AppConfig;
 use crate::core::models::ProcessingTask;
-use crate::slack::modal_builder::{Prefill, build_tldr_modal};
 use crate::slack::SlackBot;
+use crate::slack::modal_builder::{Prefill, build_tldr_modal};
 use lambda_runtime::{Error, LambdaEvent};
 use serde::Serialize;
 use serde_json::{Value, json};

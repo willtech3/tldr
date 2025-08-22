@@ -2,8 +2,8 @@
 #![allow(clippy::missing_errors_doc)]
 use crate::core::config::AppConfig;
 use crate::core::models::ProcessingTask;
-use crate::slack::SlackBot;
 use crate::errors::SlackError;
+use crate::slack::SlackBot;
 
 pub async fn summarize_task(
     slack_bot: &mut SlackBot,

@@ -5,10 +5,10 @@ use reqwest::Client as HttpClient;
 use serde_json::Value;
 use tracing::{error, info};
 
-use crate::slack::SlackBot;
+use super::{deliver, summarize};
 use crate::core::config::AppConfig;
 use crate::core::models::ProcessingTask;
-use super::{deliver, summarize};
+use crate::slack::SlackBot;
 
 /// Lambda handler for the Worker entrypoint. Parses SQS message, summarizes, and delivers.
 pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {

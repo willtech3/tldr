@@ -32,7 +32,7 @@ pub struct SlackCommandEvent {
 /// # Examples
 ///
 /// ```
-/// use tldr::slack_parser::decode_url_component;
+/// use tldr::slack::command_parser::decode_url_component;
 ///
 /// let encoded = "hello%20world";
 /// let decoded = decode_url_component(encoded).unwrap();
@@ -64,7 +64,7 @@ pub fn decode_url_component(input: &str) -> Result<String, String> {
 /// # Examples
 ///
 /// ```
-/// use tldr::slack_parser::parse_form_data;
+/// use tldr::slack::command_parser::parse_form_data;
 ///
 /// let form_data = "token=abc123&team_id=T123&team_domain=example&\
 ///                  channel_id=C123&channel_name=general&user_id=U123&\
