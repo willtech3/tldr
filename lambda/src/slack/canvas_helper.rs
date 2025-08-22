@@ -5,7 +5,7 @@
 //! - Upsert sections within a canvas
 //! - Generate permalink URLs for messages
 
-use crate::clients::SlackClient;
+use super::client::SlackClient;
 use crate::errors::SlackError;
 use tracing::{debug, info};
 /// Canvas helper functions

@@ -1,13 +1,10 @@
 //! API feature orchestrator: Slack signature verification, routing, and enqueue.
 
-mod parsing;
-mod signature;
-mod sqs;
-mod view_submission;
-
+use super::{parsing, signature, sqs, view_submission};
 use crate::core::config::AppConfig;
 use crate::core::models::ProcessingTask;
-use crate::{Prefill, SlackBot, build_tldr_modal};
+use crate::slack::modal_builder::{Prefill, build_tldr_modal};
+use crate::slack::SlackBot;
 use lambda_runtime::{Error, LambdaEvent};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -141,7 +138,7 @@ pub async fn function_handler(
                     correlation_id
                 );
                 if let Some(view) = payload.get("view") {
-                    match crate::views::validate_view_submission(view) {
+                    match crate::slack::modal_builder::validate_view_submission(view) {
                         Ok(()) => {
                             let user_id = parsing::v_str(&payload, &["user", "id"]).unwrap_or("");
                             let task = match view_submission::build_task_from_view(

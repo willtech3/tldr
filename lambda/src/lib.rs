@@ -62,29 +62,22 @@
 ///     Ok(())
 /// }
 /// // Re-export the module components as a public API
-pub mod bot;
-pub mod canvas;
-pub mod clients;
+pub mod ai;
+pub mod api;
 pub mod core;
-pub mod domains;
 pub mod errors;
-pub mod features;
-pub mod formatting;
-pub mod prompt;
-pub mod response;
-pub mod slack_parser;
+pub mod slack;
 pub mod utils;
-pub mod views;
+pub mod worker;
 
-// Public exports
-pub use bot::SlackBot;
-pub use canvas::CanvasHelper;
-pub use clients::llm_client::estimate_tokens;
+// Backward compatibility re-exports (maintains existing public API)
+pub use ai::estimate_tokens;
 pub use errors::SlackError;
-pub use formatting::format_summary_message;
-pub use prompt::{sanitize_custom_internal, sanitize_custom_prompt};
-pub use response::{create_ephemeral_payload, create_replace_original_payload};
-pub use views::{Prefill, build_tldr_modal, validate_view_submission};
+pub use slack::{SlackBot, CanvasHelper};
+pub use slack::message_formatter::format_summary_message;
+pub use slack::modal_builder::{Prefill, build_tldr_modal, validate_view_submission};
+pub use slack::response_builder::{create_ephemeral_payload, create_replace_original_payload};
+pub use ai::prompt_builder::{sanitize_custom_internal, sanitize_custom_prompt};
 
 /// Configure structured logging with JSON format for AWS Lambda environments.
 ///

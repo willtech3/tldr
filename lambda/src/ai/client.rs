@@ -9,7 +9,7 @@ use std::time::Duration;
 use tracing::info;
 
 use crate::errors::SlackError;
-use crate::prompt::sanitize_custom_internal;
+use super::prompt_builder::sanitize_custom_internal;
 
 const MAX_CONTEXT_TOKENS: usize = 400_000;
 const MAX_OUTPUT_TOKENS: usize = 100_000;

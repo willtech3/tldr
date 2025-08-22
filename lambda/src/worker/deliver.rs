@@ -7,7 +7,10 @@ use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use tracing::{error, info};
 
 use crate::core::models::ProcessingTask;
-use crate::{CanvasHelper, SlackBot, SlackError, create_ephemeral_payload, format_summary_message};
+use crate::slack::{SlackBot, CanvasHelper};
+use crate::slack::response_builder::create_ephemeral_payload;
+use crate::slack::message_formatter::format_summary_message;
+use crate::errors::SlackError;
 
 pub async fn send_response_url(
     http_client: &HttpClient,

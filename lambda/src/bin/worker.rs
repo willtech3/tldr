@@ -1,4 +1,4 @@
-pub use tldr::features::worker::handler;
+pub use tldr::worker::handler;
 
 #[tokio::main]
 async fn main() -> Result<(), lambda_runtime::Error> {

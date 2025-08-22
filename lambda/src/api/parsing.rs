@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::{
     SlackError,
-    slack_parser::{SlackCommandEvent, decode_url_component, parse_form_data},
+    slack::command_parser::{SlackCommandEvent, decode_url_component, parse_form_data},
 };
 
 pub fn is_interactive_body(body: &str) -> bool {
