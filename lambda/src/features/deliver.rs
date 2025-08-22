@@ -1,9 +1,7 @@
 use crate::core::models::ProcessingTask;
-use crate::{
-    CanvasHelper, SlackBot, SlackError, create_ephemeral_payload, format_summary_message,
-};
-use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
+use crate::{CanvasHelper, SlackBot, SlackError, create_ephemeral_payload, format_summary_message};
 use reqwest::Client as HttpClient;
+use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use tracing::{error, info};
 
 async fn send_response_url(
@@ -37,7 +35,7 @@ async fn send_response_url(
         );
 
         if let Some(user_id) = dm_fallback_user {
-            if let Err(dm_err) = slack_bot.send_dm(user_id, message).await {
+            if let Err(dm_err) = slack_bot.slack_client().send_dm(user_id, message).await {
                 error!("DM fallback failed for user {}: {}", user_id, dm_err);
             }
         }
@@ -59,8 +57,7 @@ pub async fn deliver_summary(
     if task.dest_canvas {
         info!(
             "Writing summary to Canvas for channel {} (corr_id={})",
-            source_channel_id,
-            task.correlation_id
+            source_channel_id, task.correlation_id
         );
         let canvas_helper = CanvasHelper::new(slack_bot.slack_client());
 
@@ -78,7 +75,7 @@ pub async fn deliver_summary(
                     now.format("%Y-%m-%d %H:%M"),
                     tz_abbr
                 );
-                let user_name = match slack_bot.get_user_info(&task.user_id).await {
+                let user_name = match slack_bot.slack_client().get_user_info(&task.user_id).await {
                     Ok(name) => name,
                     Err(_) => format!("<@{}>", task.user_id),
                 };
@@ -115,7 +112,11 @@ pub async fn deliver_summary(
             "Sending summary via DM to user {} (corr_id={})",
             task.user_id, task.correlation_id
         );
-        if let Err(e) = slack_bot.send_dm(&task.user_id, summary).await {
+        if let Err(e) = slack_bot
+            .slack_client()
+            .send_dm(&task.user_id, summary)
+            .await
+        {
             error!("Failed to send DM: {} (corr_id={})", e, task.correlation_id);
         } else {
             sent_successfully = true;
@@ -127,16 +128,12 @@ pub async fn deliver_summary(
             "Posting summary publicly to channel {} (corr_id={})",
             source_channel_id, task.correlation_id
         );
-        let message_content = format_summary_message(
-            &task.user_id,
-            source_channel_id,
-            &task.text,
-            summary,
-            true,
-        );
+        let message_content =
+            format_summary_message(&task.user_id, source_channel_id, &task.text, summary, true);
 
         if let Err(e) = slack_bot
-            .send_message_to_channel(source_channel_id, &message_content)
+            .slack_client()
+            .post_message(source_channel_id, &message_content)
             .await
         {
             error!(
@@ -166,7 +163,8 @@ pub async fn deliver_summary(
         );
 
         if let Err(e) = slack_bot
-            .send_message_to_channel(target_channel, &message_content)
+            .slack_client()
+            .post_message(target_channel, &message_content)
             .await
         {
             error!(
@@ -183,16 +181,12 @@ pub async fn deliver_summary(
             "Legacy visible flag: posting publicly to {} (corr_id={})",
             source_channel_id, task.correlation_id
         );
-        let message_content = format_summary_message(
-            &task.user_id,
-            source_channel_id,
-            &task.text,
-            summary,
-            true,
-        );
+        let message_content =
+            format_summary_message(&task.user_id, source_channel_id, &task.text, summary, true);
 
         if let Err(e) = slack_bot
-            .send_message_to_channel(source_channel_id, &message_content)
+            .slack_client()
+            .post_message(source_channel_id, &message_content)
             .await
         {
             error!(
@@ -209,7 +203,11 @@ pub async fn deliver_summary(
             "No destinations selected or all failed, defaulting to DM (corr_id={})",
             task.correlation_id
         );
-        if let Err(e) = slack_bot.send_dm(&task.user_id, summary).await {
+        if let Err(e) = slack_bot
+            .slack_client()
+            .send_dm(&task.user_id, summary)
+            .await
+        {
             error!(
                 "Failed to send fallback DM: {} (corr_id={})",
                 e, task.correlation_id
@@ -238,7 +236,10 @@ pub async fn deliver_error(
     message: &str,
 ) -> Result<(), SlackError> {
     if task.dest_dm {
-        let _ = slack_bot.send_dm(&task.user_id, message).await;
+        let _ = slack_bot
+            .slack_client()
+            .send_dm(&task.user_id, message)
+            .await;
     } else if let Some(resp_url) = &task.response_url {
         send_response_url(
             http_client,
