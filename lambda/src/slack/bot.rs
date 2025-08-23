@@ -125,9 +125,16 @@ impl SlackBot {
         url: &str,
         fallback_mime: &str,
     ) -> Result<String, SlackError> {
-        let response = HTTP_CLIENT
-            .get(url)
-            .timeout(Duration::from_secs(20))
+        // Use Slack auth when fetching private Slack file URLs to avoid receiving an HTML login page.
+        let mut req = HTTP_CLIENT.get(url).timeout(Duration::from_secs(20));
+        if let Ok(parsed) = Url::parse(url) {
+            if parsed.domain().is_some_and(|d| d.ends_with("slack.com")) {
+                // Reuse the bot token for authenticated file downloads
+                req = req.bearer_auth(self.slack_client.token().token_value.0.clone());
+            }
+        }
+
+        let response = req
             .send()
             .await
             .map_err(|e| SlackError::HttpError(format!("Failed to fetch image: {e}")))?;
