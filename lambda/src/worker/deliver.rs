@@ -62,6 +62,28 @@ pub async fn deliver_summary(
 ) -> Result<(), SlackError> {
     let mut sent_successfully = false;
 
+    // Determine target-channel semantics when combined with `visible`:
+    // - If a target is provided and it refers to the same channel as `source_channel_id`,
+    //   we should only post once to the current channel.
+    // - If a target is provided and it refers to a different channel, we should post
+    //   only to the target (skip the source channel even if `visible` is set).
+    let mut target_equals_source = false;
+    if let Some(target) = task.target_channel_id.as_ref() {
+        // Direct match against channel ID
+        if target == source_channel_id {
+            target_equals_source = true;
+        } else if let Ok(src_name) = slack_bot
+            .slack_client()
+            .get_channel_name(source_channel_id)
+            .await
+        {
+            let normalized = src_name.trim_start_matches('#').to_string();
+            if *target == normalized {
+                target_equals_source = true;
+            }
+        }
+    }
+
     if task.dest_canvas {
         info!(
             "Writing summary to Canvas for channel {} (corr_id={})",
@@ -126,7 +148,10 @@ pub async fn deliver_summary(
         }
     }
 
-    if task.dest_public_post {
+    // Public post to the source channel only when either:
+    // - No target is provided; or
+    // - Target is provided but it refers to the same channel as the source.
+    if task.dest_public_post && (task.target_channel_id.is_none() || target_equals_source) {
         info!(
             "Posting summary publicly to channel {} (corr_id={})",
             source_channel_id, task.correlation_id
@@ -150,7 +175,7 @@ pub async fn deliver_summary(
     if let Some(target_channel) = task
         .target_channel_id
         .as_ref()
-        .filter(|tc| *tc != source_channel_id)
+        .filter(|_| !target_equals_source)
     {
         info!(
             "Sending to target channel {} (corr_id={})",
