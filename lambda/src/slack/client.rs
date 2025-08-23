@@ -606,6 +606,123 @@ impl SlackClient {
             .ok_or_else(|| SlackError::GeneralError("No permalink in response".to_string()))
     }
 
+    /// Post a message with Block Kit `blocks` to a channel or thread.
+    ///
+    /// If `thread_ts_opt` is provided, the message will be posted as a reply in that thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Slack API request fails.
+    pub async fn post_message_with_blocks(
+        &self,
+        channel_id: &str,
+        thread_ts_opt: Option<&str>,
+        text_fallback: &str,
+        blocks: &Value,
+    ) -> Result<(), SlackError> {
+        let mut payload = json!({
+            "channel": channel_id,
+            "text": text_fallback,
+            "blocks": blocks,
+        });
+
+        if let Some(thread_ts) = thread_ts_opt {
+            payload["thread_ts"] = Value::String(thread_ts.to_string());
+        }
+
+        self.with_retry(|| async {
+            let resp = HTTP_CLIENT
+                .post("https://slack.com/api/chat.postMessage")
+                .bearer_auth(&self.token.token_value.0)
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|e| SlackError::GeneralError(format!("Failed to post message: {e}")))?;
+
+            if !resp.status().is_success() {
+                return Err(SlackError::ApiError(format!(
+                    "chat.postMessage HTTP {}",
+                    resp.status()
+                )));
+            }
+
+            let body: Value = resp.json().await.map_err(|e| {
+                SlackError::GeneralError(format!("chat.postMessage JSON parse error: {e}"))
+            })?;
+
+            if !body.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+                return Err(SlackError::ApiError(format!(
+                    "chat.postMessage error: {}",
+                    body.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown")
+                )));
+            }
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Set suggested prompts for an assistant thread in Slack's AI Apps surface.
+    /// Note: This uses the documented `assistant.threads.setSuggestedPrompts` endpoint.
+    /// The payload shape may evolve; failures are logged as API errors.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP call fails or Slack returns an error.
+    pub async fn assistant_set_suggested_prompts(
+        &self,
+        channel_id: &str,
+        thread_ts: &str,
+        suggestions: &[&str],
+    ) -> Result<(), SlackError> {
+        let prompts: Vec<Value> = suggestions.iter().map(|s| json!({ "text": s })).collect();
+
+        let payload = json!({
+            "channel": channel_id,
+            "thread_ts": thread_ts,
+            "prompts": prompts,
+        });
+
+        self.with_retry(|| async {
+            let resp = HTTP_CLIENT
+                .post("https://slack.com/api/assistant.threads.setSuggestedPrompts")
+                .bearer_auth(&self.token.token_value.0)
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|e| {
+                    SlackError::GeneralError(format!("Failed to set suggested prompts: {e}"))
+                })?;
+
+            if !resp.status().is_success() {
+                return Err(SlackError::ApiError(format!(
+                    "assistant.threads.setSuggestedPrompts HTTP {}",
+                    resp.status()
+                )));
+            }
+
+            let body: Value = resp.json().await.map_err(|e| {
+                SlackError::GeneralError(format!(
+                    "assistant.threads.setSuggestedPrompts JSON parse error: {e}"
+                ))
+            })?;
+
+            if !body.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+                return Err(SlackError::ApiError(format!(
+                    "assistant.threads.setSuggestedPrompts error: {}",
+                    body.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown")
+                )));
+            }
+
+            Ok(())
+        })
+        .await
+    }
+
     /// # Errors
     ///
     /// Returns an error if the Slack API request or response parsing fails.

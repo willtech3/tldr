@@ -29,6 +29,9 @@ features:
 oauth_config:
   scopes:
     bot:
+      - assistant:write
+      - im:history
+      - chat:write
       - channels:history
       - channels:read
       - chat:write
@@ -52,7 +55,9 @@ settings:
     # Replace YOUR-API-ID and YOUR-REGION with your actual values
     request_url: "https://YOUR-API-ID.execute-api.YOUR-REGION.amazonaws.com/prod/slack/events"
     bot_events:
-      - app_home_opened
+      - assistant_thread_started
+      - assistant_thread_context_changed
+      - message.im
   interactivity:
     is_enabled: true
     # Replace YOUR-API-ID and YOUR-REGION with your actual values
