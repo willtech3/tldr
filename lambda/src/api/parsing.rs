@@ -3,7 +3,7 @@ use regex::Regex;
 use serde_json::Value;
 
 use crate::{
-    SlackError,
+    errors::SlackError,
     slack::command_parser::{SlackCommandEvent, decode_url_component, parse_form_data},
 };
 

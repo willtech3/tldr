@@ -1,5 +1,5 @@
 use std::error::Error;
-use tldr::SlackError;
+use tldr::errors::SlackError;
 
 #[test]
 fn test_slack_error_implements_error_trait() {

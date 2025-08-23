@@ -1,8 +1,9 @@
 use serde_json::Value;
 
 use super::parsing::{v_array, v_path, v_str};
+use crate::ai::prompt_builder::sanitize_custom_prompt;
 use crate::core::models::ProcessingTask;
-use crate::{SlackError, sanitize_custom_prompt};
+use crate::errors::SlackError;
 
 pub fn build_task_from_view(
     user_id: &str,

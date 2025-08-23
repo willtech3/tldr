@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::Path;
-use tldr::estimate_tokens;
+use tldr::ai::estimate_tokens;
 
 // Tests for the utility function estimate_tokens
 #[test]

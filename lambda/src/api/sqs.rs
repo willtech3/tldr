@@ -1,5 +1,5 @@
-use crate::SlackError;
 use crate::core::{config::AppConfig, models::ProcessingTask};
+use crate::errors::SlackError;
 use aws_sdk_sqs::Client as SqsClient;
 
 pub async fn send_to_sqs(task: &ProcessingTask, config: &AppConfig) -> Result<(), SlackError> {
