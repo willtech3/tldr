@@ -3,6 +3,7 @@ use super::response_builder::create_replace_original_payload;
 use crate::ai::LlmClient;
 use base64::Engine;
 use base64::engine::general_purpose;
+use futures::future::join_all;
 use openai_api_rs::v1::chat_completion::{
     self as chat_completion, ChatCompletionMessage, Content, ContentType, ImageUrl, ImageUrlType,
     MessageRole,
@@ -312,16 +313,21 @@ impl SlackBot {
             })
             .collect();
 
-        // Fetch all user info in advance and build a cache
+        // Fetch all user info concurrently and build a cache
+        let slack_client = &self.slack_client;
+        let fetches = user_ids
+            .iter()
+            .map(|uid| async move { (uid.clone(), slack_client.get_user_info(uid).await) });
+
         let mut user_info_cache = HashMap::new();
-        for user_id in user_ids {
-            match self.slack_client.get_user_info(&user_id).await {
+        for (uid, res) in join_all(fetches).await {
+            match res {
                 Ok(name) => {
-                    user_info_cache.insert(user_id, name);
+                    user_info_cache.insert(uid, name);
                 }
                 Err(e) => {
-                    error!("Failed to get user info for {}: {}", user_id, e);
-                    user_info_cache.insert(user_id.clone(), user_id);
+                    error!("Failed to get user info for {}: {}", uid, e);
+                    user_info_cache.insert(uid.clone(), uid);
                 }
             }
         }
