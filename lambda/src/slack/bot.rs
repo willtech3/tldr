@@ -143,21 +143,62 @@ impl SlackBot {
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok());
-        let mut mime = crate::ai::client::canonicalize_mime(header_mime.unwrap_or(fallback_mime));
-
-        // Ensure final mime is supported & canonical; fallback to provided mime otherwise
-        if !self.llm_client.is_allowed_image_mime(&mime) {
-            mime = crate::ai::client::canonicalize_mime(fallback_mime);
-        }
+        // Prefer server-declared MIME if present; if it's not an allowed image, treat as failure
+        // to avoid embedding HTML or other non-image content as a data URI.
+        let mime = if let Some(h) = header_mime {
+            let canon = crate::ai::client::canonicalize_mime(h);
+            if !self.llm_client.is_allowed_image_mime(&canon) {
+                return Err(SlackError::GeneralError(format!(
+                    "Remote content-type not an allowed image: {canon}"
+                )));
+            }
+            canon
+        } else {
+            // No header provided; fall back to the caller-provided guess but still validate later via magic bytes
+            crate::ai::client::canonicalize_mime(fallback_mime)
+        };
 
         let bytes = response
             .bytes()
             .await
             .map_err(|e| SlackError::HttpError(format!("Failed to read image bytes: {e}")))?;
 
+        // Lightweight magic-byte check to ensure the payload looks like the claimed image type
+        if !Self::looks_like_image(&bytes, &mime) {
+            return Err(SlackError::GeneralError(
+                "Fetched bytes do not look like a valid image".to_string(),
+            ));
+        }
+
         let encoded = general_purpose::STANDARD.encode(&bytes);
 
         Ok(format!("data:{mime};base64,{encoded}"))
+    }
+
+    #[allow(clippy::similar_names)]
+    fn looks_like_image(bytes: &[u8], mime: &str) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
+        match mime {
+            "image/png" => {
+                // PNG magic: 89 50 4E 47
+                bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47])
+            }
+            "image/jpeg" => {
+                // JPEG magic: FF D8
+                bytes.starts_with(&[0xFF, 0xD8])
+            }
+            "image/gif" => {
+                // GIF87a or GIF89a
+                bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")
+            }
+            "image/webp" => {
+                // WEBP: RIFF....WEBP
+                bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP"
+            }
+            _ => false,
+        }
     }
 
     async fn fetch_image_size(&self, url: &str) -> Result<Option<usize>, SlackError> {
@@ -371,7 +412,23 @@ impl SlackBot {
                                     text: None,
                                     image_url: Some(ImageUrlType { url: data_uri }),
                                 }),
-                                Err(e) => error!("Failed to fetch image {}: {}", url, e),
+                                Err(e) => {
+                                    error!(
+                                        "Inline fetch failed for {}: {} — falling back to public URL",
+                                        url, e
+                                    );
+                                    match self.ensure_public_file_url(file).await {
+                                        Ok(public_url) => imgs.push(ImageUrl {
+                                            r#type: ContentType::image_url,
+                                            text: None,
+                                            image_url: Some(ImageUrlType { url: public_url }),
+                                        }),
+                                        Err(e2) => error!(
+                                            "Failed to get public URL for image {} after inline failure: {}",
+                                            url, e2
+                                        ),
+                                    }
+                                }
                             }
                         } else {
                             match self.ensure_public_file_url(file).await {
