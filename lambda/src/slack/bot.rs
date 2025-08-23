@@ -1,12 +1,6 @@
 use super::client::SlackClient;
 use super::response_builder::create_replace_original_payload;
 use crate::ai::LlmClient;
-// use crate::utils::filters::filter_user_messages; // unused
-use std::collections::{HashMap, HashSet};
-
-// no direct slack_morphism types needed after refactor
-
-// removed unused imports after refactor
 use base64::Engine;
 use base64::engine::general_purpose;
 use once_cell::sync::Lazy;
@@ -17,6 +11,7 @@ use openai_api_rs::v1::chat_completion::{
 use reqwest::Client;
 use serde_json::Value;
 use slack_morphism::{SlackFile, SlackHistoryMessage};
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 use url::Url;
@@ -67,20 +62,6 @@ impl SlackBot {
         &self.llm_client
     }
 
-    // removed: use SlackClient::get_user_im_channel directly
-
-    // removed: use SlackClient::get_bot_user_id directly
-
-    // deprecated: moved to features::collect::get_unread_messages
-
-    // removed: use SlackClient::get_user_info directly
-
-    // deprecated: moved to features::collect::get_last_n_messages
-
-    // removed: use SlackClient::send_dm directly
-
-    // removed: use SlackClient::post_message directly
-
     /// Opens a Block Kit modal using Slack's `views.open` API.
     pub async fn open_modal(&self, trigger_id: &str, view: &Value) -> Result<(), SlackError> {
         self.slack_client.open_modal(trigger_id, view).await
@@ -117,10 +98,6 @@ impl SlackBot {
                 info!("Successfully replaced original message via response_url");
             })
     }
-
-    // removed: handled in features/summarize or via SlackClient public URLs
-
-    // removed: use SlackClient::fetch_image_size via features where needed
 
     // Fetch image and return as data URI for inline model consumption
     async fn fetch_image_as_data_uri(
@@ -466,5 +443,3 @@ impl SlackBot {
         Ok(formatted_summary)
     }
 }
-
-// removed: shared helper lives in utils::mime

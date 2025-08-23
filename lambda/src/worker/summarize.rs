@@ -24,16 +24,16 @@ pub async fn summarize_task(
             .await?
     };
 
-    if (task.visible || task.dest_public_post)
-        && let Ok(bot_id) = slack_bot.slack_client().get_bot_user_id().await
-    {
-        messages.retain(|msg| {
-            if let Some(user_id) = &msg.sender.user {
-                user_id.0 != bot_id
-            } else {
-                true
-            }
-        });
+    if task.visible || task.dest_public_post {
+        if let Ok(bot_id) = slack_bot.slack_client().get_bot_user_id().await {
+            messages.retain(|msg| {
+                if let Some(user_id) = &msg.sender.user {
+                    user_id.0 != bot_id
+                } else {
+                    true
+                }
+            });
+        }
     }
 
     if messages.is_empty() {

@@ -430,6 +430,5 @@ pub async fn notify_no_messages(
         )
         .await?;
     }
->>>>>>> 9e198ab (refactor: slim down lambda binaries)
     Ok(())
 }
