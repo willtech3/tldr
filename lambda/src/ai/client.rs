@@ -156,15 +156,13 @@ impl LlmClient {
     pub async fn generate_summary(
         &self,
         prompt: Vec<ChatCompletionMessage>,
-        channel_name: &str,
     ) -> Result<String, SlackError> {
         #[cfg(feature = "debug-logs")]
         info!("Using ChatGPT prompt:\n{:?}", prompt);
 
         #[cfg(not(feature = "debug-logs"))]
         info!(
-            "Generating summary for channel {} with {} messages in prompt",
-            channel_name,
+            "Generating summary with {} messages in prompt",
             prompt.len()
         );
 
@@ -427,7 +425,7 @@ mod tests {
         let prompt = client.build_prompt(&big_text, None);
 
         // Should return early with the friendly fallback without performing a network call
-        let res = client.generate_summary(prompt, "chan").await.unwrap();
+        let res = client.generate_summary(prompt).await.unwrap();
         assert_eq!(
             res,
             "The conversation is too long to summarize in full. Please use the `/tldr last N` command to summarize the most recent N messages instead.".to_string()
