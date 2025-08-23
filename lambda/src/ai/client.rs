@@ -295,6 +295,12 @@ impl LlmClient {
     pub fn get_url_image_max_bytes(&self) -> usize {
         URL_IMAGE_MAX_BYTES
     }
+
+    #[must_use]
+    pub fn get_max_images_total(&self) -> usize {
+        // Conservative cap to avoid excessive image inputs and API errors
+        6
+    }
 }
 /// Build Responses API input payload from a chat-style prompt.
 /// - Filters out assistant messages (Responses treats assistant content as output)

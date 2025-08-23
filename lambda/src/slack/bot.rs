@@ -319,6 +319,11 @@ impl SlackBot {
                     }
                 }
                 if !imgs.is_empty() {
+                    // Cap total images to avoid invalid_request_error and huge payloads
+                    let cap = self.llm_client.get_max_images_total();
+                    if imgs.len() > cap {
+                        imgs.truncate(cap);
+                    }
                     // Determine if original Slack message had any visible text
                     let text_is_empty = msg
                         .content
