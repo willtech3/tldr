@@ -1,18 +1,36 @@
 use super::client::SlackClient;
 use super::response_builder::create_replace_original_payload;
 use crate::ai::LlmClient;
-use crate::utils::filters::filter_user_messages;
+// use crate::utils::filters::filter_user_messages; // unused
+use std::collections::{HashMap, HashSet};
 
 // no direct slack_morphism types needed after refactor
 
 // removed unused imports after refactor
+use base64::Engine;
+use base64::engine::general_purpose;
+use once_cell::sync::Lazy;
+use openai_api_rs::v1::chat_completion::{
+    self as chat_completion, ChatCompletionMessage, Content, ContentType, ImageUrl, ImageUrlType,
+    MessageRole,
+};
+use reqwest::Client;
 use serde_json::Value;
-use tracing::{error, info};
+use slack_morphism::{SlackFile, SlackHistoryMessage};
+use std::time::Duration;
+use tracing::{debug, error, info, warn};
+use url::Url;
 
 use crate::core::config::AppConfig;
 use crate::errors::SlackError;
 
-// removed HTTP client; moved image and HTTP specifics to SlackClient/features
+// HTTP client for image fetches
+static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
+    Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .expect("failed to build HTTP client")
+});
 
 /// Common Slack functionality
 pub struct SlackBot {
@@ -104,7 +122,19 @@ impl SlackBot {
 
     // removed: use SlackClient::fetch_image_size via features where needed
 
-    // removed: SlackClient::ensure_public_file_url; URL helpers; prompt building; summarize implementation
+    // Fetch image and return as data URI for inline model consumption
+    async fn fetch_image_as_data_uri(
+        &self,
+        url: &str,
+        fallback_mime: &str,
+    ) -> Result<String, SlackError> {
+        let response = HTTP_CLIENT
+            .get(url)
+            .timeout(Duration::from_secs(20))
+            .send()
+            .await
+            .map_err(|e| SlackError::HttpError(format!("Failed to fetch image: {}", e)))?;
+
         let header_mime = response
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
@@ -128,6 +158,35 @@ impl SlackBot {
 
     async fn fetch_image_size(&self, url: &str) -> Result<Option<usize>, SlackError> {
         self.slack_client.fetch_image_size(url).await
+    }
+
+    // Validate a candidate public URL and return its canonical content-type if supported
+    async fn validate_candidate(&self, url: &Url) -> Result<Option<String>, SlackError> {
+        if let Ok(resp) = HTTP_CLIENT
+            .head(url.clone())
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await
+        {
+            let status = resp.status();
+            let ct = resp
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("(unknown)");
+            info!("HEAD {} -> {} (CT={})", url, status, ct);
+            if status.is_client_error() || status.is_server_error() {
+                warn!("Public URL returned error status {}", status);
+                return Ok(None);
+            }
+            let canon_ct = crate::ai::client::canonicalize_mime(ct);
+            if self.llm_client.is_allowed_image_mime(&canon_ct) {
+                return Ok(Some(canon_ct));
+            }
+        } else {
+            warn!("HEAD request failed for {}", url);
+        }
+        Ok(None)
     }
 
     async fn ensure_public_file_url(&self, file: &SlackFile) -> Result<String, SlackError> {
@@ -176,39 +235,7 @@ impl SlackBot {
         // First attempt: original /download/ path (direct already has it)
         let mut candidate = direct.clone();
 
-        // Inner helper – returns Ok(url) if supported image mime obtained
-        async fn validate_candidate(
-            url: &Url,
-            llm_client: &crate::ai::client::LlmClient,
-        ) -> Result<Option<String>, SlackError> {
-            if let Ok(resp) = HTTP_CLIENT
-                .head(url.clone())
-                .timeout(Duration::from_secs(10))
-                .send()
-                .await
-            {
-                let status = resp.status();
-                let ct = resp
-                    .headers()
-                    .get(reqwest::header::CONTENT_TYPE)
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("(unknown)");
-                info!("HEAD {} -> {} (CT={})", url, status, ct);
-                if status.is_client_error() || status.is_server_error() {
-                    warn!("Public URL returned error status {}", status);
-                    return Ok(None);
-                }
-                let canon_ct = crate::ai::client::canonicalize_mime(ct);
-                if llm_client.is_allowed_image_mime(&canon_ct) {
-                    return Ok(Some(canon_ct));
-                }
-            } else {
-                warn!("HEAD request failed for {}", url);
-            }
-            Ok(None)
-        }
-
-        let is_supported = validate_candidate(&candidate, &self.llm_client).await?;
+        let is_supported = self.validate_candidate(&candidate).await?;
 
         // If first candidate was unsupported, try without "/download/" segment
         if is_supported.is_none() && candidate.path().contains("/download/") {
@@ -219,7 +246,7 @@ impl SlackBot {
             let mut alt = candidate.clone();
             alt.set_path(&new_path);
 
-            if let Some(_ct) = validate_candidate(&alt, &self.llm_client).await? {
+            if let Some(_ct) = self.validate_candidate(&alt).await? {
                 candidate = alt;
             } else {
                 warn!("Both download and non-download variants had unsupported MIME types");
@@ -282,7 +309,7 @@ impl SlackBot {
         // Fetch all user info in advance and build a cache
         let mut user_info_cache = HashMap::new();
         for user_id in user_ids {
-            match self.get_user_info(&user_id).await {
+            match self.slack_client.get_user_info(&user_id).await {
                 Ok(name) => {
                     user_info_cache.insert(user_id, name);
                 }
