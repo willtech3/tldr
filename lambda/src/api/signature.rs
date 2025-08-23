@@ -13,13 +13,14 @@ pub fn verify_slack_signature(
 ) -> bool {
     let signing_secret = &config.slack_signing_secret;
 
-    if let Ok(ts) = timestamp.parse::<u64>() {
-        if let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) {
-            let now_secs = now.as_secs();
-            if now_secs - ts > 300 || ts > now_secs + 60 {
-                error!("Timestamp out of range, potential replay attack");
-                return false;
-            }
+    if let (Ok(ts), Ok(now)) = (
+        timestamp.parse::<u64>(),
+        SystemTime::now().duration_since(UNIX_EPOCH),
+    ) {
+        let now_secs = now.as_secs();
+        if now_secs - ts > 300 || ts > now_secs + 60 {
+            error!("Timestamp out of range, potential replay attack");
+            return false;
         }
     }
 
