@@ -81,6 +81,149 @@ pub async fn function_handler(
 
     info!("Slack signature verified successfully");
 
+    // Slack Events API (JSON) — handle before interactive/slash parsing
+    if let Ok(json_body) = serde_json::from_str::<Value>(body) {
+        // URL verification handshake
+        if json_body
+            .get("type")
+            .and_then(|t| t.as_str())
+            .is_some_and(|t| t == "url_verification")
+        {
+            let challenge = json_body
+                .get("challenge")
+                .and_then(|c| c.as_str())
+                .unwrap_or("");
+            return Ok(json!({
+                "statusCode": 200,
+                "body": challenge
+            }));
+        }
+
+        // Event callbacks
+        if json_body
+            .get("type")
+            .and_then(|t| t.as_str())
+            .is_some_and(|t| t == "event_callback")
+        {
+            let Some(event) = json_body.get("event") else {
+                return Ok(json!({ "statusCode": 200, "body": "{}" }));
+            };
+            let e_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
+
+            match e_type {
+                // AI App entry: user opened the assistant thread
+                "assistant_thread_started" => {
+                    // Extract channel and thread_ts from event payload (support multiple shapes)
+                    let channel_id = event
+                        .get("channel")
+                        .and_then(|c| c.as_str())
+                        .or_else(|| {
+                            event
+                                .get("channel")
+                                .and_then(|c| c.get("id"))
+                                .and_then(|id| id.as_str())
+                        })
+                        .unwrap_or("");
+                    let thread_ts = event
+                        .get("thread_ts")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("");
+
+                    if !channel_id.is_empty() && !thread_ts.is_empty() {
+                        // Fire-and-forget: set suggested prompts and post a first reply with a Configure button
+                        let config_clone = config.clone();
+                        let channel = channel_id.to_string();
+                        let tts = thread_ts.to_string();
+                        tokio::spawn(async move {
+                            if let Ok(bot) = SlackBot::new(&config_clone) {
+                                let suggestions = [
+                                    "Summarize unread",
+                                    "Summarize last 50",
+                                    "Open configuration",
+                                ];
+                                let _ = bot
+                                    .slack_client()
+                                    .assistant_set_suggested_prompts(&channel, &tts, &suggestions)
+                                    .await;
+
+                                let blocks = json!([
+                                    { "type": "section", "text": {"type": "mrkdwn", "text": "Ready to summarize. Configure options or choose a suggested prompt."}},
+                                    { "type": "actions", "elements": [
+                                        { "type": "button", "text": {"type": "plain_text", "text": "Configure summary"}, "action_id": "tldr_open_config", "style": "primary" }
+                                    ]}
+                                ]);
+
+                                let _ = bot
+                                    .slack_client()
+                                    .post_message_with_blocks(
+                                        &channel,
+                                        Some(&tts),
+                                        "Configure summary",
+                                        &blocks,
+                                    )
+                                    .await;
+                            }
+                        });
+                    }
+
+                    return Ok(json!({ "statusCode": 200, "body": "{}" }));
+                }
+                // User sent a message in the assistant thread (e.g., chose a suggested prompt)
+                "message.im" | "message" => {
+                    let channel_id = event.get("channel").and_then(|c| c.as_str()).unwrap_or("");
+                    // Prefer thread_ts if present, else fall back to ts
+                    let thread_ts = event
+                        .get("thread_ts")
+                        .and_then(|t| t.as_str())
+                        .or_else(|| event.get("ts").and_then(|t| t.as_str()))
+                        .unwrap_or("");
+                    let text_lc = event
+                        .get("text")
+                        .and_then(|t| t.as_str())
+                        .map(str::to_lowercase)
+                        .unwrap_or_default();
+
+                    // For Phase 1: only handle customization path by offering an Open config button
+                    let should_offer_config = text_lc.contains("customize")
+                        || text_lc.contains("open config")
+                        || text_lc.contains("open configuration");
+
+                    if !channel_id.is_empty() && !thread_ts.is_empty() && should_offer_config {
+                        let config_clone = config.clone();
+                        let channel = channel_id.to_string();
+                        let tts = thread_ts.to_string();
+                        tokio::spawn(async move {
+                            if let Ok(bot) = SlackBot::new(&config_clone) {
+                                let blocks = json!([
+                                    { "type": "section", "text": {"type": "mrkdwn", "text": "Click to configure TLDR options:"}},
+                                    { "type": "actions", "elements": [
+                                        { "type": "button", "text": {"type": "plain_text", "text": "Open config"}, "action_id": "tldr_open_config", "style": "primary" }
+                                    ]}
+                                ]);
+
+                                let _ = bot
+                                    .slack_client()
+                                    .post_message_with_blocks(
+                                        &channel,
+                                        Some(&tts),
+                                        "Open config",
+                                        &blocks,
+                                    )
+                                    .await;
+                            }
+                        });
+                    }
+
+                    return Ok(json!({ "statusCode": 200, "body": "{}" }));
+                }
+                _ => {
+                    // No-op for other events in Phase 1
+                    return Ok(json!({ "statusCode": 200, "body": "{}" }));
+                }
+            }
+        }
+    }
+
     // Interactive vs slash
     if parsing::is_interactive_body(body) {
         let payload = match parsing::parse_interactive_payload(body) {
@@ -124,6 +267,49 @@ pub async fn function_handler(
                 });
                 let _ = tokio::time::timeout(std::time::Duration::from_millis(2000), modal_handle)
                     .await;
+                return Ok(json!({ "statusCode": 200, "body": "{}" }));
+            }
+            // Open config button from actions block
+            "block_actions" => {
+                let actions = parsing::v_array(&payload, &["actions"])
+                    .cloned()
+                    .unwrap_or_default();
+                let open_clicked = actions.iter().any(|a| {
+                    a.get("action_id")
+                        .and_then(|id| id.as_str())
+                        .is_some_and(|id| id == "tldr_open_config")
+                });
+
+                if open_clicked {
+                    let prefill = Prefill {
+                        last_n: Some(100),
+                        dest_canvas: true,
+                        dest_dm: true,
+                        dest_public_post: false,
+                        ..Default::default()
+                    };
+
+                    let view = build_tldr_modal(&prefill);
+                    let trigger_id = parsing::v_str(&payload, &["trigger_id"])
+                        .unwrap_or("")
+                        .to_string();
+                    let view_clone = view.clone();
+                    let config_clone = config.clone();
+                    let modal_handle = tokio::spawn(async move {
+                        match SlackBot::new(&config_clone) {
+                            Ok(bot) => {
+                                if let Err(e) = bot.open_modal(&trigger_id, &view_clone).await {
+                                    error!("Failed to open modal from block_actions: {}", e);
+                                }
+                            }
+                            Err(e) => error!("Failed to initialize SlackBot for views.open: {}", e),
+                        }
+                    });
+                    let _ =
+                        tokio::time::timeout(std::time::Duration::from_millis(2000), modal_handle)
+                            .await;
+                }
+
                 return Ok(json!({ "statusCode": 200, "body": "{}" }));
             }
             "view_submission" => {
