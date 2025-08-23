@@ -137,9 +137,16 @@ export class TldrStack extends cdk.Stack {
     const commands = api.root.addResource('commands');
     commands.addMethod('POST', tldrIntegration);
 
+    // Slack surface resources
+    const slack = api.root.addResource('slack');
+
     // Add a resource and method for Slack interactive payloads (shortcuts, view_submission)
-    const interactive = api.root.addResource('slack').addResource('interactive');
+    const interactive = slack.addResource('interactive');
     interactive.addMethod('POST', tldrIntegration);
+
+    // Add a resource and method for Slack Events API (url_verification, event_callback)
+    const events = slack.addResource('events');
+    events.addMethod('POST', tldrIntegration);
 
     // Output the API endpoint URL
     new cdk.CfnOutput(this, 'ApiUrl', {
