@@ -670,6 +670,42 @@ impl SlackClient {
         Ok(size_opt)
     }
 
+    /// Perform an authenticated `HEAD` to retrieve image `Content-Type` and size.
+    ///
+    /// Returns `Ok(Some((content_type_opt, size_opt)))` on 2xx; `Ok(None)` on non-success status.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(SlackError)` if the HTTP request fails or headers cannot be read.
+    pub async fn fetch_image_head(
+        &self,
+        url: &str,
+    ) -> Result<Option<(Option<String>, Option<usize>)>, SlackError> {
+        let resp = HTTP_CLIENT
+            .head(url)
+            .bearer_auth(&self.token.token_value.0)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            return Ok(None);
+        }
+
+        let content_type_opt = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(std::string::ToString::to_string);
+
+        let size_opt = resp
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<usize>().ok());
+
+        Ok(Some((content_type_opt, size_opt)))
+    }
+
     /// # Errors
     pub async fn ensure_public_file_url(&self, file: &SlackFile) -> Result<String, SlackError> {
         // Step 1: Ensure the file has a public permalink. Avoid extra API call if already present.

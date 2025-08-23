@@ -296,6 +296,38 @@ impl SlackBot {
                             continue; // Skip unsupported formats like HEIC, TIFF, etc.
                         }
 
+                        // Server-side HEAD validation on private URL with bot token
+                        let head_info = self
+                            .slack_client
+                            .fetch_image_head(url.as_str())
+                            .await
+                            .unwrap_or(None);
+
+                        // If HEAD succeeded, ensure content-type is image/* and enforce size limit
+                        if let Some((ct_opt, size_opt)) = head_info {
+                            if let Some(ct) = ct_opt {
+                                let ct_can = crate::ai::client::canonicalize_mime(&ct);
+                                if !ct_can.starts_with("image/")
+                                    || !self.llm_client.is_allowed_image_mime(&ct_can)
+                                {
+                                    // Not an image; skip this file entirely
+                                    continue;
+                                }
+                            }
+
+                            // Skip if over OpenAI hard limit
+                            if let Some(sz) = size_opt {
+                                let url_max = self.llm_client.get_url_image_max_bytes();
+                                if sz > url_max {
+                                    info!(
+                                        "Skipping image {} because size {}B > {}B",
+                                        url, sz, url_max
+                                    );
+                                    continue;
+                                }
+                            }
+                        }
+
                         let size_opt = self.fetch_image_size(url.as_str()).await.unwrap_or(None);
 
                         // Skip if over OpenAI hard limit
