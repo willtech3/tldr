@@ -52,10 +52,29 @@
 ///     // Initialize the Slack bot
 ///     let mut bot = SlackBot::new(&config).await?;
 ///
-///     // Get and summarize unread messages in a channel via features
-///     let messages = tldr::features::collect::get_unread_messages(&bot, "C12345678").await?;
+///     // Get and summarize unread messages in a channel
+///     let messages = bot.slack_client().get_unread_messages("C12345678").await?;
 ///     if !messages.is_empty() {
-///         let summary = tldr::features::summarize::summarize(&bot, &config, &messages, "C12345678", None).await?;
+///         let summary = tldr::worker::summarize::summarize_task(
+///             &mut bot,
+///             &config,
+///             &tldr::core::models::ProcessingTask {
+///                 correlation_id: "demo".into(),
+///                 user_id: "U123".into(),
+///                 channel_id: "C12345678".into(),
+///                 response_url: None,
+///                 text: String::new(),
+///                 message_count: None,
+///                 target_channel_id: None,
+///                 custom_prompt: None,
+///                 visible: false,
+///                 dest_canvas: false,
+///                 dest_dm: true,
+///                 dest_public_post: false,
+///             },
+///         )
+///         .await?
+///         .unwrap_or_default();
 ///         println!("Summary: {}", summary);
 ///     }
 ///

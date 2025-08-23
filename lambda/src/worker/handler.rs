@@ -61,7 +61,10 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
             let error_message =
                 "Sorry, I couldn't generate a summary at this time. Please try again later.";
             if task.dest_dm {
-                let _ = slack_bot.send_dm(&task.user_id, error_message).await;
+                let _ = slack_bot
+                    .slack_client()
+                    .send_dm(&task.user_id, error_message)
+                    .await;
             } else if let Some(resp_url) = &task.response_url {
                 deliver::send_response_url(
                     &http_client,
