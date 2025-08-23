@@ -31,7 +31,7 @@
 /// # Example
 ///
 /// ```no_run
-/// use tldr::SlackBot;
+/// use tldr::slack::SlackBot;
 /// use tldr::core::config::AppConfig;
 ///
 /// #[tokio::main]
@@ -52,39 +52,43 @@
 ///     // Initialize the Slack bot
 ///     let mut bot = SlackBot::new(&config).await?;
 ///
-///     // Get and summarize unread messages in a channel via features
-///     let messages = tldr::features::collect::get_unread_messages(&bot, "C12345678").await?;
+///     // Get and summarize unread messages in a channel
+///     let messages = bot.slack_client().get_unread_messages("C12345678").await?;
 ///     if !messages.is_empty() {
-///         let summary = tldr::features::summarize::summarize(&bot, &config, &messages, "C12345678", None).await?;
+///         let summary = tldr::worker::summarize::summarize_task(
+///             &mut bot,
+///             &config,
+///             &tldr::core::models::ProcessingTask {
+///                 correlation_id: "demo".into(),
+///                 user_id: "U123".into(),
+///                 channel_id: "C12345678".into(),
+///                 response_url: None,
+///                 text: String::new(),
+///                 message_count: None,
+///                 target_channel_id: None,
+///                 custom_prompt: None,
+///                 visible: false,
+///                 dest_canvas: false,
+///                 dest_dm: true,
+///                 dest_public_post: false,
+///             },
+///         )
+///         .await?
+///         .unwrap_or_default();
 ///         println!("Summary: {}", summary);
 ///     }
 ///
 ///     Ok(())
 /// }
-/// // Re-export the module components as a public API
-pub mod bot;
-pub mod canvas;
-pub mod clients;
+/// ```
+// Module declarations
+pub mod ai;
+pub mod api;
 pub mod core;
-pub mod domains;
 pub mod errors;
-pub mod features;
-pub mod formatting;
-pub mod prompt;
-pub mod response;
-pub mod slack_parser;
+pub mod slack;
 pub mod utils;
-pub mod views;
-
-// Public exports
-pub use bot::SlackBot;
-pub use canvas::CanvasHelper;
-pub use clients::llm_client::estimate_tokens;
-pub use errors::SlackError;
-pub use formatting::format_summary_message;
-pub use prompt::{sanitize_custom_internal, sanitize_custom_prompt};
-pub use response::{create_ephemeral_payload, create_replace_original_payload};
-pub use views::{Prefill, build_tldr_modal, validate_view_submission};
+pub mod worker;
 
 /// Configure structured logging with JSON format for AWS Lambda environments.
 ///

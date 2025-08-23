@@ -1,4 +1,4 @@
-use tldr::slack_parser::{decode_url_component, parse_form_data};
+use tldr::slack::command_parser::{decode_url_component, parse_form_data};
 
 #[test]
 fn test_decode_url_component() {

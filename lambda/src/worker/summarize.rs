@@ -2,7 +2,8 @@
 #![allow(clippy::missing_errors_doc)]
 use crate::core::config::AppConfig;
 use crate::core::models::ProcessingTask;
-use crate::{SlackBot, SlackError};
+use crate::errors::SlackError;
+use crate::slack::SlackBot;
 
 pub async fn summarize_task(
     slack_bot: &mut SlackBot,
@@ -13,22 +14,26 @@ pub async fn summarize_task(
 
     let mut messages = if let Some(count) = task.message_count {
         slack_bot
-            .get_last_n_messages(source_channel_id, count)
+            .slack_client()
+            .get_recent_messages(source_channel_id, count)
             .await?
     } else {
-        slack_bot.get_unread_messages(source_channel_id).await?
+        slack_bot
+            .slack_client()
+            .get_unread_messages(source_channel_id)
+            .await?
     };
 
-    if task.visible || task.dest_public_post {
-        if let Ok(bot_id) = slack_bot.get_bot_user_id().await {
-            messages.retain(|msg| {
-                if let Some(user_id) = &msg.sender.user {
-                    user_id.0 != bot_id
-                } else {
-                    true
-                }
-            });
-        }
+    if (task.visible || task.dest_public_post)
+        && let Ok(bot_id) = slack_bot.slack_client().get_bot_user_id().await
+    {
+        messages.retain(|msg| {
+            if let Some(user_id) = &msg.sender.user {
+                user_id.0 != bot_id
+            } else {
+                true
+            }
+        });
     }
 
     if messages.is_empty() {

@@ -24,7 +24,7 @@
 /// # Examples
 ///
 /// ```
-/// use tldr::format_summary_message;
+/// use tldr::slack::message_formatter::format_summary_message;
 ///
 /// // Create a visible summary with attribution
 /// let visible_message = format_summary_message(

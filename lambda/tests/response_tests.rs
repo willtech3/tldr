@@ -1,4 +1,4 @@
-use tldr::response::{create_ephemeral_payload, create_replace_original_payload};
+use tldr::slack::response_builder::{create_ephemeral_payload, create_replace_original_payload};
 
 /// Tests for the response module functionality
 /// These verify that the Slack response payloads are correctly formatted

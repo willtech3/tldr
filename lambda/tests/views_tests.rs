@@ -1,5 +1,5 @@
 use serde_json::json;
-use tldr::{Prefill, build_tldr_modal, validate_view_submission};
+use tldr::slack::modal_builder::{Prefill, build_tldr_modal, validate_view_submission};
 
 #[test]
 fn build_modal_with_prefill_defaults() {

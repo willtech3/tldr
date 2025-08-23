@@ -1,4 +1,4 @@
-use tldr::prompt::{
+use tldr::ai::prompt_builder::{
     MAX_CUSTOM_LEN, MAX_CUSTOM_PROMPT_LENGTH, sanitize_custom_internal, sanitize_custom_prompt,
 };
 

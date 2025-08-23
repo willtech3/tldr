@@ -1,4 +1,4 @@
-use tldr::format_summary_message;
+use tldr::slack::message_formatter::format_summary_message;
 
 /// Tests for the message formatting logic
 /// These tests verify that the response formatting remains consistent during refactoring.

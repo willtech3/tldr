@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 /// # Examples
 ///
 /// ```
-/// use tldr::response::create_replace_original_payload;
+/// use tldr::slack::response_builder::create_replace_original_payload;
 ///
 /// // Create a payload that hides the command
 /// let hide_payload = create_replace_original_payload(None);
@@ -61,7 +61,7 @@ pub fn create_replace_original_payload(text: Option<&str>) -> Value {
 /// # Examples
 ///
 /// ```
-/// use tldr::response::create_ephemeral_payload;
+/// use tldr::slack::response_builder::create_ephemeral_payload;
 ///
 /// // Create a payload for an ephemeral message
 /// let payload = create_ephemeral_payload("This message is only visible to you");

@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::Path;
-use tldr::estimate_tokens;
+use tldr::ai::estimate_tokens;
 
 // Tests for the utility function estimate_tokens
 #[test]
@@ -19,14 +19,14 @@ fn test_estimate_tokens() {
 // Test to ensure the base prompt doesn't change during refactoring
 #[test]
 fn test_base_prompt_consistency() {
-    // Read the llm_client.rs file to extract the base prompt directly from the source code
+    // Read the ai/client.rs file to extract the base prompt directly from the source code
     let llm_client_source_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("src")
-        .join("clients")
-        .join("llm_client.rs");
+        .join("ai")
+        .join("client.rs");
 
     let llm_client_source = fs::read_to_string(llm_client_source_path)
-        .expect("Should be able to read llm_client.rs source file");
+        .expect("Should be able to read ai/client.rs source file");
 
     // Extract the base prompt using string patterns
     // Looking for the system message that contains "You are TLDR-bot"
