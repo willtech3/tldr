@@ -1,31 +1,19 @@
 use super::client::SlackClient;
 use super::response_builder::create_replace_original_payload;
 use crate::ai::LlmClient;
-use base64::Engine;
-use base64::engine::general_purpose;
 use futures::future::join_all;
 use openai_api_rs::v1::chat_completion::{
     self as chat_completion, ChatCompletionMessage, Content, ContentType, ImageUrl, ImageUrlType,
     MessageRole,
 };
-use reqwest::Client;
 use serde_json::Value;
 use slack_morphism::{SlackFile, SlackHistoryMessage};
 use std::collections::{HashMap, HashSet};
-use std::time::Duration;
 use tracing::{debug, error, info};
 use url::Url;
 
 use crate::core::config::AppConfig;
 use crate::errors::SlackError;
-
-// HTTP client for image fetches
-static HTTP_CLIENT: std::sync::LazyLock<Client> = std::sync::LazyLock::new(|| {
-    Client::builder()
-        .timeout(Duration::from_secs(20))
-        .build()
-        .expect("failed to build HTTP client")
-});
 
 /// Common Slack functionality
 pub struct SlackBot {
@@ -117,88 +105,6 @@ impl SlackBot {
             .map(|()| {
                 info!("Successfully replaced original message via response_url");
             })
-    }
-
-    // Fetch image and return as data URI for inline model consumption
-    async fn fetch_image_as_data_uri(
-        &self,
-        url: &str,
-        fallback_mime: &str,
-    ) -> Result<String, SlackError> {
-        // Use Slack auth when fetching private Slack file URLs to avoid receiving an HTML login page.
-        let mut req = HTTP_CLIENT.get(url).timeout(Duration::from_secs(20));
-        if let Ok(parsed) = Url::parse(url) {
-            if parsed.domain().is_some_and(|d| d.ends_with("slack.com")) {
-                // Reuse the bot token for authenticated file downloads
-                req = req.bearer_auth(self.slack_client.token().token_value.0.clone());
-            }
-        }
-
-        let response = req
-            .send()
-            .await
-            .map_err(|e| SlackError::HttpError(format!("Failed to fetch image: {e}")))?;
-
-        let header_mime = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok());
-        // Prefer server-declared MIME if present; if it's not an allowed image, treat as failure
-        // to avoid embedding HTML or other non-image content as a data URI.
-        let mime = if let Some(h) = header_mime {
-            let canon = crate::ai::client::canonicalize_mime(h);
-            if !self.llm_client.is_allowed_image_mime(&canon) {
-                return Err(SlackError::GeneralError(format!(
-                    "Remote content-type not an allowed image: {canon}"
-                )));
-            }
-            canon
-        } else {
-            // No header provided; fall back to the caller-provided guess but still validate later via magic bytes
-            crate::ai::client::canonicalize_mime(fallback_mime)
-        };
-
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|e| SlackError::HttpError(format!("Failed to read image bytes: {e}")))?;
-
-        // Lightweight magic-byte check to ensure the payload looks like the claimed image type
-        if !Self::looks_like_image(&bytes, &mime) {
-            return Err(SlackError::GeneralError(
-                "Fetched bytes do not look like a valid image".to_string(),
-            ));
-        }
-
-        let encoded = general_purpose::STANDARD.encode(&bytes);
-
-        Ok(format!("data:{mime};base64,{encoded}"))
-    }
-
-    #[allow(clippy::similar_names)]
-    fn looks_like_image(bytes: &[u8], mime: &str) -> bool {
-        if bytes.len() < 4 {
-            return false;
-        }
-        match mime {
-            "image/png" => {
-                // PNG magic: 89 50 4E 47
-                bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47])
-            }
-            "image/jpeg" => {
-                // JPEG magic: FF D8
-                bytes.starts_with(&[0xFF, 0xD8])
-            }
-            "image/gif" => {
-                // GIF87a or GIF89a
-                bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")
-            }
-            "image/webp" => {
-                // WEBP: RIFF....WEBP
-                bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP"
-            }
-            _ => false,
-        }
     }
 
     async fn fetch_image_size(&self, url: &str) -> Result<Option<usize>, SlackError> {
@@ -399,47 +305,15 @@ impl SlackBot {
                             continue;
                         }
 
-                        let inline_max = self.llm_client.get_inline_image_max_bytes();
-                        let use_inline = match size_opt {
-                            Some(sz) => sz <= inline_max,
-                            None => false,
-                        };
-
-                        if use_inline {
-                            match self.fetch_image_as_data_uri(url.as_str(), &canon).await {
-                                Ok(data_uri) => imgs.push(ImageUrl {
-                                    r#type: ContentType::image_url,
-                                    text: None,
-                                    image_url: Some(ImageUrlType { url: data_uri }),
-                                }),
-                                Err(e) => {
-                                    error!(
-                                        "Inline fetch failed for {}: {} — falling back to public URL",
-                                        url, e
-                                    );
-                                    match self.ensure_public_file_url(file).await {
-                                        Ok(public_url) => imgs.push(ImageUrl {
-                                            r#type: ContentType::image_url,
-                                            text: None,
-                                            image_url: Some(ImageUrlType { url: public_url }),
-                                        }),
-                                        Err(e2) => error!(
-                                            "Failed to get public URL for image {} after inline failure: {}",
-                                            url, e2
-                                        ),
-                                    }
-                                }
-                            }
-                        } else {
-                            match self.ensure_public_file_url(file).await {
-                                Ok(public_url) => imgs.push(ImageUrl {
-                                    r#type: ContentType::image_url,
-                                    text: None,
-                                    image_url: Some(ImageUrlType { url: public_url }),
-                                }),
-                                Err(e) => {
-                                    error!("Failed to get public URL for image {}: {}", url, e);
-                                }
+                        // Always use an http(s) URL for the model. Avoid data URIs.
+                        match self.ensure_public_file_url(file).await {
+                            Ok(public_url) => imgs.push(ImageUrl {
+                                r#type: ContentType::image_url,
+                                text: None,
+                                image_url: Some(ImageUrlType { url: public_url }),
+                            }),
+                            Err(e) => {
+                                error!("Failed to get public URL for image {}: {}", url, e);
                             }
                         }
                     }
