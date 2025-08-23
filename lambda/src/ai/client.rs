@@ -148,6 +148,23 @@ impl LlmClient {
         }
     }
 
+    #[must_use]
+    fn strip_images_from_prompt(prompt: &[ChatCompletionMessage]) -> Vec<ChatCompletionMessage> {
+        prompt
+            .iter()
+            .filter_map(|m| match &m.content {
+                Content::ImageUrl(_) => None,
+                Content::Text(_) => Some(ChatCompletionMessage {
+                    role: m.role.clone(),
+                    content: m.content.clone(),
+                    name: m.name.clone(),
+                    tool_calls: m.tool_calls.clone(),
+                    tool_call_id: m.tool_call_id.clone(),
+                }),
+            })
+            .collect()
+    }
+
     /// # Errors
     ///
     /// Returns an error if the HTTP request to `OpenAI` fails or the response
@@ -231,6 +248,134 @@ impl LlmClient {
                 .text()
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
+            // Fallback: if the error is about invalid image data, retry without images
+            let lowered = error_text.to_ascii_lowercase();
+            let looks_like_invalid_image = lowered.contains("invalid_request_error")
+                && (lowered.contains("image data")
+                    || lowered.contains("not represent a valid image")
+                    || lowered.contains("image"));
+
+            if looks_like_invalid_image {
+                info!("Falling back to text-only prompt after image error");
+
+                let text_only_prompt = LlmClient::strip_images_from_prompt(&prompt);
+
+                let estimated_input_tokens = text_only_prompt
+                    .iter()
+                    .map(|msg| estimate_tokens(&format!("{:?}", msg.content)))
+                    .sum::<usize>();
+                info!(
+                    "Estimated input tokens (fallback): {}",
+                    estimated_input_tokens
+                );
+
+                let max_output_tokens = MAX_CONTEXT_TOKENS
+                    .saturating_sub(estimated_input_tokens)
+                    .saturating_sub(TOKEN_BUFFER)
+                    .min(MAX_OUTPUT_TOKENS);
+                info!(
+                    "Calculated max output tokens (fallback): {}",
+                    max_output_tokens
+                );
+
+                if max_output_tokens < 500 {
+                    return Ok("The conversation is too long to summarize in full. Please use the `/tldr last N` command to summarize the most recent N messages instead.".to_string());
+                }
+
+                let input_messages = build_responses_input_from_prompt(&text_only_prompt);
+                let request_body = json!({
+                    "model": self.model_name,
+                    "input": input_messages,
+                    "max_output_tokens": max_output_tokens
+                });
+
+                let client = Client::builder()
+                    .timeout(Duration::from_secs(810))
+                    .build()
+                    .unwrap_or_else(|_| Client::new());
+
+                let mut headers = reqwest::header::HeaderMap::new();
+                let auth_value = format!("Bearer {}", self.api_key).parse().map_err(|e| {
+                    SlackError::HttpError(format!("Invalid Authorization header: {e}"))
+                })?;
+                headers.insert("Authorization", auth_value);
+                let content_type_value = "application/json".parse().map_err(|e| {
+                    SlackError::HttpError(format!("Invalid Content-Type header: {e}"))
+                })?;
+                headers.insert("Content-Type", content_type_value);
+                if let Some(org) = &self.org_id {
+                    let org_value = org.parse().map_err(|e| {
+                        SlackError::HttpError(format!("Invalid OpenAI-Organization header: {e}"))
+                    })?;
+                    headers.insert("OpenAI-Organization", org_value);
+                }
+
+                let response2 = client
+                    .post("https://api.openai.com/v1/responses")
+                    .headers(headers)
+                    .json(&request_body)
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        SlackError::HttpError(format!("OpenAI API request failed (fallback): {e}"))
+                    })?;
+                if !response2.status().is_success() {
+                    let error_text2 = response2
+                        .text()
+                        .await
+                        .unwrap_or_else(|_| "Unknown error".to_string());
+                    return Err(SlackError::OpenAIError(format!(
+                        "OpenAI API error (fallback): {error_text2}"
+                    )));
+                }
+                let response_json: Value = response2.json().await.map_err(|e| {
+                    SlackError::OpenAIError(format!(
+                        "Failed to parse OpenAI response (fallback): {e}"
+                    ))
+                })?;
+                let text_opt = response_json
+                    .get("output_text")
+                    .and_then(|v| v.as_str())
+                    .map(std::string::ToString::to_string)
+                    .or_else(|| {
+                        let mut collected: Vec<String> = Vec::new();
+                        if let Some(items) = response_json.get("output").and_then(|o| o.as_array())
+                        {
+                            for item in items {
+                                if let Some(parts) = item.get("content").and_then(|c| c.as_array())
+                                {
+                                    for p in parts {
+                                        let is_output_text = p
+                                            .get("type")
+                                            .and_then(|t| t.as_str())
+                                            .is_some_and(|t| t == "output_text");
+                                        if !is_output_text {
+                                            continue;
+                                        }
+                                        if let Some(s) = p.get("text").and_then(|t| t.as_str()) {
+                                            collected.push(s.to_string());
+                                        } else if let Some(s) = p
+                                            .get("text")
+                                            .and_then(|t| t.get("value"))
+                                            .and_then(|v| v.as_str())
+                                        {
+                                            collected.push(s.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if collected.is_empty() {
+                            None
+                        } else {
+                            Some(collected.join("\n"))
+                        }
+                    });
+                return text_opt.ok_or_else(|| {
+                    SlackError::OpenAIError("No text in response (fallback)".to_string())
+                });
+            }
+
             return Err(SlackError::OpenAIError(format!(
                 "OpenAI API error: {error_text}"
             )));
