@@ -162,6 +162,10 @@ impl SlackBot {
         if let Ok(resp) = HTTP_CLIENT
             .head(url.clone())
             .timeout(Duration::from_secs(10))
+            .header(
+                reqwest::header::ACCEPT,
+                "image/*,application/octet-stream;q=0.9,*/*;q=0.5",
+            )
             .send()
             .await
         {
@@ -172,13 +176,54 @@ impl SlackBot {
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("(unknown)");
             info!("HEAD {} -> {} (CT={})", url, status, ct);
+
             if status.is_client_error() || status.is_server_error() {
                 warn!("Public URL returned error status {}", status);
                 return Ok(None);
             }
+
+            // Case 1: Server provides an allowed image content-type
             let canon_ct = crate::ai::client::canonicalize_mime(ct);
             if self.llm_client.is_allowed_image_mime(&canon_ct) {
                 return Ok(Some(canon_ct));
+            }
+
+            // Case 2: Slack frequently returns text/html for HEAD while GET serves the image.
+            // In that case, infer the MIME type from the URL path and accept if allowed.
+            let looks_like_html = ct.starts_with("text/html") || ct == "(unknown)";
+            let looks_like_octet = ct.starts_with("application/octet-stream");
+            if looks_like_html || looks_like_octet {
+                let guessed = mime_guess::from_path(url.path())
+                    .first_or_octet_stream()
+                    .essence_str()
+                    .to_string();
+                let canon_guess = crate::ai::client::canonicalize_mime(&guessed);
+                if self.llm_client.is_allowed_image_mime(&canon_guess) {
+                    info!(
+                        "HEAD {} -> {} (CT={}); accepting based on guessed MIME {}",
+                        url, status, ct, canon_guess
+                    );
+                    return Ok(Some(canon_guess));
+                }
+            }
+
+            // Case 3: As a last resort, if this is a Slack public file URL with pub_secret,
+            // accept based on common image extensions.
+            let is_slack_files = url.domain().is_some_and(|d| d.ends_with("slack.com"));
+            let has_pub_secret = url.query().is_some_and(|q| q.contains("pub_secret="));
+            if is_slack_files && has_pub_secret {
+                let guessed = mime_guess::from_path(url.path())
+                    .first_or_octet_stream()
+                    .essence_str()
+                    .to_string();
+                let canon_guess = crate::ai::client::canonicalize_mime(&guessed);
+                if self.llm_client.is_allowed_image_mime(&canon_guess) {
+                    warn!(
+                        "HEAD CT not image ({}), but URL looks like Slack public file; accepting {}",
+                        ct, canon_guess
+                    );
+                    return Ok(Some(canon_guess));
+                }
             }
         } else {
             warn!("HEAD request failed for {}", url);
