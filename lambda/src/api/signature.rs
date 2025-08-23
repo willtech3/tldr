@@ -24,7 +24,7 @@ pub fn verify_slack_signature(
         }
     }
 
-    let base_string = format!("v0:{}:{}", timestamp, request_body);
+    let base_string = format!("v0:{timestamp}:{request_body}");
 
     let mut mac = match Hmac::<Sha256>::new_from_slice(signing_secret.as_bytes()) {
         Ok(mac) => mac,
@@ -45,4 +45,17 @@ pub fn verify_slack_signature(
         );
         false
     }
+}
+
+pub fn compute_signature(timestamp: &str, request_body: &str, signing_secret: &str) -> String {
+    let base_string = format!("v0:{timestamp}:{request_body}");
+    let mut mac = match Hmac::<Sha256>::new_from_slice(signing_secret.as_bytes()) {
+        Ok(mac) => mac,
+        Err(e) => {
+            error!("Failed to create HMAC: {}", e);
+            return String::new();
+        }
+    };
+    mac.update(base_string.as_bytes());
+    format!("v0={}", hex::encode(mac.finalize().into_bytes()))
 }

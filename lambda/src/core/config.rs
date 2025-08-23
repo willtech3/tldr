@@ -11,16 +11,19 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
+    /// # Errors
+    ///
+    /// Returns an error string when required environment variables are missing.
     pub fn from_env() -> Result<Self, String> {
         Ok(Self {
             processing_queue_url: env::var("PROCESSING_QUEUE_URL")
-                .map_err(|e| format!("PROCESSING_QUEUE_URL: {}", e))?,
+                .map_err(|e| format!("PROCESSING_QUEUE_URL: {e}"))?,
             slack_signing_secret: env::var("SLACK_SIGNING_SECRET")
-                .map_err(|e| format!("SLACK_SIGNING_SECRET: {}", e))?,
+                .map_err(|e| format!("SLACK_SIGNING_SECRET: {e}"))?,
             slack_bot_token: env::var("SLACK_BOT_TOKEN")
-                .map_err(|e| format!("SLACK_BOT_TOKEN: {}", e))?,
+                .map_err(|e| format!("SLACK_BOT_TOKEN: {e}"))?,
             openai_api_key: env::var("OPENAI_API_KEY")
-                .map_err(|e| format!("OPENAI_API_KEY: {}", e))?,
+                .map_err(|e| format!("OPENAI_API_KEY: {e}"))?,
             openai_org_id: env::var("OPENAI_ORG_ID").ok(),
             openai_model: env::var("OPENAI_MODEL").ok(),
         })

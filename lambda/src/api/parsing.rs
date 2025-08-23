@@ -1,4 +1,3 @@
-use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::Value;
 
@@ -7,10 +6,14 @@ use crate::{
     slack::command_parser::{SlackCommandEvent, decode_url_component, parse_form_data},
 };
 
+#[must_use]
 pub fn is_interactive_body(body: &str) -> bool {
     body.starts_with("payload=") || body.contains("&payload=")
 }
 
+/// # Errors
+///
+/// Returns an error if percent-decoding or JSON parsing fails.
 pub fn parse_interactive_payload(form_body: &str) -> Result<Value, SlackError> {
     for pair in form_body.split('&') {
         if let Some(eq_idx) = pair.find('=') {
@@ -18,10 +21,10 @@ pub fn parse_interactive_payload(form_body: &str) -> Result<Value, SlackError> {
             if key == "payload" {
                 let raw_val = &pair[eq_idx + 1..];
                 let decoded = decode_url_component(raw_val).map_err(|e| {
-                    SlackError::ParseError(format!("Failed to decode payload: {}", e))
+                    SlackError::ParseError(format!("Failed to decode payload: {e}"))
                 })?;
                 let v: Value = serde_json::from_str(&decoded)
-                    .map_err(|e| SlackError::ParseError(format!("Invalid JSON payload: {}", e)))?;
+                    .map_err(|e| SlackError::ParseError(format!("Invalid JSON payload: {e}")))?;
                 return Ok(v);
             }
         }
@@ -29,6 +32,7 @@ pub fn parse_interactive_payload(form_body: &str) -> Result<Value, SlackError> {
     Err(SlackError::ParseError("Missing payload field".to_string()))
 }
 
+#[must_use]
 pub fn v_path<'a>(root: &'a Value, path: &[&str]) -> Option<&'a Value> {
     let mut cur = root;
     for key in path {
@@ -37,19 +41,25 @@ pub fn v_path<'a>(root: &'a Value, path: &[&str]) -> Option<&'a Value> {
     Some(cur)
 }
 
+#[must_use]
 pub fn v_str<'a>(root: &'a Value, path: &[&str]) -> Option<&'a str> {
     v_path(root, path).and_then(|v| v.as_str())
 }
 
+#[must_use]
 pub fn v_array<'a>(root: &'a Value, path: &[&str]) -> Option<&'a Vec<Value>> {
     v_path(root, path).and_then(|v| v.as_array())
 }
 
+/// # Errors
+///
+/// Returns an error if form parsing fails.
 pub fn parse_slack_event(payload: &str) -> Result<SlackCommandEvent, SlackError> {
     parse_form_data(payload)
-        .map_err(|e| SlackError::ParseError(format!("Failed to parse form data: {}", e)))
+        .map_err(|e| SlackError::ParseError(format!("Failed to parse form data: {e}")))
 }
 
+#[must_use]
 pub fn get_header_value<'a>(headers: &'a serde_json::Value, name: &str) -> Option<&'a str> {
     if let Some(v) = headers.get(name).and_then(|s| s.as_str()) {
         return Some(v);
@@ -66,8 +76,9 @@ pub fn get_header_value<'a>(headers: &'a serde_json::Value, name: &str) -> Optio
 }
 
 pub fn parse_kv_params(filtered_text: &str) -> (Option<u32>, Option<String>, Option<String>) {
-    static KV_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r#"(\w+)\s*=\s*("[^"]*"|\S+)"#).expect("static regex compile"));
+    static KV_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+        Regex::new(r#"(\w+)\s*=\s*("[^"]*"|\S+)"#).expect("static regex compile")
+    });
 
     let mut message_count: Option<u32> = None;
     let mut target_channel_id: Option<String> = None;

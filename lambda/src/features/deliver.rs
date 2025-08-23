@@ -1,7 +1,4 @@
-#![allow(clippy::too_many_lines)]
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::struct_excessive_bools)]
-#![allow(clippy::uninlined_format_args)]
+// Some functions accept multiple destination flags; keep API explicit for clarity.
 use reqwest::Client as HttpClient;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use tracing::{error, info};
@@ -230,10 +227,7 @@ pub async fn notify_no_messages(
     }
     Ok(())
 }
-#![allow(clippy::too_many_lines)]
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::struct_excessive_bools)]
-#![allow(clippy::uninlined_format_args)]
+// File contains several helpers; consider splitting if it grows further.
 use reqwest::Client as HttpClient;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use tracing::{error, info};
@@ -430,6 +424,5 @@ pub async fn notify_no_messages(
         )
         .await?;
     }
->>>>>>> 9e198ab (refactor: slim down lambda binaries)
     Ok(())
 }

@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 /// Create a JSON payload to replace/hide the original slash command
 ///
-/// This function builds a JSON payload that utilizes Slack's response_url mechanism
+/// This function builds a JSON payload that utilizes Slack's `response_url` mechanism
 /// to replace the original command with either a specified message or effectively hide it.
 ///
 /// # Arguments
@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 ///
 /// # Returns
 ///
-/// A JSON Value containing the properly formatted payload for Slack's response_url
+/// A JSON Value containing the properly formatted payload for Slack's `response_url`
 ///
 /// # Examples
 ///
@@ -29,6 +29,7 @@ use serde_json::{Value, json};
 /// // Create a payload that replaces the command with text
 /// let replace_payload = create_replace_original_payload(Some("Processing your request..."));
 /// ```
+#[must_use]
 pub fn create_replace_original_payload(text: Option<&str>) -> Value {
     // If text is None or empty, we'll just send a blank message (effectively hiding the command)
     if let Some(t) = text.filter(|t| !t.is_empty()) {
@@ -47,7 +48,7 @@ pub fn create_replace_original_payload(text: Option<&str>) -> Value {
 /// Create a JSON payload for an ephemeral response
 ///
 /// This function builds a JSON payload for sending ephemeral messages through
-/// Slack's response_url mechanism. Ephemeral messages are only visible to the user
+/// Slack's `response_url` mechanism. Ephemeral messages are only visible to the user
 /// who triggered the command.
 ///
 /// # Arguments
@@ -66,6 +67,7 @@ pub fn create_replace_original_payload(text: Option<&str>) -> Value {
 /// // Create a payload for an ephemeral message
 /// let payload = create_ephemeral_payload("This message is only visible to you");
 /// ```
+#[must_use]
 pub fn create_ephemeral_payload(text: &str) -> Value {
     json!({
         "text": text,

@@ -1,5 +1,4 @@
-#![allow(clippy::too_many_lines)]
-#![allow(clippy::missing_errors_doc)]
+// Summarization flow remains compact; keep within a single function for now.
 use crate::core::config::AppConfig;
 use crate::core::models::ProcessingTask;
 use crate::{SlackBot, SlackError};

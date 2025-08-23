@@ -1,4 +1,4 @@
-//! LLM (OpenAI) API client module
+//! LLM (`OpenAI`) API client module
 //!
 //! Encapsulates all LLM API interactions for generating summaries.
 
@@ -19,6 +19,7 @@ const URL_IMAGE_MAX_BYTES: usize = 20 * 1024 * 1024;
 
 const ALLOWED_IMAGE_MIME: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
 
+#[must_use]
 pub fn canonicalize_mime(mime: &str) -> String {
     let main = mime
         .split(';')
@@ -33,6 +34,7 @@ pub fn canonicalize_mime(mime: &str) -> String {
     }
 }
 
+#[must_use]
 pub fn estimate_tokens(text: &str) -> usize {
     text.chars().count() / 4 + 1
 }
@@ -45,6 +47,7 @@ pub struct LlmClient {
 }
 
 impl LlmClient {
+    #[must_use]
     pub fn new(api_key: String, org_id: Option<String>, model_name: String) -> Self {
         Self {
             api_key,
@@ -124,7 +127,7 @@ impl LlmClient {
             let placeholder = if image_count == 1 {
                 "(uploaded an image)".to_string()
             } else {
-                format!("(uploaded {} images)", image_count)
+                format!("(uploaded {image_count} images)")
             };
 
             prompt.push(ChatCompletionMessage {
@@ -145,18 +148,21 @@ impl LlmClient {
         }
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request to `OpenAI` fails or the response
+    /// cannot be parsed into the expected shape.
+    #[allow(clippy::too_many_lines)]
     pub async fn generate_summary(
         &self,
         prompt: Vec<ChatCompletionMessage>,
-        _channel_name: &str,
     ) -> Result<String, SlackError> {
         #[cfg(feature = "debug-logs")]
         info!("Using ChatGPT prompt:\n{:?}", prompt);
 
         #[cfg(not(feature = "debug-logs"))]
         info!(
-            "Generating summary for channel {} with {} messages in prompt",
-            _channel_name,
+            "Generating summary with {} messages in prompt",
             prompt.len()
         );
 
@@ -197,17 +203,17 @@ impl LlmClient {
         let mut headers = reqwest::header::HeaderMap::new();
         let auth_value = format!("Bearer {}", self.api_key)
             .parse()
-            .map_err(|e| SlackError::HttpError(format!("Invalid Authorization header: {}", e)))?;
+            .map_err(|e| SlackError::HttpError(format!("Invalid Authorization header: {e}")))?;
         headers.insert("Authorization", auth_value);
 
         let content_type_value = "application/json"
             .parse()
-            .map_err(|e| SlackError::HttpError(format!("Invalid Content-Type header: {}", e)))?;
+            .map_err(|e| SlackError::HttpError(format!("Invalid Content-Type header: {e}")))?;
         headers.insert("Content-Type", content_type_value);
 
         if let Some(org) = &self.org_id {
             let org_value = org.parse().map_err(|e| {
-                SlackError::HttpError(format!("Invalid OpenAI-Organization header: {}", e))
+                SlackError::HttpError(format!("Invalid OpenAI-Organization header: {e}"))
             })?;
             headers.insert("OpenAI-Organization", org_value);
         }
@@ -218,7 +224,7 @@ impl LlmClient {
             .json(&request_body)
             .send()
             .await
-            .map_err(|e| SlackError::HttpError(format!("OpenAI API request failed: {}", e)))?;
+            .map_err(|e| SlackError::HttpError(format!("OpenAI API request failed: {e}")))?;
 
         if !response.status().is_success() {
             let error_text = response
@@ -226,19 +232,18 @@ impl LlmClient {
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
             return Err(SlackError::OpenAIError(format!(
-                "OpenAI API error: {}",
-                error_text
+                "OpenAI API error: {error_text}"
             )));
         }
 
         let response_json: Value = response.json().await.map_err(|e| {
-            SlackError::OpenAIError(format!("Failed to parse OpenAI response: {}", e))
+            SlackError::OpenAIError(format!("Failed to parse OpenAI response: {e}"))
         })?;
 
         let text_opt = response_json
             .get("output_text")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .or_else(|| {
                 let mut collected: Vec<String> = Vec::new();
                 if let Some(items) = response_json.get("output").and_then(|o| o.as_array()) {
@@ -248,8 +253,7 @@ impl LlmClient {
                                 let is_output_text = p
                                     .get("type")
                                     .and_then(|t| t.as_str())
-                                    .map(|t| t == "output_text")
-                                    .unwrap_or(false);
+                                    .is_some_and(|t| t == "output_text");
                                 if !is_output_text {
                                     continue;
                                 }
@@ -276,22 +280,25 @@ impl LlmClient {
         text_opt.ok_or_else(|| SlackError::OpenAIError("No text in response".to_string()))
     }
 
+    #[must_use]
     pub fn is_allowed_image_mime(&self, mime: &str) -> bool {
         let canonical = canonicalize_mime(mime);
         ALLOWED_IMAGE_MIME.contains(&canonical.as_str())
     }
 
+    #[must_use]
     pub fn get_inline_image_max_bytes(&self) -> usize {
         INLINE_IMAGE_MAX_BYTES
     }
 
+    #[must_use]
     pub fn get_url_image_max_bytes(&self) -> usize {
         URL_IMAGE_MAX_BYTES
     }
 }
 /// Build Responses API input payload from a chat-style prompt.
 /// - Filters out assistant messages (Responses treats assistant content as output)
-/// - Emits typed parts: { type: "input_text", text } and { type: "input_image", image_url }
+/// - Emits typed parts: { type: "`input_text`", text } and { type: "`input_image`", `image_url` }
 pub(crate) fn build_responses_input_from_prompt(prompt: &[ChatCompletionMessage]) -> Vec<Value> {
     prompt
         .iter()
@@ -299,10 +306,8 @@ pub(crate) fn build_responses_input_from_prompt(prompt: &[ChatCompletionMessage]
         .map(|m| {
             let role_str = match m.role {
                 MessageRole::system => "system",
-                MessageRole::user => "user",
+                MessageRole::user | MessageRole::function | MessageRole::tool => "user",
                 MessageRole::assistant => "assistant",
-                MessageRole::function => "user",
-                MessageRole::tool => "user",
             };
 
             let mut parts: Vec<Value> = Vec::new();
@@ -420,7 +425,7 @@ mod tests {
         let prompt = client.build_prompt(&big_text, None);
 
         // Should return early with the friendly fallback without performing a network call
-        let res = client.generate_summary(prompt, "chan").await.unwrap();
+        let res = client.generate_summary(prompt).await.unwrap();
         assert_eq!(
             res,
             "The conversation is too long to summarize in full. Please use the `/tldr last N` command to summarize the most recent N messages instead.".to_string()

@@ -1,18 +1,3 @@
-#![allow(clippy::pedantic)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::too_many_lines)]
-#![allow(clippy::non_std_lazy_statics)]
-#![allow(clippy::unused_async)]
-#![allow(clippy::doc_markdown)]
-#![allow(clippy::explicit_iter_loop)]
-#![allow(clippy::match_same_arms)]
-#![allow(clippy::if_not_else)]
-#![allow(clippy::semicolon_if_nothing_returned)]
-#![allow(clippy::map_unwrap_or)]
-#![allow(clippy::redundant_closure_for_method_calls)]
-#![allow(clippy::uninlined_format_args)]
-#![allow(clippy::must_use_candidate)]
 /// TLDR - A Slack chatbot that summarizes unread messages in channels using ChatGPT.
 ///
 /// This crate implements a two-Lambda architecture for the TLDR Slack bot:
@@ -50,7 +35,7 @@
 ///     };
 ///
 ///     // Initialize the Slack bot
-///     let mut bot = SlackBot::new(&config).await?;
+///     let mut bot = SlackBot::new(&config)?;
 ///
 ///     // Get and summarize unread messages in a channel
 ///     let messages = bot.slack_client().get_unread_messages("C12345678").await?;
@@ -93,7 +78,7 @@ pub mod worker;
 /// Configure structured logging with JSON format for AWS Lambda environments.
 ///
 /// This function sets up tracing-subscriber with a JSON formatter suitable for
-/// CloudWatch Logs integration. It should be called at the start of each Lambda
+/// `CloudWatch` Logs integration. It should be called at the start of each Lambda
 /// handler.
 ///
 /// # Example
