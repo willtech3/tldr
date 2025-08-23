@@ -42,6 +42,9 @@ pub struct SlackCommandEvent {
 /// let decoded_plus = decode_url_component(encoded_plus).unwrap();
 /// assert_eq!(decoded_plus, "hello world");
 /// ```
+/// # Errors
+///
+/// Returns an error string if the input contains invalid percent-encoding.
 pub fn decode_url_component(input: &str) -> Result<String, String> {
     percent_decode_str(input)
         .decode_utf8()
@@ -76,6 +79,9 @@ pub fn decode_url_component(input: &str) -> Result<String, String> {
 /// assert_eq!(event.command, "/tldr");
 /// assert_eq!(event.channel_name, "general");
 /// ```
+/// # Errors
+///
+/// Returns an error string when required fields are missing or malformed.
 pub fn parse_form_data(form_data: &str) -> Result<SlackCommandEvent, String> {
     let mut map: HashMap<String, String> = HashMap::new();
 

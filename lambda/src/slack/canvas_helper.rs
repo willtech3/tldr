@@ -15,6 +15,7 @@ pub struct CanvasHelper<'a> {
 
 impl<'a> CanvasHelper<'a> {
     /// Create a new Canvas helper with the given Slack client
+    #[must_use]
     pub fn new(slack_client: &'a SlackClient) -> Self {
         Self { slack_client }
     }
@@ -32,6 +33,9 @@ impl<'a> CanvasHelper<'a> {
 
     /// Ensure a channel has a TLDR canvas with a custom title.
     /// Returns the canvas ID.
+    /// # Errors
+    ///
+    /// Returns an error if Slack API calls to fetch or create the canvas fail.
     pub async fn ensure_tldr_canvas(&self, channel_id: &str) -> Result<String, SlackError> {
         info!("Ensuring TLDR canvas exists for channel: {}", channel_id);
 
@@ -66,12 +70,18 @@ impl<'a> CanvasHelper<'a> {
 
     /// Ensure a channel has a canvas, creating one if it doesn't exist.
     /// Returns the canvas ID.
+    /// # Errors
+    ///
+    /// Returns an error if the underlying Slack API operation fails.
     pub async fn ensure_channel_canvas(&self, channel_id: &str) -> Result<String, SlackError> {
         self.ensure_tldr_canvas(channel_id).await
     }
 
     /// Prepend a new summary section at the top of the canvas.
     /// Each summary gets its own timestamped section for history.
+    /// # Errors
+    ///
+    /// Returns an error if updating the canvas via Slack API fails.
     pub async fn prepend_summary_section(
         &self,
         canvas_id: &str,
@@ -95,6 +105,9 @@ impl<'a> CanvasHelper<'a> {
     }
 
     /// Get a permalink for a message
+    /// # Errors
+    ///
+    /// Returns an error if the permalink cannot be retrieved from Slack API.
     pub async fn get_message_permalink(
         &self,
         channel_id: &str,

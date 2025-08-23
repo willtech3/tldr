@@ -1,5 +1,4 @@
-#![allow(clippy::too_many_lines)]
-#![allow(clippy::missing_errors_doc)]
+// The handler is long due to Lambda event plumbing and branching; split later if it grows further.
 use lambda_runtime::{Error, LambdaEvent};
 use reqwest::Client as HttpClient;
 use serde_json::Value;
@@ -11,6 +10,11 @@ use crate::core::models::ProcessingTask;
 use crate::slack::SlackBot;
 
 /// Lambda handler for the Worker entrypoint. Parses SQS message, summarizes, and delivers.
+///
+/// # Errors
+///
+/// Returns an error when configuration loading fails, the SQS payload cannot be
+/// parsed, or downstream delivery operations fail.
 pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
     let config = AppConfig::from_env().map_err(|e| {
         error!("Config error: {}", e);
@@ -32,8 +36,7 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
         .and_then(|body_str| {
             serde_json::from_str(body_str).map_err(|e| {
                 Error::from(format!(
-                    "Failed to parse SQS message body into ProcessingTask: {}",
-                    e
+                    "Failed to parse SQS message body into ProcessingTask: {e}"
                 ))
             })
         })?;
@@ -41,20 +44,19 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
     info!("Successfully parsed ProcessingTask: {:?}", task);
 
     let mut slack_bot = SlackBot::new(&config)
-        .await
-        .map_err(|e| Error::from(format!("Failed to initialize bot: {}", e)))?;
+        .map_err(|e| Error::from(format!("Failed to initialize bot: {e}")))?;
     let http_client = HttpClient::new();
 
     match summarize::summarize_task(&mut slack_bot, &config, &task).await {
         Ok(Some(summary)) => {
             deliver::deliver_summary(&slack_bot, &http_client, &task, &task.channel_id, &summary)
                 .await
-                .map_err(|e| Error::from(format!("Delivery error: {}", e)))?;
+                .map_err(|e| Error::from(format!("Delivery error: {e}")))?;
         }
         Ok(None) => {
             deliver::notify_no_messages(&slack_bot, &http_client, &task)
                 .await
-                .map_err(|e| Error::from(format!("Delivery error: {}", e)))?;
+                .map_err(|e| Error::from(format!("Delivery error: {e}")))?;
         }
         Err(e) => {
             error!("Failed to generate summary: {}", e);
@@ -74,7 +76,7 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
                     Some(&task.user_id),
                 )
                 .await
-                .map_err(|e| Error::from(format!("Delivery error: {}", e)))?;
+                .map_err(|e| Error::from(format!("Delivery error: {e}")))?;
             }
         }
     }

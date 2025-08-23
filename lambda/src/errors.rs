@@ -53,6 +53,6 @@ where
 
 impl From<APIError> for SlackError {
     fn from(error: APIError) -> Self {
-        SlackError::OpenAIError(format!("OpenAI API error: {}", error))
+        SlackError::OpenAIError(format!("OpenAI API error: {error}"))
     }
 }

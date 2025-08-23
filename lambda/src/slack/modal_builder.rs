@@ -15,12 +15,19 @@ pub struct Prefill {
 /// Build the Block Kit modal for TLDR configuration.
 ///
 /// This matches the JSON shape described in the implementation plan:
-/// - conversations_select (default to current, or prefilled)
-/// - range radio (unread_since_last_run | last_n | date_range)
-/// - number_input for last N
+/// - `conversations_select` (default to current, or prefilled)
+/// - range radio (`unread_since_last_run` | `last_n` | `date_range`)
+/// - `number_input` for last N
 /// - datepickers for from/to
 /// - destination checkboxes
 /// - style/prompt multiline input
+/// # Panics
+///
+/// Panics if the `conversations_select` element cannot be represented as a JSON object
+/// when removing `default_to_current_conversation`. This is a construction-time invariant
+/// in our code and would indicate an internal programming error if violated.
+#[allow(clippy::too_many_lines)]
+#[must_use]
 pub fn build_tldr_modal(prefill: &Prefill) -> Value {
     let mut conv_element = json!({
         "type": "conversations_select",
@@ -87,7 +94,7 @@ pub fn build_tldr_modal(prefill: &Prefill) -> Value {
             "block_id": "lastn",
             "optional": true,
             "label": { "type": "plain_text", "text": "How many messages?" },
-            "element": { "type": "number_input", "is_decimal_allowed": false, "action_id": "n", "initial_value": prefill.last_n.map(|n| n.to_string()).unwrap_or_else(|| "100".to_string()), "min_value": "2", "max_value": "500" }
+            "element": { "type": "number_input", "is_decimal_allowed": false, "action_id": "n", "initial_value": prefill.last_n.map_or_else(|| "100".to_string(), |n| n.to_string()), "min_value": "2", "max_value": "500" }
         }),
         json!({
             "type": "input",
@@ -139,6 +146,9 @@ pub fn build_tldr_modal(prefill: &Prefill) -> Value {
 
 /// Minimal validation for `view_submission` payloads.
 /// Returns a map of `block_id -> error` suitable for Slack's interactive response.
+/// # Errors
+///
+/// Returns a map of field errors when validation fails; otherwise returns `Ok(())`.
 pub fn validate_view_submission(view: &Value) -> Result<(), serde_json::Map<String, Value>> {
     // Slack sends view.state.values.{block_id}.{action_id}.value
     let mut errors = serde_json::Map::new();

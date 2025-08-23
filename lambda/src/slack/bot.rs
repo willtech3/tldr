@@ -3,7 +3,6 @@ use super::response_builder::create_replace_original_payload;
 use crate::ai::LlmClient;
 use base64::Engine;
 use base64::engine::general_purpose;
-use once_cell::sync::Lazy;
 use openai_api_rs::v1::chat_completion::{
     self as chat_completion, ChatCompletionMessage, Content, ContentType, ImageUrl, ImageUrlType,
     MessageRole,
@@ -20,7 +19,7 @@ use crate::core::config::AppConfig;
 use crate::errors::SlackError;
 
 // HTTP client for image fetches
-static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
+static HTTP_CLIENT: std::sync::LazyLock<Client> = std::sync::LazyLock::new(|| {
     Client::builder()
         .timeout(Duration::from_secs(20))
         .build()
@@ -34,7 +33,14 @@ pub struct SlackBot {
 }
 
 impl SlackBot {
-    pub async fn new(config: &AppConfig) -> Result<Self, SlackError> {
+    /// Construct a `SlackBot` composed of a `SlackClient` and `LlmClient`.
+    ///
+    /// # Errors
+    ///
+    /// Currently this constructor does not perform fallible initialization and
+    /// returns `Ok(Self)` for valid inputs. It keeps `Result` to allow future
+    /// construction that might validate configuration or perform I/O.
+    pub fn new(config: &AppConfig) -> Result<Self, SlackError> {
         let slack_client = SlackClient::new(config.slack_bot_token.clone());
         let model = config
             .openai_model
@@ -53,23 +59,32 @@ impl SlackBot {
     }
 
     /// Get a reference to the Slack client for Canvas operations
+    #[must_use]
     pub fn slack_client(&self) -> &SlackClient {
         &self.slack_client
     }
 
     /// Get a reference to the LLM client
+    #[must_use]
     pub fn llm_client(&self) -> &LlmClient {
         &self.llm_client
     }
 
     /// Opens a Block Kit modal using Slack's `views.open` API.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Slack API call fails.
     pub async fn open_modal(&self, trigger_id: &str, view: &Value) -> Result<(), SlackError> {
         self.slack_client.open_modal(trigger_id, view).await
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the Slack API call fails.
     pub async fn delete_message(&self, channel_id: &str, ts: &str) -> Result<(), SlackError> {
         match self.slack_client.delete_message(channel_id, ts).await {
-            Ok(_) => {
+            Ok(()) => {
                 info!(
                     "Successfully deleted message with ts {} from channel {}",
                     ts, channel_id
@@ -84,7 +99,11 @@ impl SlackBot {
     }
 
     /// Hides a slash command invocation by replacing it with an empty message
-    /// Uses Slack's response_url mechanism which allows modifying the original message
+    /// Uses Slack's `response_url` mechanism which allows modifying the original message
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP call to the `response_url` fails.
     pub async fn replace_original_message(
         &self,
         response_url: &str,
@@ -94,7 +113,7 @@ impl SlackBot {
         self.slack_client
             .replace_original_message(response_url, payload)
             .await
-            .map(|_| {
+            .map(|()| {
                 info!("Successfully replaced original message via response_url");
             })
     }
@@ -110,7 +129,7 @@ impl SlackBot {
             .timeout(Duration::from_secs(20))
             .send()
             .await
-            .map_err(|e| SlackError::HttpError(format!("Failed to fetch image: {}", e)))?;
+            .map_err(|e| SlackError::HttpError(format!("Failed to fetch image: {e}")))?;
 
         let header_mime = response
             .headers()
@@ -126,11 +145,11 @@ impl SlackBot {
         let bytes = response
             .bytes()
             .await
-            .map_err(|e| SlackError::HttpError(format!("Failed to read image bytes: {}", e)))?;
+            .map_err(|e| SlackError::HttpError(format!("Failed to read image bytes: {e}")))?;
 
         let encoded = general_purpose::STANDARD.encode(&bytes);
 
-        Ok(format!("data:{};base64,{}", mime, encoded))
+        Ok(format!("data:{mime};base64,{encoded}"))
     }
 
     async fn fetch_image_size(&self, url: &str) -> Result<Option<usize>, SlackError> {
@@ -187,8 +206,13 @@ impl SlackBot {
                 // https://slack-files.com/TXXXX-FFFF-<secret>
                 // Extract last hyphen-separated part of last path segment.
                 u.path_segments()
-                    .and_then(|mut segs| segs.next_back().map(|s| s.to_string()))
-                    .and_then(|last_seg| last_seg.rsplit('-').next().map(|s| s.to_string()))
+                    .and_then(|mut segs| segs.next_back().map(std::string::ToString::to_string))
+                    .and_then(|last_seg| {
+                        last_seg
+                            .rsplit('-')
+                            .next()
+                            .map(std::string::ToString::to_string)
+                    })
             })
             .ok_or_else(|| {
                 SlackError::ApiError("pub_secret missing in permalink_public".to_string())
@@ -207,7 +231,7 @@ impl SlackBot {
 
         // Start with the original private download URL and attach the pub_secret.
         let mut direct = base_download.clone();
-        direct.set_query(Some(&format!("pub_secret={}", secret)));
+        direct.set_query(Some(&format!("pub_secret={secret}")));
 
         // First attempt: original /download/ path (direct already has it)
         let mut candidate = direct.clone();
@@ -244,7 +268,7 @@ impl SlackBot {
             .or(file.url_private.as_ref())
     }
 
-    /// Build the complete prompt as chat messages ready for the OpenAI request.
+    /// Build the complete prompt as chat messages ready for the `OpenAI` request.
     /// `messages_markdown` should already contain the raw Slack messages,
     /// separated by newlines.
     fn build_prompt(
@@ -255,6 +279,11 @@ impl SlackBot {
         self.llm_client.build_prompt(messages_markdown, custom_opt)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the `OpenAI` API call fails or Slack API lookups needed
+    /// for prompt construction fail.
+    #[allow(clippy::too_many_lines)] // The orchestration here benefits from locality; refactor if it grows.
     pub async fn summarize_messages_with_chatgpt(
         &mut self,
         _config: &AppConfig,
@@ -274,10 +303,10 @@ impl SlackBot {
             .iter()
             .filter_map(|msg| {
                 msg.sender.user.as_ref().and_then(|user| {
-                    if user.as_ref() != "Unknown User" {
-                        Some(user.as_ref().to_string())
-                    } else {
+                    if user.as_ref() == "Unknown User" {
                         None
+                    } else {
+                        Some(user.as_ref().to_string())
                     }
                 })
             })
@@ -308,18 +337,18 @@ impl SlackBot {
                     .map_or("Unknown User", |uid| uid.as_ref());
 
                 // Get the real username from cache
-                let author = if user_id != "Unknown User" {
+                let author = if user_id == "Unknown User" {
+                    user_id.to_string()
+                } else {
                     user_info_cache
                         .get(user_id)
-                        .map_or_else(|| user_id.to_string(), |name| name.clone())
-                } else {
-                    user_id.to_string()
+                        .map_or_else(|| user_id.to_string(), std::clone::Clone::clone)
                 };
 
                 let ts = msg.origin.ts.clone();
                 let text = msg.content.text.as_deref().unwrap_or("");
 
-                format!("[{}] {}: {}", ts, author, text)
+                format!("[{ts}] {author}: {text}")
             })
             .collect();
 
@@ -340,16 +369,15 @@ impl SlackBot {
                 for file in files {
                     if let Some(url) = Self::get_slack_file_download_url(file) {
                         // Determine mime type: prefer Slack-provided mimetype, else guess from URL path
-                        let raw_mime: String = file
-                            .mimetype
-                            .as_ref()
-                            .map(|m| m.0.clone())
-                            .unwrap_or_else(|| {
+                        let raw_mime: String = file.mimetype.as_ref().map_or_else(
+                            || {
                                 mime_guess::from_path(url.path())
                                     .first_or_octet_stream()
                                     .essence_str()
                                     .to_string()
-                            });
+                            },
+                            |m| m.0.clone(),
+                        );
 
                         let canon = crate::ai::client::canonicalize_mime(&raw_mime);
                         if !self.llm_client.is_allowed_image_mime(&canon) {
@@ -388,7 +416,7 @@ impl SlackBot {
                                     image_url: Some(ImageUrlType { url: public_url }),
                                 }),
                                 Err(e) => {
-                                    error!("Failed to get public URL for image {}: {}", url, e)
+                                    error!("Failed to get public URL for image {}: {}", url, e);
                                 }
                             }
                         }
@@ -400,8 +428,7 @@ impl SlackBot {
                         .content
                         .text
                         .as_ref()
-                        .map(|t| t.trim().is_empty())
-                        .unwrap_or(true);
+                        .is_none_or(|t| t.trim().is_empty());
 
                     if text_is_empty {
                         // Inject a minimal placeholder so the model treats the images as user input
@@ -439,7 +466,7 @@ impl SlackBot {
             .await?;
 
         // Format the final summary message
-        let formatted_summary = format!("*Summary from #{}*\n\n{}", channel_name, summary_text);
+        let formatted_summary = format!("*Summary from #{channel_name}*\n\n{summary_text}");
         Ok(formatted_summary)
     }
 }

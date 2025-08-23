@@ -1,10 +1,12 @@
-#![allow(clippy::too_many_lines)]
-#![allow(clippy::missing_errors_doc)]
+// Keep function focused; consider splitting if it grows significantly.
 use crate::core::config::AppConfig;
 use crate::core::models::ProcessingTask;
 use crate::errors::SlackError;
 use crate::slack::SlackBot;
 
+/// # Errors
+///
+/// Returns an error if Slack API calls fail during message retrieval or summarization.
 pub async fn summarize_task(
     slack_bot: &mut SlackBot,
     config: &AppConfig,

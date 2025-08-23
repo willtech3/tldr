@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(clippy::struct_excessive_bools)] // ProcessingTask models user intent flags; booleans map 1:1 to Slack UX toggles.
 pub struct ProcessingTask {
     pub correlation_id: String,
     pub user_id: String,

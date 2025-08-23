@@ -2,7 +2,6 @@
 //!
 //! Encapsulates all Slack API interactions with retry logic and error handling.
 
-use once_cell::sync::Lazy;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -24,8 +23,8 @@ use crate::errors::SlackError;
 
 // Build the Slack client connector safely without panicking.
 // If connector construction fails, store None and surface a SlackError at call sites.
-static SLACK_CLIENT: Lazy<Option<SlackHyperClient>> =
-    Lazy::new(|| match SlackClientHyperConnector::new() {
+static SLACK_CLIENT: std::sync::LazyLock<Option<SlackHyperClient>> =
+    std::sync::LazyLock::new(|| match SlackClientHyperConnector::new() {
         Ok(connector) => Some(SlackHyperClient::new(connector)),
         Err(e) => {
             warn!("Failed to create Slack HTTP connector: {}", e);
@@ -33,7 +32,7 @@ static SLACK_CLIENT: Lazy<Option<SlackHyperClient>> =
         }
     });
 
-static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
+static HTTP_CLIENT: std::sync::LazyLock<Client> = std::sync::LazyLock::new(|| {
     Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
@@ -67,12 +66,14 @@ pub struct SlackClient {
 }
 
 impl SlackClient {
+    #[must_use]
     pub fn new(token: String) -> Self {
         Self {
             token: SlackApiToken::new(SlackApiTokenValue::new(token)),
         }
     }
 
+    #[must_use]
     pub fn token(&self) -> &SlackApiToken {
         &self.token
     }
@@ -88,6 +89,9 @@ impl SlackClient {
         Retry::spawn(strategy, operation).await
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the Slack API call fails or response parsing fails.
     pub async fn get_user_im_channel(&self, user_id: &str) -> Result<String, SlackError> {
         self.with_retry(|| async {
             let session = SLACK_CLIENT
@@ -106,6 +110,7 @@ impl SlackClient {
         .await
     }
 
+    /// # Errors
     pub async fn get_bot_user_id(&self) -> Result<String, SlackError> {
         self.with_retry(|| async {
             let session = SLACK_CLIENT
@@ -124,6 +129,7 @@ impl SlackClient {
     }
 
     /// Get messages from channel since last read timestamp
+    /// # Errors
     pub async fn get_unread_messages(
         &self,
         channel_id: &str,
@@ -156,7 +162,7 @@ impl SlackClient {
                         .map(|d| d.as_secs())
                         .unwrap_or(0)
                         .saturating_sub(12 * 3600);
-                    SlackTs(format!("{}.000000", twelve_hours_ago))
+                    SlackTs(format!("{twelve_hours_ago}.000000"))
                 });
 
             // Get messages since last_read
@@ -172,6 +178,7 @@ impl SlackClient {
     }
 
     /// Get messages from channel in the last 12 hours (for compatibility)
+    /// # Errors
     pub async fn get_channel_history(
         &self,
         channel_id: &str,
@@ -204,6 +211,7 @@ impl SlackClient {
         .await
     }
 
+    /// # Errors
     pub async fn get_user_info(&self, user_id: &str) -> Result<String, SlackError> {
         self.with_retry(|| async {
             let session = SLACK_CLIENT
@@ -240,6 +248,7 @@ impl SlackClient {
         .await
     }
 
+    /// # Errors
     pub async fn get_recent_messages(
         &self,
         channel_id: &str,
@@ -255,7 +264,7 @@ impl SlackClient {
 
             let request = SlackApiConversationsHistoryRequest::new()
                 .with_channel(SlackChannelId(channel_id.to_string()))
-                .with_limit(std::cmp::min(count, 1000) as u16);
+                .with_limit(u16::try_from(std::cmp::min(count, 1000)).unwrap_or(1000));
 
             let result = session.conversations_history(&request).await?;
 
@@ -266,6 +275,7 @@ impl SlackClient {
         .await
     }
 
+    /// # Errors
     pub async fn send_dm(&self, user_id: &str, message: &str) -> Result<(), SlackError> {
         self.with_retry(|| async {
             let session = SLACK_CLIENT
@@ -288,6 +298,7 @@ impl SlackClient {
         .await
     }
 
+    /// # Errors
     pub async fn post_message(&self, channel_id: &str, message: &str) -> Result<(), SlackError> {
         self.with_retry(|| async {
             let session = SLACK_CLIENT
@@ -309,6 +320,7 @@ impl SlackClient {
         .await
     }
 
+    /// # Errors
     pub async fn delete_message(&self, channel_id: &str, ts: &str) -> Result<(), SlackError> {
         self.with_retry(|| async {
             let session = SLACK_CLIENT
@@ -329,6 +341,7 @@ impl SlackClient {
         .await
     }
 
+    /// # Errors
     pub async fn replace_original_message(
         &self,
         response_url: &str,
@@ -340,14 +353,13 @@ impl SlackClient {
                 .json(&payload)
                 .send()
                 .await
-                .map_err(|e| SlackError::GeneralError(format!("HTTP request failed: {}", e)))?;
+                .map_err(|e| SlackError::GeneralError(format!("HTTP request failed: {e}")))?;
 
             if !response.status().is_success() {
                 let status = response.status();
                 let text = response.text().await.unwrap_or_default();
                 return Err(SlackError::GeneralError(format!(
-                    "Failed to update message: {} - {}",
-                    status, text
+                    "Failed to update message: {status} - {text}"
                 )));
             }
 
@@ -358,6 +370,9 @@ impl SlackClient {
 
     // Canvas-specific methods
 
+    /// # Errors
+    ///
+    /// Returns an error if the Slack API request or response parsing fails.
     pub async fn get_channel_name(&self, channel_id: &str) -> Result<String, SlackError> {
         let info_payload = json!({
             "channel": channel_id,
@@ -369,22 +384,25 @@ impl SlackClient {
             .json(&info_payload)
             .send()
             .await
-            .map_err(|e| SlackError::GeneralError(format!("Failed to get channel info: {}", e)))?;
+            .map_err(|e| SlackError::GeneralError(format!("Failed to get channel info: {e}")))?;
 
-        let info_data: Value = info_resp.json().await.map_err(|e| {
-            SlackError::GeneralError(format!("Failed to parse channel info: {}", e))
-        })?;
+        let info_data: Value = info_resp
+            .json()
+            .await
+            .map_err(|e| SlackError::GeneralError(format!("Failed to parse channel info: {e}")))?;
 
         let channel_name = info_data
             .get("channel")
             .and_then(|c| c.get("name"))
             .and_then(|n| n.as_str())
-            .map(std::string::ToString::to_string)
-            .unwrap_or_else(|| channel_id.to_string());
+            .map_or_else(|| channel_id.to_string(), std::string::ToString::to_string);
 
         Ok(channel_name)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the Slack API request or response parsing fails.
     pub async fn get_channel_canvas_id(
         &self,
         channel_id: &str,
@@ -399,11 +417,12 @@ impl SlackClient {
             .json(&info_payload)
             .send()
             .await
-            .map_err(|e| SlackError::GeneralError(format!("Failed to get channel info: {}", e)))?;
+            .map_err(|e| SlackError::GeneralError(format!("Failed to get channel info: {e}")))?;
 
-        let info_data: Value = info_resp.json().await.map_err(|e| {
-            SlackError::GeneralError(format!("Failed to parse channel info: {}", e))
-        })?;
+        let info_data: Value = info_resp
+            .json()
+            .await
+            .map_err(|e| SlackError::GeneralError(format!("Failed to parse channel info: {e}")))?;
 
         let canvas_id_opt = info_data
             .get("channel")
@@ -416,6 +435,9 @@ impl SlackClient {
         Ok(canvas_id_opt)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the Slack API request or response parsing fails.
     pub async fn create_canvas(
         &self,
         channel_id: &str,
@@ -436,11 +458,11 @@ impl SlackClient {
             .send()
             .await
             .map_err(|e| {
-                SlackError::GeneralError(format!("Canvas creation request failed: {}", e))
+                SlackError::GeneralError(format!("Canvas creation request failed: {e}"))
             })?;
 
         let create_resp: CanvasCreateResponse = resp.json().await.map_err(|e| {
-            SlackError::GeneralError(format!("Failed to parse canvas creation response: {}", e))
+            SlackError::GeneralError(format!("Failed to parse canvas creation response: {e}"))
         })?;
 
         if !create_resp.ok {
@@ -457,6 +479,9 @@ impl SlackClient {
             .ok_or_else(|| SlackError::GeneralError("No canvas ID in response".to_string()))
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the Slack API request or response parsing fails.
     pub async fn insert_canvas_at_start(
         &self,
         canvas_id: &str,
@@ -479,10 +504,10 @@ impl SlackClient {
             .json(&edit_payload)
             .send()
             .await
-            .map_err(|e| SlackError::GeneralError(format!("Canvas edit request failed: {}", e)))?;
+            .map_err(|e| SlackError::GeneralError(format!("Canvas edit request failed: {e}")))?;
 
         let edit_result: CanvasEditResponse = edit_resp.json().await.map_err(|e| {
-            SlackError::GeneralError(format!("Failed to parse canvas edit response: {}", e))
+            SlackError::GeneralError(format!("Failed to parse canvas edit response: {e}"))
         })?;
 
         if !edit_result.ok {
@@ -497,6 +522,9 @@ impl SlackClient {
         Ok(())
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the Slack API request or response parsing fails.
     pub async fn update_canvas_section(
         &self,
         canvas_id: &str,
@@ -521,10 +549,10 @@ impl SlackClient {
             .json(&edit_payload)
             .send()
             .await
-            .map_err(|e| SlackError::GeneralError(format!("Canvas edit request failed: {}", e)))?;
+            .map_err(|e| SlackError::GeneralError(format!("Canvas edit request failed: {e}")))?;
 
         let edit_result: CanvasEditResponse = edit_resp.json().await.map_err(|e| {
-            SlackError::GeneralError(format!("Failed to parse canvas edit response: {}", e))
+            SlackError::GeneralError(format!("Failed to parse canvas edit response: {e}"))
         })?;
 
         if !edit_result.ok {
@@ -539,6 +567,9 @@ impl SlackClient {
         Ok(())
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the Slack API request or response parsing fails.
     pub async fn get_message_permalink(
         &self,
         channel: &str,
@@ -555,10 +586,10 @@ impl SlackClient {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| SlackError::GeneralError(format!("Failed to get permalink: {}", e)))?;
+            .map_err(|e| SlackError::GeneralError(format!("Failed to get permalink: {e}")))?;
 
         let perm_resp: PermalinkResponse = resp.json().await.map_err(|e| {
-            SlackError::GeneralError(format!("Failed to parse permalink response: {}", e))
+            SlackError::GeneralError(format!("Failed to parse permalink response: {e}"))
         })?;
 
         if !perm_resp.ok {
@@ -575,6 +606,9 @@ impl SlackClient {
             .ok_or_else(|| SlackError::GeneralError("No permalink in response".to_string()))
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the Slack API request or response parsing fails.
     pub async fn open_modal(&self, trigger_id: &str, view: &Value) -> Result<(), SlackError> {
         let payload = json!({
             "trigger_id": trigger_id,
@@ -587,7 +621,7 @@ impl SlackClient {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| SlackError::GeneralError(format!("Failed to open modal: {}", e)))?;
+            .map_err(|e| SlackError::GeneralError(format!("Failed to open modal: {e}")))?;
 
         if !resp.status().is_success() {
             return Err(SlackError::ApiError(format!(
@@ -597,7 +631,11 @@ impl SlackClient {
         }
 
         let json: Value = resp.json().await?;
-        if json.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+        if json
+            .get("ok")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
             Ok(())
         } else {
             Err(SlackError::ApiError(format!(
@@ -611,6 +649,7 @@ impl SlackClient {
 
     // Image-related methods
 
+    /// # Errors
     pub async fn fetch_image_size(&self, url: &str) -> Result<Option<usize>, SlackError> {
         let resp = HTTP_CLIENT
             .head(url)
@@ -631,6 +670,7 @@ impl SlackClient {
         Ok(size_opt)
     }
 
+    /// # Errors
     pub async fn ensure_public_file_url(&self, file: &SlackFile) -> Result<String, SlackError> {
         // Step 1: Ensure the file has a public permalink. Avoid extra API call if already present.
         let permalink = if let Some(link) = &file.permalink_public {

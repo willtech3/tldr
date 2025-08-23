@@ -15,6 +15,12 @@ pub use self::function_handler as handler;
 
 /// Lambda handler for the API entrypoint. Verifies Slack signature,
 /// routes interactive vs slash-command, and enqueues a `ProcessingTask`.
+///
+/// # Errors
+///
+/// Returns an error response payload if the request is malformed or fails
+/// Slack signature verification; otherwise returns a 200 with a JSON body.
+#[allow(clippy::too_many_lines, clippy::manual_let_else)]
 pub async fn function_handler(
     event: LambdaEvent<serde_json::Value>,
 ) -> Result<impl Serialize, Error> {
@@ -24,57 +30,46 @@ pub async fn function_handler(
     })?;
     info!("API Lambda received request: {:?}", event);
 
-    let headers = match event.payload.get("headers") {
-        Some(headers) => headers,
-        None => {
-            error!("Request missing headers");
-            return Ok(json!({
-                "statusCode": 400,
-                "body": json!({ "error": "Missing headers" }).to_string()
-            }));
-        }
+    let Some(headers) = event.payload.get("headers") else {
+        error!("Request missing headers");
+        return Ok(json!({
+            "statusCode": 400,
+            "body": json!({ "error": "Missing headers" }).to_string()
+        }));
     };
 
-    let body = match event.payload.get("body") {
-        Some(body) => match body.as_str() {
-            Some(body_str) => body_str,
-            None => {
-                error!("Request body is not a string");
-                return Ok(json!({
-                    "statusCode": 400,
-                    "body": json!({ "error": "Invalid body format" }).to_string()
-                }));
-            }
-        },
-        None => {
-            error!("Request missing body");
+    let body = if let Some(body) = event.payload.get("body") {
+        if let Some(body_str) = body.as_str() {
+            body_str
+        } else {
+            error!("Request body is not a string");
             return Ok(json!({
                 "statusCode": 400,
-                "body": json!({ "error": "Missing body" }).to_string()
+                "body": json!({ "error": "Invalid body format" }).to_string()
             }));
         }
+    } else {
+        error!("Request missing body");
+        return Ok(json!({
+            "statusCode": 400,
+            "body": json!({ "error": "Missing body" }).to_string()
+        }));
     };
 
     // Verify the Slack signature
-    let signature = match parsing::get_header_value(headers, "X-Slack-Signature") {
-        Some(sig) => sig,
-        None => {
-            error!("Missing X-Slack-Signature header");
-            return Ok(json!({
-                "statusCode": 401,
-                "body": json!({ "error": "Missing X-Slack-Signature header" }).to_string()
-            }));
-        }
+    let Some(signature) = parsing::get_header_value(headers, "X-Slack-Signature") else {
+        error!("Missing X-Slack-Signature header");
+        return Ok(json!({
+            "statusCode": 401,
+            "body": json!({ "error": "Missing X-Slack-Signature header" }).to_string()
+        }));
     };
-    let timestamp = match parsing::get_header_value(headers, "X-Slack-Request-Timestamp") {
-        Some(ts) => ts,
-        None => {
-            error!("Missing X-Slack-Request-Timestamp header");
-            return Ok(json!({
-                "statusCode": 401,
-                "body": json!({ "error": "Missing X-Slack-Request-Timestamp header" }).to_string()
-            }));
-        }
+    let Some(timestamp) = parsing::get_header_value(headers, "X-Slack-Request-Timestamp") else {
+        error!("Missing X-Slack-Request-Timestamp header");
+        return Ok(json!({
+            "statusCode": 401,
+            "body": json!({ "error": "Missing X-Slack-Request-Timestamp header" }).to_string()
+        }));
     };
     if !signature::verify_slack_signature(body, timestamp, signature, &config) {
         error!("Slack signature verification failed");
@@ -118,7 +113,7 @@ pub async fn function_handler(
                 let view_clone = view.clone();
                 let config_clone = config.clone();
                 let modal_handle = tokio::spawn(async move {
-                    match SlackBot::new(&config_clone).await {
+                    match SlackBot::new(&config_clone) {
                         Ok(bot) => {
                             if let Err(e) = bot.open_modal(&trigger_id, &view_clone).await {
                                 error!("Failed to open modal: {}", e);
@@ -213,7 +208,7 @@ pub async fn function_handler(
     let filtered_text: String = text_parts
         .iter()
         .filter(|&&p| p != "--visible" && p != "--public" && p != "--ui" && p != "--modal")
-        .cloned()
+        .copied()
         .collect::<Vec<&str>>()
         .join(" ");
 
@@ -234,7 +229,7 @@ pub async fn function_handler(
         let view_clone = view.clone();
         let config_clone = config.clone();
         let modal_handle = tokio::spawn(async move {
-            match SlackBot::new(&config_clone).await {
+            match SlackBot::new(&config_clone) {
                 Ok(bot) => {
                     let _ = bot.open_modal(&trigger_id, &view_clone).await;
                 }

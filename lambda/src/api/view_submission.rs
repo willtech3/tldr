@@ -5,6 +5,9 @@ use crate::ai::prompt_builder::sanitize_custom_prompt;
 use crate::core::models::ProcessingTask;
 use crate::errors::SlackError;
 
+/// # Errors
+///
+/// Returns an error if the `view` lacks required fields to build a `ProcessingTask`.
 pub fn build_task_from_view(
     user_id: &str,
     view: &Value,
@@ -66,7 +69,7 @@ pub fn build_task_from_view(
     let visible = dest_public_post;
 
     let custom_prompt = v_str(view, &["state", "values", "style", "custom", "value"])
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .and_then(|raw| sanitize_custom_prompt(&raw).ok());
 
     let effective_count = if mode == "last_n" {
@@ -77,14 +80,14 @@ pub fn build_task_from_view(
 
     let mut text_parts = Vec::new();
     if let Some(count) = effective_count {
-        text_parts.push(format!("count={}", count));
+        text_parts.push(format!("count={count}"));
     }
     if let Some(ref prompt) = custom_prompt {
         let display_prompt = if prompt.chars().count() > 100 {
             let truncated: String = prompt.chars().take(97).collect();
-            format!("custom=\"{}...\"", truncated)
+            format!("custom=\"{truncated}...\"")
         } else {
-            format!("custom=\"{}\"", prompt)
+            format!("custom=\"{prompt}\"")
         };
         text_parts.push(display_prompt);
     }

@@ -3,6 +3,7 @@ use slack_morphism::events::SlackMessageEventType;
 
 /// Filters a list of Slack messages, retaining only those that are from users
 /// and are not system messages or from the bot itself.
+#[must_use]
 pub fn filter_user_messages(
     messages: Vec<SlackHistoryMessage>,
     bot_user_id: Option<&str>,
