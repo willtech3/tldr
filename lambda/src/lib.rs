@@ -33,6 +33,7 @@
 ///         slack_client_secret: "dummy_client_secret".to_string(),
 ///         slack_redirect_url: "https://example.com/auth/slack/callback".to_string(),
 ///         user_token_param_prefix: "/tldr/user_tokens/".to_string(),
+///         user_token_notify_prefix: "/tldr/user_token_notified/".to_string(),
 ///         openai_api_key: "dummy_openai_key".to_string(),
 ///         openai_org_id: None,
 ///         openai_model: None,

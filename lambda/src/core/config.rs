@@ -10,6 +10,7 @@ pub struct AppConfig {
     pub slack_client_secret: String,
     pub slack_redirect_url: String,
     pub user_token_param_prefix: String,
+    pub user_token_notify_prefix: String,
     pub openai_api_key: String,
     pub openai_org_id: Option<String>,
     pub openai_model: Option<String>,
@@ -35,6 +36,8 @@ impl AppConfig {
                 .map_err(|e| format!("SLACK_REDIRECT_URL: {e}"))?,
             user_token_param_prefix: env::var("USER_TOKEN_PARAM_PREFIX")
                 .unwrap_or_else(|_| "/tldr/user_tokens/".to_string()),
+            user_token_notify_prefix: env::var("USER_TOKEN_NOTIFY_PREFIX")
+                .unwrap_or_else(|_| "/tldr/user_token_notified/".to_string()),
             openai_api_key: env::var("OPENAI_API_KEY")
                 .map_err(|e| format!("OPENAI_API_KEY: {e}"))?,
             openai_org_id: env::var("OPENAI_ORG_ID").ok(),

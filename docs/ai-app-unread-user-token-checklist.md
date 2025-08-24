@@ -34,12 +34,12 @@ A modular migration plan to make the AI App split view truly usable for summariz
 - [ ] API handler (lambda/src/api/handler.rs)
   - [x] Expand `message.im` parsing to accept: "summarize unread", "summarize last N", `dm me`, `to canvas`, `post here`, and `<#channel>` mention (style parsing pending)
   - [x] If channel missing, post quick-pick message with `conversations_select` and run on selection
-  - [ ] For unread mode without user token: fallback to last-N, post one-time DM with `/auth/slack/start`
-  - [x] Set assistant thread status while processing (clear on completion pending)
+  - [x] For unread mode without user token: fallback to last-N, post one-time DM with `/auth/slack/start`
+  - [x] Set assistant thread status while processing; clear on completion (handled implicitly by posting result; explicit clear TBD)
 
 - [ ] Modal (lambda/src/slack/modal_builder.rs)
   - [x] Replace range with **"All unread (user-specific)"** default; keep "Last N messages" and "Date range"
-  - [ ] Default conversation from AI thread context when available
+  - [x] Default conversation from AI thread context when available
 
 - [ ] Worker (lambda/src/worker/*)
   - [x] All unread (user-specific) when user token present; fallback to last 100 when absent

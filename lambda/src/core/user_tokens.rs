@@ -85,3 +85,45 @@ pub async fn get_user_token(
         }
     }
 }
+
+/// Mark that we've notified a user to connect OAuth (one-time DM).
+/// # Errors
+/// Returns error on SSM failures.
+pub async fn mark_user_notified(config: &AppConfig, slack_user_id: &str) -> Result<(), SlackError> {
+    let shared = aws_config::from_env().load().await;
+    let client = SsmClient::new(&shared);
+    let name = key_for_user(&config.user_token_notify_prefix, slack_user_id);
+    client
+        .put_parameter()
+        .name(name)
+        .value("1")
+        .r#type(ParameterType::String)
+        .overwrite(true)
+        .send()
+        .await
+        .map_err(|e| SlackError::AwsError(format!("ssm mark notify: {e}")))?;
+    Ok(())
+}
+
+/// Has the user already been notified to connect OAuth?
+/// # Errors
+/// Returns error on SSM failures.
+pub async fn has_user_been_notified(
+    config: &AppConfig,
+    slack_user_id: &str,
+) -> Result<bool, SlackError> {
+    let shared = aws_config::from_env().load().await;
+    let client = SsmClient::new(&shared);
+    let name = key_for_user(&config.user_token_notify_prefix, slack_user_id);
+    match client.get_parameter().name(name).send().await {
+        Ok(_) => Ok(true),
+        Err(e) => {
+            let msg = format!("{e}");
+            if msg.contains("ParameterNotFound") {
+                Ok(false)
+            } else {
+                Err(SlackError::AwsError(format!("ssm has notify: {e}")))
+            }
+        }
+    }
+}
