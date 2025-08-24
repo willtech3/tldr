@@ -63,24 +63,22 @@ pub async fn deliver_summary(
     let mut sent_successfully = false;
 
     // Primary thread delivery when specified
-    if matches!(task.destination, Destination::Thread) {
-        if let Some(thread_ts) = task.thread_ts.as_deref() {
-            info!(
-                "Replying in assistant thread {} in channel {} (corr_id={})",
-                thread_ts, source_channel_id, task.correlation_id
+    if let (Destination::Thread, Some(thread_ts)) = (task.destination, task.thread_ts.as_deref()) {
+        info!(
+            "Replying in assistant thread {} in channel {} (corr_id={})",
+            thread_ts, source_channel_id, task.correlation_id
+        );
+        if let Err(e) = slack_bot
+            .slack_client()
+            .post_message_in_thread(source_channel_id, thread_ts, summary)
+            .await
+        {
+            error!(
+                "Failed to post in assistant thread: {} (corr_id={})",
+                e, task.correlation_id
             );
-            if let Err(e) = slack_bot
-                .slack_client()
-                .post_message_in_thread(source_channel_id, thread_ts, summary)
-                .await
-            {
-                error!(
-                    "Failed to post in assistant thread: {} (corr_id={})",
-                    e, task.correlation_id
-                );
-            } else {
-                sent_successfully = true;
-            }
+        } else {
+            sent_successfully = true;
         }
     }
 

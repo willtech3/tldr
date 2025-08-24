@@ -48,3 +48,5 @@ slack-app-manifest.yaml
 # Local reports
 CODEBASE_CLEANUP_RECOMMENDATIONS.md
 GEMINI.md
+docs/ai-app-user-interaction-flows.html
+docs/ai-app-unread-user-token-checklist.md
