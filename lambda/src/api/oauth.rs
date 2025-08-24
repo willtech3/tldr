@@ -8,7 +8,11 @@ use crate::core::user_tokens::{StoredUserToken, put_user_token};
 use crate::errors::SlackError;
 
 #[must_use]
-pub fn build_authorize_url(config: &AppConfig, state: &str) -> String {
+pub fn build_authorize_url(
+    config: &AppConfig,
+    state: &str,
+    redirect_override: Option<&str>,
+) -> String {
     let scopes = [
         "channels:read",
         "channels:history",
@@ -22,11 +26,16 @@ pub fn build_authorize_url(config: &AppConfig, state: &str) -> String {
     .join(",");
 
     let client_id = &config.slack_client_id;
-    let redirect_uri =
-        utf8_percent_encode(&config.slack_redirect_url, NON_ALPHANUMERIC).to_string();
-    format!(
-        "https://slack.com/oauth/v2/authorize?client_id={client_id}&user_scope={scopes}&redirect_uri={redirect_uri}&state={state}"
-    )
+    let redirect_uri_opt = redirect_override.or(config.slack_redirect_url.as_deref());
+    let base =
+        format!("https://slack.com/oauth/v2/authorize?client_id={client_id}&user_scope={scopes}");
+    match redirect_uri_opt {
+        Some(uri) => {
+            let enc = utf8_percent_encode(uri, NON_ALPHANUMERIC).to_string();
+            format!("{base}&redirect_uri={enc}&state={state}")
+        }
+        None => format!("{base}&state={state}"),
+    }
 }
 
 /// Exchange the OAuth code for a user token and persist it.
@@ -36,13 +45,16 @@ pub async fn handle_callback(
     config: &AppConfig,
     http: &HttpClient,
     code: &str,
+    redirect_override: Option<&str>,
 ) -> Result<(String, String), SlackError> {
-    let payload = [
+    let mut payload = vec![
         ("code", code.to_string()),
         ("client_id", config.slack_client_id.clone()),
         ("client_secret", config.slack_client_secret.clone()),
-        ("redirect_uri", config.slack_redirect_url.clone()),
     ];
+    if let Some(redirect) = redirect_override.or(config.slack_redirect_url.as_deref()) {
+        payload.push(("redirect_uri", redirect.to_string()));
+    }
 
     let resp = http
         .post("https://slack.com/api/oauth.v2.access")

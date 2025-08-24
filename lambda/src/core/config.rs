@@ -8,7 +8,7 @@ pub struct AppConfig {
     // OAuth for user-token flow
     pub slack_client_id: String,
     pub slack_client_secret: String,
-    pub slack_redirect_url: String,
+    pub slack_redirect_url: Option<String>,
     pub user_token_param_prefix: String,
     pub user_token_notify_prefix: String,
     pub openai_api_key: String,
@@ -32,8 +32,7 @@ impl AppConfig {
                 .map_err(|e| format!("SLACK_CLIENT_ID: {e}"))?,
             slack_client_secret: env::var("SLACK_CLIENT_SECRET")
                 .map_err(|e| format!("SLACK_CLIENT_SECRET: {e}"))?,
-            slack_redirect_url: env::var("SLACK_REDIRECT_URL")
-                .map_err(|e| format!("SLACK_REDIRECT_URL: {e}"))?,
+            slack_redirect_url: env::var("SLACK_REDIRECT_URL").ok(),
             user_token_param_prefix: env::var("USER_TOKEN_PARAM_PREFIX")
                 .unwrap_or_else(|_| "/tldr/user_tokens/".to_string()),
             user_token_notify_prefix: env::var("USER_TOKEN_NOTIFY_PREFIX")

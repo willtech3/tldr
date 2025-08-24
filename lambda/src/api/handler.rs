@@ -60,7 +60,13 @@ pub async fn function_handler(
     if let Some(path) = event.payload.get("rawPath").and_then(|v| v.as_str()) {
         if path.ends_with("/auth/slack/start") {
             let state = Uuid::new_v4().to_string();
-            let url = oauth::build_authorize_url(&config, &state);
+            // Prefer configured redirect, otherwise derive from headers
+            let scheme = parsing::get_header_value(headers, "X-Forwarded-Proto")
+                .or_else(|| parsing::get_header_value(headers, "CloudFront-Forwarded-Proto"))
+                .unwrap_or("https");
+            let derived_redirect = parsing::get_header_value(headers, "Host")
+                .map(|host| format!("{scheme}://{host}/auth/slack/callback"));
+            let url = oauth::build_authorize_url(&config, &state, derived_redirect.as_deref());
             return Ok(json!({
                 "statusCode": 302,
                 "headers": { "Location": url },
@@ -80,7 +86,14 @@ pub async fn function_handler(
                 });
             if let Some(code) = code_opt {
                 let http = reqwest::Client::new();
-                match oauth::handle_callback(&config, &http, &code).await {
+                let base = parsing::get_header_value(headers, "X-Forwarded-Proto")
+                    .or_else(|| parsing::get_header_value(headers, "CloudFront-Forwarded-Proto"))
+                    .unwrap_or("https");
+                let derived_redirect = parsing::get_header_value(headers, "Host")
+                    .map(|host| format!("{base}://{host}/auth/slack/callback"));
+                match oauth::handle_callback(&config, &http, &code, derived_redirect.as_deref())
+                    .await
+                {
                     Ok((user_id, _)) => {
                         return Ok(json!({
                             "statusCode": 200,
