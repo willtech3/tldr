@@ -1,5 +1,6 @@
 use aws_sdk_ssm::{Client as SsmClient, config::Region, types::ParameterType};
 use serde::{Deserialize, Serialize};
+use std::env;
 
 use super::config::AppConfig;
 use crate::errors::SlackError;
@@ -18,6 +19,20 @@ fn key_for_user(prefix: &str, slack_user_id: &str) -> String {
     format!("{p}{slack_user_id}")
 }
 
+/// Get AWS region from environment variables with fallback
+fn get_aws_region() -> Region {
+    // Try AWS_REGION first (commonly set in Lambda), then AWS_DEFAULT_REGION
+    env::var("AWS_REGION")
+        .or_else(|_| env::var("AWS_DEFAULT_REGION"))
+        .map_or_else(
+            |_| {
+                tracing::warn!("No AWS region found in environment, defaulting to us-east-2");
+                Region::new("us-east-2")
+            },
+            Region::new,
+        )
+}
+
 /// # Errors
 ///
 /// Returns an error if SSM operations fail or JSON serialization fails.
@@ -26,10 +41,7 @@ pub async fn put_user_token(
     slack_user_id: &str,
     token: &StoredUserToken,
 ) -> Result<(), SlackError> {
-    let shared = aws_config::from_env()
-        .region(Region::new("us-east-2"))
-        .load()
-        .await;
+    let shared = aws_config::from_env().region(get_aws_region()).load().await;
     let client = SsmClient::new(&shared);
     let name = key_for_user(&config.user_token_param_prefix, slack_user_id);
     let value = serde_json::to_string(token)
@@ -56,10 +68,7 @@ pub async fn get_user_token(
     slack_user_id: &str,
 ) -> Result<Option<StoredUserToken>, SlackError> {
     // Explicitly set region to ensure proper SDK configuration
-    let shared = aws_config::from_env()
-        .region(Region::new("us-east-2"))
-        .load()
-        .await;
+    let shared = aws_config::from_env().region(get_aws_region()).load().await;
     let client = SsmClient::new(&shared);
     let name = key_for_user(&config.user_token_param_prefix, slack_user_id);
 
@@ -107,10 +116,7 @@ pub async fn get_user_token(
 /// # Errors
 /// Returns error on SSM failures.
 pub async fn mark_user_notified(config: &AppConfig, slack_user_id: &str) -> Result<(), SlackError> {
-    let shared = aws_config::from_env()
-        .region(Region::new("us-east-2"))
-        .load()
-        .await;
+    let shared = aws_config::from_env().region(get_aws_region()).load().await;
     let client = SsmClient::new(&shared);
     let name = key_for_user(&config.user_token_notify_prefix, slack_user_id);
     client
@@ -132,10 +138,7 @@ pub async fn has_user_been_notified(
     config: &AppConfig,
     slack_user_id: &str,
 ) -> Result<bool, SlackError> {
-    let shared = aws_config::from_env()
-        .region(Region::new("us-east-2"))
-        .load()
-        .await;
+    let shared = aws_config::from_env().region(get_aws_region()).load().await;
     let client = SsmClient::new(&shared);
     let name = key_for_user(&config.user_token_notify_prefix, slack_user_id);
     match client.get_parameter().name(name).send().await {
