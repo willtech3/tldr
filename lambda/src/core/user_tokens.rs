@@ -95,17 +95,29 @@ pub async fn get_user_token(
         Err(e) => {
             // If not found, return Ok(None); otherwise bubble error
             let msg = format!("{e}");
-            tracing::warn!("SSM get_parameter error for {}: {}", name, msg);
+            let debug_msg = format!("{e:?}");
+            tracing::warn!(
+                "SSM get_parameter error for {}: {} (debug: {})",
+                name,
+                msg,
+                debug_msg
+            );
 
-            // Check for both SDK v2 and v1 error formats
+            // Check for both SDK v2 and v1 error formats, and also check debug format
             if msg.contains("ParameterNotFound")
                 || msg.contains("Parameter not found")
                 || msg.contains("does not exist")
+                || debug_msg.contains("ParameterNotFound")
             {
                 tracing::info!("Parameter {} not found, returning None", name);
                 Ok(None)
             } else {
-                tracing::error!("SSM get_parameter failed for {}: {}", name, e);
+                tracing::error!(
+                    "SSM get_parameter failed for {}: {} (debug: {})",
+                    name,
+                    e,
+                    debug_msg
+                );
                 Err(SlackError::AwsError(format!("ssm get_parameter: {e}")))
             }
         }
