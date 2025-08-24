@@ -10,9 +10,9 @@ dotenv.config();
 const app = new cdk.App();
 
 // Get AWS account ID from various sources
-const accountId = app.node.tryGetContext('account') || 
-                  process.env.AWS_ACCOUNT_ID ||
-                  process.env.CDK_DEFAULT_ACCOUNT;
+const accountId = app.node.tryGetContext('account') ||
+  process.env.AWS_ACCOUNT_ID ||
+  process.env.CDK_DEFAULT_ACCOUNT;
 
 if (!accountId) {
   console.error('ERROR: No AWS account ID specified.');
@@ -33,7 +33,7 @@ new TldrStack(app, 'TldrStack', {
   // Add basic environment configuration
   env: {
     account: accountId,
-    region: process.env.CDK_DEFAULT_REGION || 'us-east-1',
+    region: process.env.CDK_DEFAULT_REGION || 'us-east-2',
   },
 });
 

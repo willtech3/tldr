@@ -75,11 +75,10 @@ export class TldrStack extends cdk.Stack {
       },
     });
 
-    // Common environment variables for both functions
+    // Common environment variables for both functions (excluding API URL to avoid cycles)
     const commonEnvironment = {
       SLACK_BOT_TOKEN: props.slackBotToken,
       SLACK_SIGNING_SECRET: props.slackSigningSecret,
-      API_BASE_URL: api.url,
       SLACK_CLIENT_ID: process.env.SLACK_CLIENT_ID || '',
       SLACK_CLIENT_SECRET: process.env.SLACK_CLIENT_SECRET || '',
       SLACK_REDIRECT_URL: process.env.SLACK_REDIRECT_URL || '',
@@ -88,6 +87,18 @@ export class TldrStack extends cdk.Stack {
       OPENAI_API_KEY: props.openaiApiKey,
       OPENAI_ORG_ID: props.openaiOrgId,
       PROCESSING_QUEUE_URL: processingQueue.queueUrl,
+    } as const;
+
+    // Environment for the API Lambda (no API_BASE_URL reference)
+    const apiEnvironment = {
+      ...commonEnvironment,
+    };
+
+    // Environment for the Worker Lambda (safe to reference the API, worker is not integrated by API Gateway)
+    const workerEnvironment = {
+      ...commonEnvironment,
+      // ensure no trailing slash to avoid double slashes when composing paths
+      API_BASE_URL: api.url.replace(/\/$/, ''),
     };
 
     // Create the Lambda function for immediate responses to Slack commands
@@ -95,17 +106,10 @@ export class TldrStack extends cdk.Stack {
       runtime: lambda.Runtime.PROVIDED_AL2,
       handler: 'bootstrap', // Fixed handler name for Rust Lambdas
       code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/target/lambda/tldr-api/function.zip')),
-      environment: commonEnvironment,
+      environment: apiEnvironment,
       timeout: cdk.Duration.seconds(10), // Short timeout for immediate responses
       memorySize: 256,
       logRetention: logs.RetentionDays.ONE_WEEK, // Add CloudWatch logs retention
-    });
-
-    // Create CloudWatch log group with custom settings for API function
-    new logs.LogGroup(this, 'TldrApiFunctionLogGroup', {
-      logGroupName: `/aws/lambda/${tldrApiFunction.functionName}`,
-      retention: logs.RetentionDays.ONE_WEEK,
-      removalPolicy: cdk.RemovalPolicy.DESTROY
     });
 
     // Create the worker Lambda function for background processing
@@ -113,17 +117,10 @@ export class TldrStack extends cdk.Stack {
       runtime: lambda.Runtime.PROVIDED_AL2,
       handler: 'bootstrap', // Fixed handler name for Rust Lambdas
       code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/target/lambda/tldr-worker/function.zip')),
-      environment: commonEnvironment,
+      environment: workerEnvironment,
       timeout: cdk.Duration.seconds(900), // Max timeout for long-running summaries
       memorySize: 1024, // More memory for processing
       logRetention: logs.RetentionDays.ONE_WEEK, // Add CloudWatch logs retention
-    });
-
-    // Create CloudWatch log group with custom settings for Worker function
-    new logs.LogGroup(this, 'TldrWorkerFunctionLogGroup', {
-      logGroupName: `/aws/lambda/${tldrWorkerFunction.functionName}`,
-      retention: logs.RetentionDays.ONE_WEEK,
-      removalPolicy: cdk.RemovalPolicy.DESTROY
     });
 
     // Add SQS as an event source for the worker Lambda
@@ -145,7 +142,7 @@ export class TldrStack extends cdk.Stack {
       },
       this,
     );
-    
+
     // SSM Parameter Store permissions for notification tracking
     const userNotifyParamArn = cdk.Arn.format(
       {
@@ -155,23 +152,23 @@ export class TldrStack extends cdk.Stack {
       },
       this,
     );
-    
+
     // API Lambda needs to write user tokens
     tldrApiFunction.addToRolePolicy(
       new iam.PolicyStatement({ actions: ['ssm:PutParameter'], resources: [userTokenParamArn] }),
     );
-    
+
     // Worker Lambda needs to read user tokens and read/write notification flags
     tldrWorkerFunction.addToRolePolicy(
       new iam.PolicyStatement({ actions: ['ssm:GetParameter'], resources: [userTokenParamArn] }),
     );
     tldrWorkerFunction.addToRolePolicy(
-      new iam.PolicyStatement({ 
-        actions: ['ssm:GetParameter', 'ssm:PutParameter'], 
-        resources: [userNotifyParamArn] 
+      new iam.PolicyStatement({
+        actions: ['ssm:GetParameter', 'ssm:PutParameter'],
+        resources: [userNotifyParamArn]
       }),
     );
-    
+
     // Allow decrypting SecureString parameters that SSM serves (scoped via ViaService)
     tldrWorkerFunction.addToRolePolicy(
       new iam.PolicyStatement({
