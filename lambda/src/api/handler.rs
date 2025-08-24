@@ -186,6 +186,11 @@ pub async fn function_handler(
                 }
                 // User sent a message in the assistant thread (e.g., chose a suggested prompt)
                 "message.im" | "message" => {
+                    // Ignore bot messages and edited/system messages to avoid loops
+                    if event.get("bot_id").is_some() || event.get("subtype").is_some() {
+                        return Ok(json!({ "statusCode": 200, "body": "{}" }));
+                    }
+
                     let channel_id = event.get("channel").and_then(|c| c.as_str()).unwrap_or("");
                     // Prefer thread_ts if present, else fall back to ts
                     let thread_ts = event
