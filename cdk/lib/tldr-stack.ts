@@ -133,12 +133,33 @@ export class TldrStack extends cdk.Stack {
       },
       this,
     );
+    
+    // SSM Parameter Store permissions for notification tracking
+    const userNotifyParamArn = cdk.Arn.format(
+      {
+        service: 'ssm',
+        resource: 'parameter',
+        resourceName: 'tldr/user_token_notified/*',
+      },
+      this,
+    );
+    
+    // API Lambda needs to write user tokens
     tldrApiFunction.addToRolePolicy(
       new iam.PolicyStatement({ actions: ['ssm:PutParameter'], resources: [userTokenParamArn] }),
     );
+    
+    // Worker Lambda needs to read user tokens and read/write notification flags
     tldrWorkerFunction.addToRolePolicy(
       new iam.PolicyStatement({ actions: ['ssm:GetParameter'], resources: [userTokenParamArn] }),
     );
+    tldrWorkerFunction.addToRolePolicy(
+      new iam.PolicyStatement({ 
+        actions: ['ssm:GetParameter', 'ssm:PutParameter'], 
+        resources: [userNotifyParamArn] 
+      }),
+    );
+    
     // Allow decrypting SecureString parameters that SSM serves (scoped via ViaService)
     tldrWorkerFunction.addToRolePolicy(
       new iam.PolicyStatement({
