@@ -38,10 +38,7 @@ pub async fn summarize_task(
                 let msg = format!(
                     "For accurate 'All unread' summaries, connect your Slack account: {auth_url}"
                 );
-                let _ = slack_bot
-                    .slack_client()
-                    .send_dm(&task.user_id, &msg)
-                    .await;
+                let _ = slack_bot.slack_client().send_dm(&task.user_id, &msg).await;
                 let _ = mark_user_notified(config, &task.user_id).await;
             }
 
