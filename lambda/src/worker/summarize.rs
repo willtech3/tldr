@@ -5,6 +5,12 @@ use crate::core::user_tokens::{get_user_token, has_user_been_notified, mark_user
 use crate::errors::SlackError;
 use crate::slack::SlackBot;
 
+pub enum SummarizeResult {
+    Summary(String),
+    NoMessages,
+    OAuthInitiated,
+}
+
 /// # Errors
 ///
 /// Returns an error if Slack API calls fail during message retrieval or summarization.
@@ -12,7 +18,7 @@ pub async fn summarize_task(
     slack_bot: &mut SlackBot,
     config: &AppConfig,
     task: &ProcessingTask,
-) -> Result<Option<String>, SlackError> {
+) -> Result<SummarizeResult, SlackError> {
     let source_channel_id = &task.channel_id;
 
     // Determine retrieval mode: last N vs all unread (user-specific)
@@ -29,19 +35,24 @@ pub async fn summarize_task(
                 crate::slack::client::SlackClient::from_user_token(stored.access_token);
             user_client.get_unread_messages(source_channel_id).await?
         } else {
-            // No user token: fallback to last 100 messages and send one-time DM with auth link
+            // No user token: check if we need to initiate OAuth flow
             let need_notify = !has_user_been_notified(config, &task.user_id).await?;
             if need_notify {
+                // First time user - send OAuth link and exit without summary
                 let base = std::env::var("API_BASE_URL")
                     .unwrap_or_else(|_| "https://example.com".to_string());
                 let auth_url = format!("{base}/auth/slack/start");
                 let msg = format!(
-                    "For accurate 'All unread' summaries, connect your Slack account: {auth_url}"
+                    "To get accurate 'All unread' summaries, please connect your Slack account: {auth_url}\n\nOnce connected, try the command again."
                 );
                 let _ = slack_bot.slack_client().send_dm(&task.user_id, &msg).await;
                 let _ = mark_user_notified(config, &task.user_id).await;
+
+                // Return OAuthInitiated to indicate OAuth flow was started
+                return Ok(SummarizeResult::OAuthInitiated);
             }
 
+            // User has been notified before but hasn't connected - fallback to last 100
             slack_bot
                 .slack_client()
                 .get_recent_messages(source_channel_id, 100)
@@ -64,7 +75,7 @@ pub async fn summarize_task(
     }
 
     if messages.is_empty() {
-        return Ok(None);
+        return Ok(SummarizeResult::NoMessages);
     }
 
     let summary = slack_bot
@@ -75,5 +86,5 @@ pub async fn summarize_task(
             task.custom_prompt.as_deref(),
         )
         .await?;
-    Ok(Some(summary))
+    Ok(SummarizeResult::Summary(summary))
 }

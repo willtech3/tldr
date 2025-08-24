@@ -45,7 +45,8 @@
 ///     // Get and summarize unread messages in a channel
 ///     let messages = bot.slack_client().get_unread_messages("C12345678").await?;
 ///     if !messages.is_empty() {
-///         let summary = tldr::worker::summarize::summarize_task(
+///         use tldr::worker::summarize::SummarizeResult;
+///         let result = tldr::worker::summarize::summarize_task(
 ///             &mut bot,
 ///             &config,
 ///             &tldr::core::models::ProcessingTask {
@@ -65,9 +66,13 @@
 ///                 dest_public_post: false,
 ///             },
 ///         )
-///         .await?
-///         .unwrap_or_default();
-///         println!("Summary: {}", summary);
+///         .await?;
+///         
+///         match result {
+///             SummarizeResult::Summary(summary) => println!("Summary: {}", summary),
+///             SummarizeResult::NoMessages => println!("No messages to summarize"),
+///             SummarizeResult::OAuthInitiated => println!("OAuth flow initiated"),
+///         }
 ///     }
 ///
 ///     Ok(())

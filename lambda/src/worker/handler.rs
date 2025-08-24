@@ -4,6 +4,7 @@ use reqwest::Client as HttpClient;
 use serde_json::Value;
 use tracing::{error, info};
 
+use super::summarize::SummarizeResult;
 use super::{deliver, summarize};
 use crate::core::config::AppConfig;
 use crate::core::models::ProcessingTask;
@@ -48,15 +49,23 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
     let http_client = HttpClient::new();
 
     match summarize::summarize_task(&mut slack_bot, &config, &task).await {
-        Ok(Some(summary)) => {
+        Ok(SummarizeResult::Summary(summary)) => {
             deliver::deliver_summary(&slack_bot, &http_client, &task, &task.channel_id, &summary)
                 .await
                 .map_err(|e| Error::from(format!("Delivery error: {e}")))?;
         }
-        Ok(None) => {
+        Ok(SummarizeResult::NoMessages) => {
             deliver::notify_no_messages(&slack_bot, &http_client, &task)
                 .await
                 .map_err(|e| Error::from(format!("Delivery error: {e}")))?;
+        }
+        Ok(SummarizeResult::OAuthInitiated) => {
+            // OAuth flow was initiated, DM already sent by summarize_task
+            // Don't send any additional messages
+            info!(
+                "OAuth flow initiated for user {}, no summary generated",
+                task.user_id
+            );
         }
         Err(e) => {
             error!("Failed to generate summary: {}", e);
