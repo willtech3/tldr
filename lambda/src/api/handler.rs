@@ -126,60 +126,60 @@ pub async fn function_handler(
                         .unwrap_or("");
 
                     if !channel_id.is_empty() && !thread_ts.is_empty() {
-                        // Fire-and-forget: set suggested prompts and post a first reply with a Configure button
-                        let config_clone = config.clone();
-                        let channel = channel_id.to_string();
-                        let tts = thread_ts.to_string();
-                        tokio::spawn(async move {
-                            if let Ok(bot) = SlackBot::new(&config_clone) {
-                                let suggestions = [
-                                    "Summarize unread",
-                                    "Summarize last 50",
-                                    "Open configuration",
-                                ];
-                                match bot
-                                    .slack_client()
-                                    .assistant_set_suggested_prompts(&channel, &tts, &suggestions)
-                                    .await
-                                {
-                                    Ok(()) => info!(
-                                        "Set suggested prompts for assistant thread {} in {}",
-                                        &tts, &channel
-                                    ),
-                                    Err(e) => error!(
-                                        "Failed setting suggested prompts for thread {} in {}: {}",
-                                        &tts, &channel, e
-                                    ),
-                                }
+                        // Perform calls inline with short timeouts so Lambda doesn't exit before they run
+                        if let Ok(bot) = SlackBot::new(&config) {
+                            let suggestions = [
+                                "Summarize unread",
+                                "Summarize last 50",
+                                "Open configuration",
+                            ];
+                            let set_prompts = bot.slack_client().assistant_set_suggested_prompts(
+                                channel_id,
+                                thread_ts,
+                                &suggestions,
+                            );
 
-                                let blocks = json!([
-                                    { "type": "section", "text": {"type": "mrkdwn", "text": "Ready to summarize. Configure options or choose a suggested prompt."}},
-                                    { "type": "actions", "elements": [
-                                        { "type": "button", "text": {"type": "plain_text", "text": "Configure summary"}, "action_id": "tldr_open_config", "style": "primary" }
-                                    ]}
-                                ]);
+                            let blocks = json!([
+                                { "type": "section", "text": {"type": "mrkdwn", "text": "Ready to summarize. Configure options or choose a suggested prompt."}},
+                                { "type": "actions", "elements": [
+                                    { "type": "button", "text": {"type": "plain_text", "text": "Configure summary"}, "action_id": "tldr_open_config", "style": "primary" }
+                                ]}
+                            ]);
+                            let post_button = bot.slack_client().post_message_with_blocks(
+                                channel_id,
+                                Some(thread_ts),
+                                "Configure summary",
+                                &blocks,
+                            );
 
-                                match bot
-                                    .slack_client()
-                                    .post_message_with_blocks(
-                                        &channel,
-                                        Some(&tts),
-                                        "Configure summary",
-                                        &blocks,
-                                    )
-                                    .await
-                                {
-                                    Ok(()) => info!(
-                                        "Posted Configure button to assistant thread {} in {}",
-                                        &tts, &channel
-                                    ),
-                                    Err(e) => error!(
-                                        "Failed posting Configure button to thread {} in {}: {}",
-                                        &tts, &channel, e
-                                    ),
-                                }
-                            }
-                        });
+                            // Run both, but cap total time
+                            let _ = tokio::time::timeout(
+                                std::time::Duration::from_millis(1200),
+                                async {
+                                    match set_prompts.await {
+                                        Ok(()) => info!(
+                                            "Set suggested prompts for assistant thread {} in {}",
+                                            thread_ts, channel_id
+                                        ),
+                                        Err(e) => error!(
+                                            "Failed setting suggested prompts for thread {} in {}: {}",
+                                            thread_ts, channel_id, e
+                                        ),
+                                    }
+                                    match post_button.await {
+                                        Ok(()) => info!(
+                                            "Posted Configure button to assistant thread {} in {}",
+                                            thread_ts, channel_id
+                                        ),
+                                        Err(e) => error!(
+                                            "Failed posting Configure button to thread {} in {}: {}",
+                                            thread_ts, channel_id, e
+                                        ),
+                                    }
+                                },
+                            )
+                            .await;
+                        }
                     }
 
                     return Ok(json!({ "statusCode": 200, "body": "{}" }));
@@ -205,39 +205,35 @@ pub async fn function_handler(
                         || text_lc.contains("open configuration");
 
                     if !channel_id.is_empty() && !thread_ts.is_empty() && should_offer_config {
-                        let config_clone = config.clone();
-                        let channel = channel_id.to_string();
-                        let tts = thread_ts.to_string();
-                        tokio::spawn(async move {
-                            if let Ok(bot) = SlackBot::new(&config_clone) {
-                                let blocks = json!([
-                                    { "type": "section", "text": {"type": "mrkdwn", "text": "Click to configure TLDR options:"}},
-                                    { "type": "actions", "elements": [
-                                        { "type": "button", "text": {"type": "plain_text", "text": "Open config"}, "action_id": "tldr_open_config", "style": "primary" }
-                                    ]}
-                                ]);
+                        if let Ok(bot) = SlackBot::new(&config) {
+                            let blocks = json!([
+                                { "type": "section", "text": {"type": "mrkdwn", "text": "Click to configure TLDR options:"}},
+                                { "type": "actions", "elements": [
+                                    { "type": "button", "text": {"type": "plain_text", "text": "Open config"}, "action_id": "tldr_open_config", "style": "primary" }
+                                ]}
+                            ]);
 
-                                match bot
-                                    .slack_client()
-                                    .post_message_with_blocks(
-                                        &channel,
-                                        Some(&tts),
-                                        "Open config",
-                                        &blocks,
-                                    )
-                                    .await
-                                {
-                                    Ok(()) => info!(
-                                        "Posted Open config button to assistant thread {} in {}",
-                                        &tts, &channel
-                                    ),
-                                    Err(e) => error!(
-                                        "Failed posting Open config button to thread {} in {}: {}",
-                                        &tts, &channel, e
-                                    ),
-                                }
-                            }
-                        });
+                            let _ = tokio::time::timeout(
+                                std::time::Duration::from_millis(1200),
+                                async {
+                                    match bot
+                                        .slack_client()
+                                        .post_message_with_blocks(channel_id, Some(thread_ts), "Open config", &blocks)
+                                        .await
+                                    {
+                                        Ok(()) => info!(
+                                            "Posted Open config button to assistant thread {} in {}",
+                                            thread_ts, channel_id
+                                        ),
+                                        Err(e) => error!(
+                                            "Failed posting Open config button to thread {} in {}: {}",
+                                            thread_ts, channel_id, e
+                                        ),
+                                    }
+                                },
+                            )
+                            .await;
+                        }
                     }
 
                     return Ok(json!({ "statusCode": 200, "body": "{}" }));
