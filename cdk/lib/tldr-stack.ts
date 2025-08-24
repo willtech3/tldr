@@ -67,10 +67,12 @@ export class TldrStack extends cdk.Stack {
     const commonEnvironment = {
       SLACK_BOT_TOKEN: props.slackBotToken,
       SLACK_SIGNING_SECRET: props.slackSigningSecret,
+      API_BASE_URL: process.env.API_GATEWAY_URL || '',
       SLACK_CLIENT_ID: process.env.SLACK_CLIENT_ID || '',
       SLACK_CLIENT_SECRET: process.env.SLACK_CLIENT_SECRET || '',
       SLACK_REDIRECT_URL: process.env.SLACK_REDIRECT_URL || '',
       USER_TOKEN_PARAM_PREFIX: process.env.USER_TOKEN_PARAM_PREFIX || '/tldr/user_tokens/',
+      USER_TOKEN_NOTIFY_PREFIX: process.env.USER_TOKEN_NOTIFY_PREFIX || '/tldr/user_token_notified/',
       OPENAI_API_KEY: props.openaiApiKey,
       OPENAI_ORG_ID: props.openaiOrgId,
       PROCESSING_QUEUE_URL: processingQueue.queueUrl,
@@ -136,6 +138,14 @@ export class TldrStack extends cdk.Stack {
     );
     tldrWorkerFunction.addToRolePolicy(
       new iam.PolicyStatement({ actions: ['ssm:GetParameter'], resources: [userTokenParamArn] }),
+    );
+    // Allow decrypting SecureString parameters that SSM serves (scoped via ViaService)
+    tldrWorkerFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['kms:Decrypt'],
+        resources: ['*'],
+        conditions: { StringEquals: { 'kms:ViaService': `ssm.${this.region}.amazonaws.com` } },
+      }),
     );
 
     // Create an API Gateway to expose the Lambda function

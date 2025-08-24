@@ -173,60 +173,39 @@ pub async fn function_handler(
                         .unwrap_or("");
 
                     if !channel_id.is_empty() && !thread_ts.is_empty() {
-                        // Perform calls inline with short timeouts so Lambda doesn't exit before they run
-                        if let Ok(bot) = SlackBot::new(&config) {
-                            let suggestions = [
-                                "Summarize unread",
-                                "Summarize last 50",
-                                "Open configuration",
-                            ];
-                            let set_prompts = bot.slack_client().assistant_set_suggested_prompts(
-                                channel_id,
-                                thread_ts,
-                                &suggestions,
-                            );
+                        // Fire-and-forget to keep Slack ack fast
+                        let cfg = config.clone();
+                        let ch = channel_id.to_string();
+                        let ts = thread_ts.to_string();
+                        tokio::spawn(async move {
+                            if let Ok(bot) = SlackBot::new(&cfg) {
+                                let suggestions = [
+                                    "Summarize unread",
+                                    "Summarize last 50",
+                                    "Open configuration",
+                                ];
+                                let _ = bot
+                                    .slack_client()
+                                    .assistant_set_suggested_prompts(&ch, &ts, &suggestions)
+                                    .await;
 
-                            let blocks = json!([
-                                { "type": "section", "text": {"type": "mrkdwn", "text": "Ready to summarize. Configure options or choose a suggested prompt."}},
-                                { "type": "actions", "elements": [
-                                    { "type": "button", "text": {"type": "plain_text", "text": "Configure summary"}, "action_id": "tldr_open_config", "style": "primary" }
-                                ]}
-                            ]);
-                            let post_button = bot.slack_client().post_message_with_blocks(
-                                channel_id,
-                                Some(thread_ts),
-                                "Configure summary",
-                                &blocks,
-                            );
-
-                            // Run both, but cap total time
-                            let _ = tokio::time::timeout(
-                                std::time::Duration::from_millis(1200),
-                                async {
-                                    match set_prompts.await {
-                                        Ok(()) => info!(
-                                            "Set suggested prompts for assistant thread {} in {}",
-                                            thread_ts, channel_id
-                                        ),
-                                        Err(e) => error!(
-                                            "Failed setting suggested prompts for thread {} in {}: {}",
-                                            thread_ts, channel_id, e
-                                        ),
-                                    }
-                                    match post_button.await {
-                                        Ok(()) => info!(
-                                            "Posted Configure button to assistant thread {} in {}",
-                                            thread_ts, channel_id
-                                        ),
-                                        Err(e) => error!(
-                                            "Failed posting Configure button to thread {} in {}: {}",
-                                            thread_ts, channel_id, e
-                                        ),
-                                    }
-                                },
-                            )
-                            .await;
-                        }
+                                let blocks = json!([
+                                    { "type": "section", "text": {"type": "mrkdwn", "text": "Ready to summarize. Configure options or choose a suggested prompt."}},
+                                    { "type": "actions", "elements": [
+                                        { "type": "button", "text": {"type": "plain_text", "text": "Configure summary"}, "action_id": "tldr_open_config", "style": "primary" }
+                                    ]}
+                                ]);
+                                let _ = bot
+                                    .slack_client()
+                                    .post_message_with_blocks(
+                                        &ch,
+                                        Some(&ts),
+                                        "Configure summary",
+                                        &blocks,
+                                    )
+                                    .await;
+                            }
+                        });
                     }
 
                     return Ok(json!({ "statusCode": 200, "body": "{}" }));
@@ -309,29 +288,34 @@ pub async fn function_handler(
                     let asked_to_run =
                         mode_unread || text_lc.contains("summarize") || count_opt.is_some();
                     if asked_to_run && target_channel_id.is_none() {
-                        if let Ok(bot) = SlackBot::new(&config) {
-                            // Encode intent in block_id so we can recover it in block_actions
-                            let block_id = if let Some(n) = count_opt {
-                                format!("tldr_pick_lastn_{n}")
-                            } else {
-                                "tldr_pick_unread".to_string()
-                            };
-                            let blocks = json!([
-                                { "type": "section", "text": {"type": "mrkdwn", "text": "Choose a conversation to summarize:"}},
-                                { "type": "actions", "block_id": block_id, "elements": [
-                                    { "type": "conversations_select", "action_id": "tldr_pick_conv", "default_to_current_conversation": true }
-                                ]}
-                            ]);
-                            let _ = bot
-                                .slack_client()
-                                .post_message_with_blocks(
-                                    channel_id,
-                                    Some(thread_ts),
-                                    "Choose conversation",
-                                    &blocks,
-                                )
-                                .await;
-                        }
+                        // Encode intent in block_id so we can recover it in block_actions
+                        let block_id = if let Some(n) = count_opt {
+                            format!("tldr_pick_lastn_{n}")
+                        } else {
+                            "tldr_pick_unread".to_string()
+                        };
+                        let cfg = config.clone();
+                        let ch = channel_id.to_string();
+                        let ts = thread_ts.to_string();
+                        tokio::spawn(async move {
+                            if let Ok(bot) = SlackBot::new(&cfg) {
+                                let blocks = json!([
+                                    { "type": "section", "text": {"type": "mrkdwn", "text": "Choose a conversation to summarize:"}},
+                                    { "type": "actions", "block_id": block_id, "elements": [
+                                        { "type": "conversations_select", "action_id": "tldr_pick_conv", "default_to_current_conversation": true }
+                                    ]}
+                                ]);
+                                let _ = bot
+                                    .slack_client()
+                                    .post_message_with_blocks(
+                                        &ch,
+                                        Some(&ts),
+                                        "Choose conversation",
+                                        &blocks,
+                                    )
+                                    .await;
+                            }
+                        });
                         return Ok(json!({ "statusCode": 200, "body": "{}" }));
                     }
 
@@ -360,18 +344,19 @@ pub async fn function_handler(
                             dest_dm: dm_me,
                             dest_public_post: post_here,
                         };
-                        if let Err(e) = sqs::send_to_sqs(&task, &config).await {
-                            error!("enqueue failed: {}", e);
-                        } else if let Ok(bot) = SlackBot::new(&config) {
-                            let _ = bot
-                                .slack_client()
-                                .assistant_set_suggested_prompts(
-                                    channel_id,
-                                    thread_ts,
-                                    &["Summarizing…"],
-                                )
-                                .await;
-                        }
+                        let cfg = config.clone();
+                        let ch = channel_id.to_string();
+                        let ts = thread_ts.to_string();
+                        tokio::spawn(async move {
+                            if let Err(e) = sqs::send_to_sqs(&task, &cfg).await {
+                                error!("enqueue failed: {}", e);
+                            } else if let Ok(bot) = SlackBot::new(&cfg) {
+                                let _ = bot
+                                    .slack_client()
+                                    .assistant_set_suggested_prompts(&ch, &ts, &["Summarizing…"])
+                                    .await;
+                            }
+                        });
                         return Ok(json!({ "statusCode": 200, "body": "{}" }));
                     }
 
@@ -456,7 +441,7 @@ pub async fn function_handler(
                         .to_string();
                     let view_clone = view.clone();
                     let config_clone = config.clone();
-                    let modal_handle = tokio::spawn(async move {
+                    tokio::spawn(async move {
                         match SlackBot::new(&config_clone) {
                             Ok(bot) => {
                                 if let Err(e) = bot.open_modal(&trigger_id, &view_clone).await {
@@ -466,9 +451,6 @@ pub async fn function_handler(
                             Err(e) => error!("Failed to initialize SlackBot for views.open: {}", e),
                         }
                     });
-                    let _ =
-                        tokio::time::timeout(std::time::Duration::from_millis(2000), modal_handle)
-                            .await;
                 }
 
                 // Handle conversation selection from quick-pick
@@ -531,18 +513,19 @@ pub async fn function_handler(
                             dest_public_post: false,
                         };
 
-                        if let Err(e) = sqs::send_to_sqs(&task, &config).await {
-                            error!("enqueue failed from conv_pick: {}", e);
-                        } else if let Ok(bot) = SlackBot::new(&config) {
-                            let _ = bot
-                                .slack_client()
-                                .assistant_set_suggested_prompts(
-                                    channel_id,
-                                    thread_ts,
-                                    &["Summarizing…"],
-                                )
-                                .await;
-                        }
+                        let cfg = config.clone();
+                        let ch = channel_id.to_string();
+                        let ts = thread_ts.to_string();
+                        tokio::spawn(async move {
+                            if let Err(e) = sqs::send_to_sqs(&task, &cfg).await {
+                                error!("enqueue failed from conv_pick: {}", e);
+                            } else if let Ok(bot) = SlackBot::new(&cfg) {
+                                let _ = bot
+                                    .slack_client()
+                                    .assistant_set_suggested_prompts(&ch, &ts, &["Summarizing…"])
+                                    .await;
+                            }
+                        });
                     }
 
                     return Ok(json!({ "statusCode": 200, "body": "{}" }));
