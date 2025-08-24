@@ -153,13 +153,30 @@ pub async fn has_user_been_notified(
     let shared = aws_config::from_env().region(get_aws_region()).load().await;
     let client = SsmClient::new(&shared);
     let name = key_for_user(&config.user_token_notify_prefix, slack_user_id);
-    match client.get_parameter().name(name).send().await {
+    match client.get_parameter().name(name.clone()).send().await {
         Ok(_) => Ok(true),
         Err(e) => {
             let msg = format!("{e}");
-            if msg.contains("ParameterNotFound") {
+            let debug_msg = format!("{e:?}");
+
+            // Check for both SDK v2 and v1 error formats, and also check debug format
+            if msg.contains("ParameterNotFound")
+                || msg.contains("Parameter not found")
+                || msg.contains("does not exist")
+                || debug_msg.contains("ParameterNotFound")
+            {
+                tracing::info!(
+                    "Notification flag {} not found, user not yet notified",
+                    name
+                );
                 Ok(false)
             } else {
+                tracing::error!(
+                    "SSM get_parameter failed for notification flag {}: {} (debug: {})",
+                    name,
+                    e,
+                    debug_msg
+                );
                 Err(SlackError::AwsError(format!("ssm has notify: {e}")))
             }
         }
