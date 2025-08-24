@@ -9,6 +9,7 @@ TLDR uses:
 - **Message Shortcut**: Three-dot menu → "Summarize Thread"
 - **Modals**: Interactive UI for configuration
 - **Canvas Integration**: Automatic summary storage in channel canvases
+ - **AI App split view**: Assistant thread with suggested prompts and in-thread runs
 
 ## Prerequisites
 
@@ -30,18 +31,17 @@ TLDR uses:
 
 Navigate to **OAuth & Permissions** and add these bot token scopes:
 
-### Required Scopes
-- `commands` - Enable slash commands and shortcuts
-- `channels:history` - Read channel messages
-- `channels:read` - View channel information
-- `chat:write` - Send messages
-- `im:write` - Send DMs
-- `users:read` - View user information
+### Required Bot Scopes
+- `assistant:write`
+- `im:history`, `im:read`, `im:write`
+- `channels:history`, `channels:read`
+- `chat:write`, `chat:write.public`
+- `groups:history`, `groups:read`
+- `mpim:history`, `mpim:read`
+- `users:read`
 
-### Canvas Integration (Optional but Recommended)
-- `channels:manage` - Create and manage canvases
-- `bookmarks:read` - Read channel bookmarks
-- `bookmarks:write` - Create/update Canvas bookmarks
+### Canvas Integration (Optional)
+- `canvases:read`, `canvases:write`
 
 After adding scopes, click **Install to Workspace**.
 
@@ -53,6 +53,7 @@ From **Basic Information**:
 
 From **OAuth & Permissions**:
 - **Bot User OAuth Token**: Starts with `xoxb-`
+- **Client ID / Client Secret**: For user-token flow
 
 ## Step 4: Configure GitHub Secrets
 
@@ -69,6 +70,11 @@ Add these secrets to your GitHub repository (Settings → Secrets and variables 
 ### OpenAI Secrets
 - `OPENAI_API_KEY` - OpenAI API key
 - `OPENAI_ORG_ID` - Organization ID (optional)
+
+### OAuth (User-token) Secrets
+- `SLACK_CLIENT_ID`
+- `SLACK_CLIENT_SECRET`
+- `SLACK_REDIRECT_URL` (set to `https://{api-gateway}/auth/slack/callback`)
 
 ## Step 5: Deploy Infrastructure
 
@@ -110,11 +116,14 @@ Navigate to **Slash Commands** → **Create New Command**:
 - **Short Description**: Summarize unread or recent messages
 - **Usage Hint**: `count=100 --visible custom="Use bullet points" --ui`
 
-## Step 8: Enable Interactivity
+## Step 8: Enable Interactivity & Events
 
 Navigate to **Interactivity & Shortcuts**:
 1. Toggle **Interactivity** ON
 2. Set **Request URL**: `https://{api-gateway}/slack/interactive`
+3. Subscribe to Events:
+   - Request URL: `https://{api-gateway}/slack/events`
+   - Bot events: `assistant_thread_started`, `assistant_thread_context_changed`, `message.im`
 
 ## Step 9: Create Shortcuts
 
@@ -141,6 +150,9 @@ After all configuration:
 /tldr --visible         # Post publicly to channel
 /tldr --ui              # Force modal to open
 ```
+
+### AI App split view
+Open the TLDR app from Slack’s AI icon (top-right). Use suggested prompts like “Summarize unread” or type commands such as “summarize last 50”.
 
 ### Message Shortcut
 1. Hover over any message

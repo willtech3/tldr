@@ -24,6 +24,7 @@ debug-logs = []
 lambda_runtime = "0.14.3"
 aws-config = { version = "1.8.5", features = ["behavior-version-latest"] }
 aws-sdk-sqs = "1.81.0"
+aws-sdk-ssm = "1.81.0"
 slack-morphism = { version = "2.14.0", features = ["hyper"] }
 html2text = "0.15.3"
 reqwest = { version = "0.12.23", features = ["json"] }

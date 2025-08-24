@@ -73,6 +73,15 @@ impl SlackClient {
         }
     }
 
+    /// Build a Slack client that uses a user token for read operations.
+    /// This is identical to `new` but named explicitly for clarity at call sites.
+    #[must_use]
+    pub fn from_user_token(user_token: String) -> Self {
+        Self {
+            token: SlackApiToken::new(SlackApiTokenValue::new(user_token)),
+        }
+    }
+
     #[must_use]
     pub fn token(&self) -> &SlackApiToken {
         &self.token
@@ -314,6 +323,59 @@ impl SlackClient {
             );
 
             session.chat_post_message(&post_req).await?;
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Post a plain-text reply into a specific thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or Slack returns an error.
+    pub async fn post_message_in_thread(
+        &self,
+        channel_id: &str,
+        thread_ts: &str,
+        message: &str,
+    ) -> Result<(), SlackError> {
+        let payload = json!({
+            "channel": channel_id,
+            "text": message,
+            "thread_ts": thread_ts,
+        });
+
+        self.with_retry(|| async {
+            let resp = HTTP_CLIENT
+                .post("https://slack.com/api/chat.postMessage")
+                .bearer_auth(&self.token.token_value.0)
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|e| {
+                    SlackError::GeneralError(format!("Failed to post thread message: {e}"))
+                })?;
+
+            if !resp.status().is_success() {
+                return Err(SlackError::ApiError(format!(
+                    "chat.postMessage HTTP {}",
+                    resp.status()
+                )));
+            }
+
+            let body: Value = resp.json().await.map_err(|e| {
+                SlackError::GeneralError(format!("chat.postMessage JSON parse error: {e}"))
+            })?;
+
+            if !body.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+                return Err(SlackError::ApiError(format!(
+                    "chat.postMessage error: {}",
+                    body.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown")
+                )));
+            }
 
             Ok(())
         })

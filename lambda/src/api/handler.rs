@@ -1,8 +1,8 @@
 //! API feature orchestrator: Slack signature verification, routing, and enqueue.
 
-use super::{parsing, signature, sqs, view_submission};
+use super::{oauth, parsing, signature, sqs, view_submission};
 use crate::core::config::AppConfig;
-use crate::core::models::ProcessingTask;
+use crate::core::models::{Destination, ProcessingTask};
 use crate::slack::SlackBot;
 use crate::slack::modal_builder::{Prefill, build_tldr_modal};
 use lambda_runtime::{Error, LambdaEvent};
@@ -55,6 +55,53 @@ pub async fn function_handler(
             "body": json!({ "error": "Missing body" }).to_string()
         }));
     };
+
+    // Lightweight path: public OAuth endpoints are not signed by Slack
+    if let Some(path) = event.payload.get("rawPath").and_then(|v| v.as_str()) {
+        if path.ends_with("/auth/slack/start") {
+            let state = Uuid::new_v4().to_string();
+            let url = oauth::build_authorize_url(&config, &state);
+            return Ok(json!({
+                "statusCode": 302,
+                "headers": { "Location": url },
+                "body": ""
+            }));
+        }
+        if path.ends_with("/auth/slack/callback") {
+            // Parse query string for `code`
+            let code_opt = event
+                .payload
+                .get("rawQueryString")
+                .and_then(|q| q.as_str())
+                .and_then(|q| {
+                    q.split('&')
+                        .find(|kv| kv.starts_with("code="))
+                        .map(|kv| kv.trim_start_matches("code=").to_string())
+                });
+            if let Some(code) = code_opt {
+                let http = reqwest::Client::new();
+                match oauth::handle_callback(&config, &http, &code).await {
+                    Ok((user_id, _)) => {
+                        return Ok(json!({
+                            "statusCode": 200,
+                            "body": json!({"ok": true, "user_id": user_id}).to_string()
+                        }));
+                    }
+                    Err(e) => {
+                        error!("OAuth callback failed: {}", e);
+                        return Ok(json!({
+                            "statusCode": 400,
+                            "body": json!({"ok": false, "error": format!("{}", e)}).to_string()
+                        }));
+                    }
+                }
+            }
+            return Ok(json!({
+                "statusCode": 400,
+                "body": json!({"ok": false, "error": "missing code"}).to_string()
+            }));
+        }
+    }
 
     // Verify the Slack signature
     let Some(signature) = parsing::get_header_value(headers, "X-Slack-Signature") else {
@@ -204,41 +251,100 @@ pub async fn function_handler(
                         .map(str::to_lowercase)
                         .unwrap_or_default();
 
-                    // For Phase 1: only handle customization path by offering an Open config button
-                    let should_offer_config = text_lc.contains("customize")
-                        || text_lc.contains("open config")
-                        || text_lc.contains("open configuration");
+                    // Parse simple intents: summarize unread / last N, style, destinations
+                    let mut count_opt: Option<u32> = None;
+                    if let Some(n) = text_lc
+                        .split_whitespace()
+                        .find_map(|w| w.strip_prefix("last "))
+                        .and_then(|rest| rest.split_whitespace().next())
+                        .and_then(|n| n.parse::<u32>().ok())
+                    {
+                        count_opt = Some(n);
+                    }
 
-                    if !channel_id.is_empty() && !thread_ts.is_empty() && should_offer_config {
+                    let mode_unread = text_lc.contains("unread");
+                    let to_canvas = text_lc.contains("to canvas");
+                    let dm_me = text_lc.contains("dm me");
+                    let post_here = text_lc.contains("post here") || text_lc.contains("public");
+
+                    // Extract channel mention like <#C123|name>
+                    let target_channel_id =
+                        event.get("text").and_then(|t| t.as_str()).and_then(|t| {
+                            t.split_whitespace().find_map(|tok| {
+                                if tok.starts_with("<#") && tok.contains('|') && tok.ends_with('>')
+                                {
+                                    tok.trim_start_matches("<#")
+                                        .split('|')
+                                        .next()
+                                        .map(std::string::ToString::to_string)
+                                } else {
+                                    None
+                                }
+                            })
+                        });
+
+                    // If no channel hint and user asked to run, offer quick-pick
+                    let asked_to_run =
+                        mode_unread || text_lc.contains("summarize") || count_opt.is_some();
+                    if asked_to_run && target_channel_id.is_none() {
                         if let Ok(bot) = SlackBot::new(&config) {
                             let blocks = json!([
-                                { "type": "section", "text": {"type": "mrkdwn", "text": "Click to configure TLDR options:"}},
+                                { "type": "section", "text": {"type": "mrkdwn", "text": "Choose a conversation to summarize:"}},
                                 { "type": "actions", "elements": [
-                                    { "type": "button", "text": {"type": "plain_text", "text": "Open config"}, "action_id": "tldr_open_config", "style": "primary" }
+                                    { "type": "conversations_select", "action_id": "tldr_pick_conv", "default_to_current_conversation": true }
                                 ]}
                             ]);
-
-                            let _ = tokio::time::timeout(
-                                std::time::Duration::from_millis(1200),
-                                async {
-                                    match bot
-                                        .slack_client()
-                                        .post_message_with_blocks(channel_id, Some(thread_ts), "Open config", &blocks)
-                                        .await
-                                    {
-                                        Ok(()) => info!(
-                                            "Posted Open config button to assistant thread {} in {}",
-                                            thread_ts, channel_id
-                                        ),
-                                        Err(e) => error!(
-                                            "Failed posting Open config button to thread {} in {}: {}",
-                                            thread_ts, channel_id, e
-                                        ),
-                                    }
-                                },
-                            )
-                            .await;
+                            let _ = bot
+                                .slack_client()
+                                .post_message_with_blocks(
+                                    channel_id,
+                                    Some(thread_ts),
+                                    "Choose conversation",
+                                    &blocks,
+                                )
+                                .await;
                         }
+                        return Ok(json!({ "statusCode": 200, "body": "{}" }));
+                    }
+
+                    // Build and enqueue ProcessingTask
+                    if !channel_id.is_empty() && !thread_ts.is_empty() && asked_to_run {
+                        let correlation_id = Uuid::new_v4().to_string();
+                        let task = ProcessingTask {
+                            correlation_id: correlation_id.clone(),
+                            user_id: event
+                                .get("user")
+                                .and_then(|u| u.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            channel_id: target_channel_id
+                                .clone()
+                                .unwrap_or_else(|| channel_id.to_string()),
+                            thread_ts: Some(thread_ts.to_string()),
+                            response_url: None,
+                            text: text_lc.clone(),
+                            message_count: count_opt,
+                            target_channel_id: None,
+                            custom_prompt: None,
+                            visible: post_here,
+                            destination: Destination::Thread,
+                            dest_canvas: to_canvas,
+                            dest_dm: dm_me,
+                            dest_public_post: post_here,
+                        };
+                        if let Err(e) = sqs::send_to_sqs(&task, &config).await {
+                            error!("enqueue failed: {}", e);
+                        } else if let Ok(bot) = SlackBot::new(&config) {
+                            let _ = bot
+                                .slack_client()
+                                .assistant_set_suggested_prompts(
+                                    channel_id,
+                                    thread_ts,
+                                    &["Summarizing…"],
+                                )
+                                .await;
+                        }
+                        return Ok(json!({ "statusCode": 200, "body": "{}" }));
                     }
 
                     return Ok(json!({ "statusCode": 200, "body": "{}" }));
@@ -466,12 +572,18 @@ pub async fn function_handler(
         correlation_id: correlation_id.clone(),
         user_id: slack_event.user_id.clone(),
         channel_id: slack_event.channel_id.clone(),
+        thread_ts: None,
         response_url: Some(slack_event.response_url.clone()),
         text: slack_event.text.clone(),
         message_count,
         target_channel_id: target_channel_id.clone(),
         custom_prompt,
         visible,
+        destination: if visible || target_channel_id.is_some() {
+            Destination::Channel
+        } else {
+            Destination::DM
+        },
         dest_canvas: false,
         dest_dm: !visible && target_channel_id.is_none(),
         dest_public_post: visible || target_channel_id.is_some(),

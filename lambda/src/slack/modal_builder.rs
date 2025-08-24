@@ -82,11 +82,11 @@ pub fn build_tldr_modal(prefill: &Prefill) -> Value {
                 "type": "radio_buttons",
                 "action_id": "mode",
                 "options": [
-                    { "text": { "type": "plain_text", "text": "Unread since last run" }, "value": "unread_since_last_run" },
+                    { "text": { "type": "plain_text", "text": "All unread (user-specific)" }, "value": "unread" },
                     { "text": { "type": "plain_text", "text": "Last N messages" }, "value": "last_n" },
                     { "text": { "type": "plain_text", "text": "Date range" }, "value": "date_range" }
                 ],
-                "initial_option": { "text": { "type": "plain_text", "text": "Last N messages" }, "value": "last_n" }
+                "initial_option": { "text": { "type": "plain_text", "text": "All unread (user-specific)" }, "value": "unread" }
             }
         }),
         json!({

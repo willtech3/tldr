@@ -67,6 +67,10 @@ export class TldrStack extends cdk.Stack {
     const commonEnvironment = {
       SLACK_BOT_TOKEN: props.slackBotToken,
       SLACK_SIGNING_SECRET: props.slackSigningSecret,
+      SLACK_CLIENT_ID: process.env.SLACK_CLIENT_ID || '',
+      SLACK_CLIENT_SECRET: process.env.SLACK_CLIENT_SECRET || '',
+      SLACK_REDIRECT_URL: process.env.SLACK_REDIRECT_URL || '',
+      USER_TOKEN_PARAM_PREFIX: process.env.USER_TOKEN_PARAM_PREFIX || '/tldr/user_tokens/',
       OPENAI_API_KEY: props.openaiApiKey,
       OPENAI_ORG_ID: props.openaiOrgId,
       PROCESSING_QUEUE_URL: processingQueue.queueUrl,
@@ -118,6 +122,22 @@ export class TldrStack extends cdk.Stack {
     // Grant the API function permission to send messages to the queue
     processingQueue.grantSendMessages(tldrApiFunction);
 
+    // SSM Parameter Store permissions for user token storage
+    const userTokenParamArn = cdk.Arn.format(
+      {
+        service: 'ssm',
+        resource: 'parameter',
+        resourceName: 'tldr/user_tokens/*',
+      },
+      this,
+    );
+    tldrApiFunction.addToRolePolicy(
+      new iam.PolicyStatement({ actions: ['ssm:PutParameter'], resources: [userTokenParamArn] }),
+    );
+    tldrWorkerFunction.addToRolePolicy(
+      new iam.PolicyStatement({ actions: ['ssm:GetParameter'], resources: [userTokenParamArn] }),
+    );
+
     // Create an API Gateway to expose the Lambda function
     const api = new apigateway.RestApi(this, 'TldrApi', {
       restApiName: 'Tldr API',
@@ -147,6 +167,12 @@ export class TldrStack extends cdk.Stack {
     // Add a resource and method for Slack Events API (url_verification, event_callback)
     const events = slack.addResource('events');
     events.addMethod('POST', tldrIntegration);
+
+    // OAuth routes for user-token flow
+    const auth = api.root.addResource('auth');
+    const slackAuth = auth.addResource('slack');
+    slackAuth.addResource('start').addMethod('GET', tldrIntegration);
+    slackAuth.addResource('callback').addMethod('GET', tldrIntegration);
 
     // Output the API endpoint URL
     new cdk.CfnOutput(this, 'ApiUrl', {

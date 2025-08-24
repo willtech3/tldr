@@ -6,7 +6,7 @@ use reqwest::Client as HttpClient;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use tracing::{error, info};
 
-use crate::core::models::ProcessingTask;
+use crate::core::models::{Destination, ProcessingTask};
 use crate::errors::SlackError;
 use crate::slack::message_formatter::format_summary_message;
 use crate::slack::response_builder::create_ephemeral_payload;
@@ -61,6 +61,28 @@ pub async fn deliver_summary(
     summary: &str,
 ) -> Result<(), SlackError> {
     let mut sent_successfully = false;
+
+    // Primary thread delivery when specified
+    if matches!(task.destination, Destination::Thread) {
+        if let Some(thread_ts) = task.thread_ts.as_deref() {
+            info!(
+                "Replying in assistant thread {} in channel {} (corr_id={})",
+                thread_ts, source_channel_id, task.correlation_id
+            );
+            if let Err(e) = slack_bot
+                .slack_client()
+                .post_message_in_thread(source_channel_id, thread_ts, summary)
+                .await
+            {
+                error!(
+                    "Failed to post in assistant thread: {} (corr_id={})",
+                    e, task.correlation_id
+                );
+            } else {
+                sent_successfully = true;
+            }
+        }
+    }
 
     // Determine target-channel semantics when combined with `visible`:
     // - If a target is provided and it refers to the same channel as `source_channel_id`,
@@ -132,7 +154,7 @@ pub async fn deliver_summary(
         }
     }
 
-    if task.dest_dm {
+    if task.dest_dm || matches!(task.destination, Destination::DM) {
         info!(
             "Sending summary via DM to user {} (corr_id={})",
             task.user_id, task.correlation_id
@@ -151,7 +173,9 @@ pub async fn deliver_summary(
     // Public post to the source channel only when either:
     // - No target is provided; or
     // - Target is provided but it refers to the same channel as the source.
-    if task.dest_public_post && (task.target_channel_id.is_none() || target_equals_source) {
+    if (task.dest_public_post || matches!(task.destination, Destination::Channel))
+        && (task.target_channel_id.is_none() || target_equals_source)
+    {
         info!(
             "Posting summary publicly to channel {} (corr_id={})",
             source_channel_id, task.correlation_id
