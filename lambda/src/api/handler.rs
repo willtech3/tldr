@@ -294,28 +294,23 @@ pub async fn function_handler(
                         } else {
                             "tldr_pick_unread".to_string()
                         };
-                        let cfg = config.clone();
-                        let ch = channel_id.to_string();
-                        let ts = thread_ts.to_string();
-                        tokio::spawn(async move {
-                            if let Ok(bot) = SlackBot::new(&cfg) {
-                                let blocks = json!([
-                                    { "type": "section", "text": {"type": "mrkdwn", "text": "Choose a conversation to summarize:"}},
-                                    { "type": "actions", "block_id": block_id, "elements": [
-                                        { "type": "conversations_select", "action_id": "tldr_pick_conv", "default_to_current_conversation": true }
-                                    ]}
-                                ]);
-                                let _ = bot
-                                    .slack_client()
-                                    .post_message_with_blocks(
-                                        &ch,
-                                        Some(&ts),
-                                        "Choose conversation",
-                                        &blocks,
-                                    )
+                        if let Ok(bot) = SlackBot::new(&config) {
+                            let blocks = json!([
+                                { "type": "section", "text": {"type": "mrkdwn", "text": "Choose a conversation to summarize:"}},
+                                { "type": "actions", "block_id": block_id, "elements": [
+                                    { "type": "conversations_select", "action_id": "tldr_pick_conv", "default_to_current_conversation": true }
+                                ]}
+                            ]);
+                            let fut = bot.slack_client().post_message_with_blocks(
+                                channel_id,
+                                Some(thread_ts),
+                                "Choose conversation",
+                                &blocks,
+                            );
+                            let _ =
+                                tokio::time::timeout(std::time::Duration::from_millis(1500), fut)
                                     .await;
-                            }
-                        });
+                        }
                         return Ok(json!({ "statusCode": 200, "body": "{}" }));
                     }
 
