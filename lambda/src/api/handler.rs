@@ -251,6 +251,28 @@ pub async fn function_handler(
                         .map(str::to_lowercase)
                         .unwrap_or_default();
 
+                    // If the user typed "customize" (from suggested prompt), surface the Configure button
+                    if text_lc.contains("customize") || text_lc.contains("configure") {
+                        if let Ok(bot) = SlackBot::new(&config) {
+                            let blocks = json!([
+                                { "type": "section", "text": {"type": "mrkdwn", "text": "Open the configuration to customize range, destination, and style."}},
+                                { "type": "actions", "elements": [
+                                    { "type": "button", "text": {"type": "plain_text", "text": "Configure summary"}, "action_id": "tldr_open_config", "style": "primary" }
+                                ]}
+                            ]);
+                            let _ = bot
+                                .slack_client()
+                                .post_message_with_blocks(
+                                    channel_id,
+                                    Some(thread_ts),
+                                    "Configure summary",
+                                    &blocks,
+                                )
+                                .await;
+                        }
+                        return Ok(json!({ "statusCode": 200, "body": "{}" }));
+                    }
+
                     // Parse simple intents: summarize unread / last N, style, destinations
                     let mut count_opt: Option<u32> = None;
                     if let Some(n) = text_lc
@@ -288,9 +310,15 @@ pub async fn function_handler(
                         mode_unread || text_lc.contains("summarize") || count_opt.is_some();
                     if asked_to_run && target_channel_id.is_none() {
                         if let Ok(bot) = SlackBot::new(&config) {
+                            // Encode intent in block_id so we can recover it in block_actions
+                            let block_id = if let Some(n) = count_opt {
+                                format!("tldr_pick_lastn_{n}")
+                            } else {
+                                "tldr_pick_unread".to_string()
+                            };
                             let blocks = json!([
                                 { "type": "section", "text": {"type": "mrkdwn", "text": "Choose a conversation to summarize:"}},
-                                { "type": "actions", "elements": [
+                                { "type": "actions", "block_id": block_id, "elements": [
                                     { "type": "conversations_select", "action_id": "tldr_pick_conv", "default_to_current_conversation": true }
                                 ]}
                             ]);
@@ -441,6 +469,83 @@ pub async fn function_handler(
                     let _ =
                         tokio::time::timeout(std::time::Duration::from_millis(2000), modal_handle)
                             .await;
+                }
+
+                // Handle conversation selection from quick-pick
+                let conv_pick = actions.iter().find(|a| {
+                    a.get("action_id")
+                        .and_then(|id| id.as_str())
+                        .is_some_and(|id| id == "tldr_pick_conv")
+                });
+
+                if let Some(a) = conv_pick {
+                    let selected_channel = a
+                        .get("selected_conversation")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+
+                    // Recover intent from block_id: unread vs last-N
+                    let block_id = a.get("block_id").and_then(|v| v.as_str()).unwrap_or("");
+                    let message_count: Option<u32> =
+                        if let Some(n_str) = block_id.strip_prefix("tldr_pick_lastn_") {
+                            n_str.parse::<u32>().ok()
+                        } else {
+                            None
+                        };
+
+                    let channel_id = parsing::v_str(&payload, &["channel", "id"]) // fallback to container
+                        .or_else(|| parsing::v_str(&payload, &["container", "channel_id"]))
+                        .unwrap_or("");
+                    // Prefer thread_ts from container, else message.thread_ts, else message_ts as root
+                    let thread_ts = parsing::v_str(&payload, &["container", "thread_ts"]) // present when message in thread
+                        .or_else(|| parsing::v_str(&payload, &["message", "thread_ts"]))
+                        .or_else(|| parsing::v_str(&payload, &["container", "message_ts"]))
+                        .unwrap_or("");
+                    let user_id = parsing::v_str(&payload, &["user", "id"]).unwrap_or("");
+
+                    if !selected_channel.is_empty()
+                        && !channel_id.is_empty()
+                        && !thread_ts.is_empty()
+                        && !user_id.is_empty()
+                    {
+                        let correlation_id = Uuid::new_v4().to_string();
+                        let text = if let Some(n) = message_count {
+                            format!("summarize last {n}")
+                        } else {
+                            "summarize unread".to_string()
+                        };
+                        let task = ProcessingTask {
+                            correlation_id: correlation_id.clone(),
+                            user_id: user_id.to_string(),
+                            channel_id: selected_channel.to_string(),
+                            thread_ts: Some(thread_ts.to_string()),
+                            response_url: None,
+                            text,
+                            message_count,
+                            target_channel_id: None,
+                            custom_prompt: None,
+                            visible: false,
+                            destination: Destination::Thread,
+                            dest_canvas: false,
+                            dest_dm: false,
+                            dest_public_post: false,
+                        };
+
+                        if let Err(e) = sqs::send_to_sqs(&task, &config).await {
+                            error!("enqueue failed from conv_pick: {}", e);
+                        } else if let Ok(bot) = SlackBot::new(&config) {
+                            let _ = bot
+                                .slack_client()
+                                .assistant_set_suggested_prompts(
+                                    channel_id,
+                                    thread_ts,
+                                    &["Summarizing…"],
+                                )
+                                .await;
+                        }
+                    }
+
+                    return Ok(json!({ "statusCode": 200, "body": "{}" }));
                 }
 
                 return Ok(json!({ "statusCode": 200, "body": "{}" }));
