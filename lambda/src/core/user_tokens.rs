@@ -56,9 +56,11 @@ pub async fn get_user_token(
     let client = SsmClient::new(&shared);
     let name = key_for_user(&config.user_token_param_prefix, slack_user_id);
 
+    tracing::info!("Attempting to get user token for parameter: {}", name);
+
     match client
         .get_parameter()
-        .name(name)
+        .name(name.clone())
         .with_decryption(true)
         .send()
         .await
@@ -77,9 +79,17 @@ pub async fn get_user_token(
         Err(e) => {
             // If not found, return Ok(None); otherwise bubble error
             let msg = format!("{e}");
-            if msg.contains("ParameterNotFound") {
+            tracing::warn!("SSM get_parameter error for {}: {}", name, msg);
+
+            // Check for both SDK v2 and v1 error formats
+            if msg.contains("ParameterNotFound")
+                || msg.contains("Parameter not found")
+                || msg.contains("does not exist")
+            {
+                tracing::info!("Parameter {} not found, returning None", name);
                 Ok(None)
             } else {
+                tracing::error!("SSM get_parameter failed for {}: {}", name, e);
                 Err(SlackError::AwsError(format!("ssm get_parameter: {e}")))
             }
         }
