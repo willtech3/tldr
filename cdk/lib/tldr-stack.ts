@@ -107,6 +107,7 @@ export class TldrStack extends cdk.Stack {
       handler: 'bootstrap', // Fixed handler name for Rust Lambdas
       code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/target/lambda/tldr-api/function.zip')),
       environment: apiEnvironment,
+      functionName: 'tldr-api',
       timeout: cdk.Duration.seconds(10), // Short timeout for immediate responses
       memorySize: 256,
       logRetention: logs.RetentionDays.ONE_WEEK, // Add CloudWatch logs retention
@@ -118,6 +119,7 @@ export class TldrStack extends cdk.Stack {
       handler: 'bootstrap', // Fixed handler name for Rust Lambdas
       code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/target/lambda/tldr-worker/function.zip')),
       environment: workerEnvironment,
+      functionName: 'tldr-worker',
       timeout: cdk.Duration.seconds(900), // Max timeout for long-running summaries
       memorySize: 1024, // More memory for processing
       logRetention: logs.RetentionDays.ONE_WEEK, // Add CloudWatch logs retention
