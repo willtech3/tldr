@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use super::parsing::{v_array, v_path, v_str};
 use crate::ai::prompt_builder::sanitize_custom_prompt;
-use crate::core::models::ProcessingTask;
+use crate::core::models::{Destination, ProcessingTask};
 use crate::errors::SlackError;
 
 /// # Errors
@@ -41,7 +41,7 @@ pub fn build_task_from_view(
             "value",
         ],
     )
-    .unwrap_or("unread_since_last_run");
+    .unwrap_or("unread");
 
     let message_count = v_str(view, &["state", "values", "lastn", "n", "value"])
         .and_then(|s| s.parse::<u32>().ok());
@@ -100,12 +100,14 @@ pub fn build_task_from_view(
         correlation_id,
         user_id: user_id.to_string(),
         channel_id,
+        thread_ts: None,
         response_url: None,
         text,
         message_count: effective_count,
         target_channel_id: None,
         custom_prompt,
         visible,
+        destination: Destination::Thread,
         dest_canvas,
         dest_dm,
         dest_public_post,

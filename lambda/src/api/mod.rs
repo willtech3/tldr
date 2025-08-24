@@ -1,6 +1,7 @@
 //! API Lambda handler and request processing
 
 pub mod handler;
+pub mod oauth;
 pub mod parsing;
 pub mod signature;
 pub mod sqs;

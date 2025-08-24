@@ -49,6 +49,16 @@ oauth_config:
       # Canvas permissions (CRITICAL for Canvas API)
       - canvases:read
       - canvases:write
+  user:
+    scopes:
+      - channels:read
+      - channels:history
+      - groups:read
+      - groups:history
+      - im:read
+      - im:history
+      - mpim:read
+      - mpim:history
 
 settings:
   event_subscriptions:
