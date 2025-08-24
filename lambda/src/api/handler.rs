@@ -113,20 +113,16 @@ pub async fn function_handler(
             match e_type {
                 // AI App entry: user opened the assistant thread
                 "assistant_thread_started" => {
-                    // Extract channel and thread_ts from event payload (support multiple shapes)
+                    // Extract from assistant_thread.{channel_id, thread_ts}
                     let channel_id = event
-                        .get("channel")
-                        .and_then(|c| c.as_str())
-                        .or_else(|| {
-                            event
-                                .get("channel")
-                                .and_then(|c| c.get("id"))
-                                .and_then(|id| id.as_str())
-                        })
+                        .get("assistant_thread")
+                        .and_then(|t| t.get("channel_id"))
+                        .and_then(|v| v.as_str())
                         .unwrap_or("");
                     let thread_ts = event
-                        .get("thread_ts")
-                        .and_then(|t| t.as_str())
+                        .get("assistant_thread")
+                        .and_then(|t| t.get("thread_ts"))
+                        .and_then(|v| v.as_str())
                         .unwrap_or("");
 
                     if !channel_id.is_empty() && !thread_ts.is_empty() {
@@ -141,10 +137,20 @@ pub async fn function_handler(
                                     "Summarize last 50",
                                     "Open configuration",
                                 ];
-                                let _ = bot
+                                match bot
                                     .slack_client()
                                     .assistant_set_suggested_prompts(&channel, &tts, &suggestions)
-                                    .await;
+                                    .await
+                                {
+                                    Ok(()) => info!(
+                                        "Set suggested prompts for assistant thread {} in {}",
+                                        &tts, &channel
+                                    ),
+                                    Err(e) => error!(
+                                        "Failed setting suggested prompts for thread {} in {}: {}",
+                                        &tts, &channel, e
+                                    ),
+                                }
 
                                 let blocks = json!([
                                     { "type": "section", "text": {"type": "mrkdwn", "text": "Ready to summarize. Configure options or choose a suggested prompt."}},
@@ -153,7 +159,7 @@ pub async fn function_handler(
                                     ]}
                                 ]);
 
-                                let _ = bot
+                                match bot
                                     .slack_client()
                                     .post_message_with_blocks(
                                         &channel,
@@ -161,7 +167,17 @@ pub async fn function_handler(
                                         "Configure summary",
                                         &blocks,
                                     )
-                                    .await;
+                                    .await
+                                {
+                                    Ok(()) => info!(
+                                        "Posted Configure button to assistant thread {} in {}",
+                                        &tts, &channel
+                                    ),
+                                    Err(e) => error!(
+                                        "Failed posting Configure button to thread {} in {}: {}",
+                                        &tts, &channel, e
+                                    ),
+                                }
                             }
                         });
                     }
@@ -201,7 +217,7 @@ pub async fn function_handler(
                                     ]}
                                 ]);
 
-                                let _ = bot
+                                match bot
                                     .slack_client()
                                     .post_message_with_blocks(
                                         &channel,
@@ -209,7 +225,17 @@ pub async fn function_handler(
                                         "Open config",
                                         &blocks,
                                     )
-                                    .await;
+                                    .await
+                                {
+                                    Ok(()) => info!(
+                                        "Posted Open config button to assistant thread {} in {}",
+                                        &tts, &channel
+                                    ),
+                                    Err(e) => error!(
+                                        "Failed posting Open config button to thread {} in {}: {}",
+                                        &tts, &channel, e
+                                    ),
+                                }
                             }
                         });
                     }
