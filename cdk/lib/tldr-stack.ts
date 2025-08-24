@@ -63,11 +63,10 @@ export class TldrStack extends cdk.Stack {
       retentionPeriod: cdk.Duration.days(1),
     });
 
-    // Common environment variables for both functions
+    // Common environment variables for both functions (API_BASE_URL will be added later)
     const commonEnvironment = {
       SLACK_BOT_TOKEN: props.slackBotToken,
       SLACK_SIGNING_SECRET: props.slackSigningSecret,
-      API_BASE_URL: process.env.API_GATEWAY_URL || '',
       SLACK_CLIENT_ID: process.env.SLACK_CLIENT_ID || '',
       SLACK_CLIENT_SECRET: process.env.SLACK_CLIENT_SECRET || '',
       SLACK_REDIRECT_URL: process.env.SLACK_REDIRECT_URL || '',
@@ -204,6 +203,10 @@ export class TldrStack extends cdk.Stack {
     const slackAuth = auth.addResource('slack');
     slackAuth.addResource('start').addMethod('GET', tldrIntegration);
     slackAuth.addResource('callback').addMethod('GET', tldrIntegration);
+
+    // Add API_BASE_URL environment variable to both Lambda functions after API is created
+    tldrApiFunction.addEnvironment('API_BASE_URL', api.url);
+    tldrWorkerFunction.addEnvironment('API_BASE_URL', api.url);
 
     // Output the API endpoint URL
     new cdk.CfnOutput(this, 'ApiUrl', {
