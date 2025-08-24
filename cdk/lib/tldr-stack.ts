@@ -63,10 +63,23 @@ export class TldrStack extends cdk.Stack {
       retentionPeriod: cdk.Duration.days(1),
     });
 
-    // Common environment variables for both functions (API_BASE_URL will be added later)
+    // Create the API Gateway first to get its URL
+    const api = new apigateway.RestApi(this, 'TldrApi', {
+      restApiName: 'Tldr API',
+      description: 'API for Tldr Slack bot integration',
+      deployOptions: {
+        stageName: 'prod',
+        loggingLevel: apigateway.MethodLoggingLevel.INFO,
+        dataTraceEnabled: true,
+        metricsEnabled: true,
+      },
+    });
+
+    // Common environment variables for both functions
     const commonEnvironment = {
       SLACK_BOT_TOKEN: props.slackBotToken,
       SLACK_SIGNING_SECRET: props.slackSigningSecret,
+      API_BASE_URL: api.url,
       SLACK_CLIENT_ID: process.env.SLACK_CLIENT_ID || '',
       SLACK_CLIENT_SECRET: process.env.SLACK_CLIENT_SECRET || '',
       SLACK_REDIRECT_URL: process.env.SLACK_REDIRECT_URL || '',
@@ -168,18 +181,6 @@ export class TldrStack extends cdk.Stack {
       }),
     );
 
-    // Create an API Gateway to expose the Lambda function
-    const api = new apigateway.RestApi(this, 'TldrApi', {
-      restApiName: 'Tldr API',
-      description: 'API for Tldr Slack bot integration',
-      deployOptions: {
-        stageName: 'prod',
-        loggingLevel: apigateway.MethodLoggingLevel.INFO,
-        dataTraceEnabled: true,
-        metricsEnabled: true,
-      },
-    });
-
     // Create a Lambda integration for the API Gateway
     const tldrIntegration = new apigateway.LambdaIntegration(tldrApiFunction);
 
@@ -203,10 +204,6 @@ export class TldrStack extends cdk.Stack {
     const slackAuth = auth.addResource('slack');
     slackAuth.addResource('start').addMethod('GET', tldrIntegration);
     slackAuth.addResource('callback').addMethod('GET', tldrIntegration);
-
-    // Add API_BASE_URL environment variable to both Lambda functions after API is created
-    tldrApiFunction.addEnvironment('API_BASE_URL', api.url);
-    tldrWorkerFunction.addEnvironment('API_BASE_URL', api.url);
 
     // Output the API endpoint URL
     new cdk.CfnOutput(this, 'ApiUrl', {
