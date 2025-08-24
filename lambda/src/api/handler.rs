@@ -347,16 +347,22 @@ pub async fn function_handler(
                         let cfg = config.clone();
                         let ch = channel_id.to_string();
                         let ts = thread_ts.to_string();
-                        tokio::spawn(async move {
-                            if let Err(e) = sqs::send_to_sqs(&task, &cfg).await {
-                                error!("enqueue failed: {}", e);
-                            } else if let Ok(bot) = SlackBot::new(&cfg) {
-                                let _ = bot
-                                    .slack_client()
-                                    .assistant_set_suggested_prompts(&ch, &ts, &["Summarizing…"])
-                                    .await;
-                            }
-                        });
+                        if let Err(e) = sqs::send_to_sqs(&task, &config).await {
+                            error!("enqueue failed: {}", e);
+                        } else {
+                            tokio::spawn(async move {
+                                if let Ok(bot) = SlackBot::new(&cfg) {
+                                    let _ = bot
+                                        .slack_client()
+                                        .assistant_set_suggested_prompts(
+                                            &ch,
+                                            &ts,
+                                            &["Summarizing…"],
+                                        )
+                                        .await;
+                                }
+                            });
+                        }
                         return Ok(json!({ "statusCode": 200, "body": "{}" }));
                     }
 
@@ -516,16 +522,22 @@ pub async fn function_handler(
                         let cfg = config.clone();
                         let ch = channel_id.to_string();
                         let ts = thread_ts.to_string();
-                        tokio::spawn(async move {
-                            if let Err(e) = sqs::send_to_sqs(&task, &cfg).await {
-                                error!("enqueue failed from conv_pick: {}", e);
-                            } else if let Ok(bot) = SlackBot::new(&cfg) {
-                                let _ = bot
-                                    .slack_client()
-                                    .assistant_set_suggested_prompts(&ch, &ts, &["Summarizing…"])
-                                    .await;
-                            }
-                        });
+                        if let Err(e) = sqs::send_to_sqs(&task, &config).await {
+                            error!("enqueue failed from conv_pick: {}", e);
+                        } else {
+                            tokio::spawn(async move {
+                                if let Ok(bot) = SlackBot::new(&cfg) {
+                                    let _ = bot
+                                        .slack_client()
+                                        .assistant_set_suggested_prompts(
+                                            &ch,
+                                            &ts,
+                                            &["Summarizing…"],
+                                        )
+                                        .await;
+                                }
+                            });
+                        }
                     }
 
                     return Ok(json!({ "statusCode": 200, "body": "{}" }));
