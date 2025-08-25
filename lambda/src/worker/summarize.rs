@@ -33,30 +33,67 @@ pub async fn summarize_task(
         if let Some(stored) = get_user_token(config, &task.user_id).await? {
             let user_client =
                 crate::slack::client::SlackClient::from_user_token(stored.access_token);
-            user_client.get_unread_messages(source_channel_id).await?
+            match user_client.get_unread_messages(source_channel_id).await {
+                Ok(ms) => ms,
+                Err(e) => {
+                    // If token is invalid/expired, require re-auth
+                    let err_text = format!("{e}");
+                    let token_invalid = err_text.contains("invalid_auth")
+                        || err_text.contains("account_inactive")
+                        || err_text.contains("token_revoked")
+                        || err_text.contains("not_authed");
+                    if token_invalid {
+                        let base = std::env::var("API_BASE_URL")
+                            .unwrap_or_else(|_| "https://example.com".to_string());
+                        let auth_url = format!("{base}/auth/slack/start");
+                        let thread_msg = format!(
+                            "Your Slack authorization has expired. Please reconnect to enable 'unread' summaries: {auth_url}"
+                        );
+                        if let Some(ts) = &task.thread_ts {
+                            let _ = slack_bot
+                                .slack_client()
+                                .post_message_in_thread(source_channel_id, ts, &thread_msg)
+                                .await;
+                        }
+                        // DM only once to avoid spam
+                        if !has_user_been_notified(config, &task.user_id)
+                            .await
+                            .unwrap_or(false)
+                        {
+                            let _ = slack_bot
+                                .slack_client()
+                                .send_dm(&task.user_id, &thread_msg)
+                                .await;
+                            let _ = mark_user_notified(config, &task.user_id).await;
+                        }
+                        return Ok(SummarizeResult::OAuthInitiated);
+                    }
+                    // Non-auth related failure
+                    return Err(e);
+                }
+            }
         } else {
-            // No user token: check if we need to initiate OAuth flow
-            let need_notify = !has_user_been_notified(config, &task.user_id).await?;
-            if need_notify {
-                // First time user - send OAuth link and exit without summary
-                let base = std::env::var("API_BASE_URL")
-                    .unwrap_or_else(|_| "https://example.com".to_string());
-                let auth_url = format!("{base}/auth/slack/start");
-                let msg = format!(
-                    "To get accurate 'All unread' summaries, please connect your Slack account: {auth_url}\n\nOnce connected, try the command again."
-                );
+            // No user token: always require OAuth for 'unread' flow
+            let base =
+                std::env::var("API_BASE_URL").unwrap_or_else(|_| "https://example.com".to_string());
+            let auth_url = format!("{base}/auth/slack/start");
+            let msg = format!(
+                "To get accurate 'All unread' summaries, please connect your Slack account: {auth_url}\n\nOnce connected, run it again."
+            );
+            if let Some(ts) = &task.thread_ts {
+                let _ = slack_bot
+                    .slack_client()
+                    .post_message_in_thread(source_channel_id, ts, &msg)
+                    .await;
+            }
+            if !has_user_been_notified(config, &task.user_id)
+                .await
+                .unwrap_or(false)
+            {
                 let _ = slack_bot.slack_client().send_dm(&task.user_id, &msg).await;
                 let _ = mark_user_notified(config, &task.user_id).await;
-
-                // Return OAuthInitiated to indicate OAuth flow was started
-                return Ok(SummarizeResult::OAuthInitiated);
             }
-
-            // User has been notified before but hasn't connected - fallback to last 100
-            slack_bot
-                .slack_client()
-                .get_recent_messages(source_channel_id, 100)
-                .await?
+            return Ok(SummarizeResult::OAuthInitiated);
         }
     };
 
