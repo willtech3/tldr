@@ -50,9 +50,13 @@ pub async fn summarize_task(
                             "Your Slack authorization has expired. Please reconnect to enable 'unread' summaries: {auth_url}"
                         );
                         if let Some(ts) = &task.thread_ts {
+                            let reply_channel = task
+                                .origin_channel_id
+                                .as_deref()
+                                .unwrap_or(source_channel_id);
                             let _ = slack_bot
                                 .slack_client()
-                                .post_message_in_thread(source_channel_id, ts, &thread_msg)
+                                .post_message_in_thread(reply_channel, ts, &thread_msg)
                                 .await;
                         }
                         return Ok(SummarizeResult::OAuthInitiated);
@@ -70,9 +74,14 @@ pub async fn summarize_task(
                 "To get accurate 'All unread' summaries, please connect your Slack account: {auth_url}\n\nOnce connected, run it again."
             );
             if let Some(ts) = &task.thread_ts {
+                // Prefer replying to the assistant thread's channel if provided
+                let reply_channel = task
+                    .origin_channel_id
+                    .as_deref()
+                    .unwrap_or(source_channel_id);
                 let _ = slack_bot
                     .slack_client()
-                    .post_message_in_thread(source_channel_id, ts, &msg)
+                    .post_message_in_thread(reply_channel, ts, &msg)
                     .await;
             }
             return Ok(SummarizeResult::OAuthInitiated);

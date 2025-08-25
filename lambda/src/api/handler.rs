@@ -341,6 +341,7 @@ pub async fn function_handler(
                                 .clone()
                                 .unwrap_or_else(|| channel_id.to_string()),
                             thread_ts: Some(thread_ts.to_string()),
+                            origin_channel_id: Some(channel_id.to_string()),
                             response_url: None,
                             text: text_lc.clone(),
                             message_count: count_opt,
@@ -515,6 +516,7 @@ pub async fn function_handler(
                             user_id: user_id.to_string(),
                             channel_id: selected_channel.to_string(),
                             thread_ts: Some(thread_ts.to_string()),
+                            origin_channel_id: Some(channel_id.to_string()),
                             response_url: None,
                             text,
                             message_count,
@@ -681,6 +683,7 @@ pub async fn function_handler(
         user_id: slack_event.user_id.clone(),
         channel_id: slack_event.channel_id.clone(),
         thread_ts: None,
+        origin_channel_id: Some(slack_event.channel_id.clone()),
         response_url: Some(slack_event.response_url.clone()),
         text: slack_event.text.clone(),
         message_count,

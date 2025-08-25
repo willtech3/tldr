@@ -101,6 +101,7 @@ pub fn build_task_from_view(
         user_id: user_id.to_string(),
         channel_id,
         thread_ts: None,
+        origin_channel_id: None,
         response_url: None,
         text,
         message_count: effective_count,

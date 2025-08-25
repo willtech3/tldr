@@ -54,6 +54,7 @@
 ///                 user_id: "U123".into(),
 ///                 channel_id: "C12345678".into(),
 ///                 thread_ts: None,
+///                 origin_channel_id: None,
 ///                 response_url: None,
 ///                 text: String::new(),
 ///                 message_count: None,

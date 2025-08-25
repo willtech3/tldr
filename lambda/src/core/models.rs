@@ -15,6 +15,8 @@ pub struct ProcessingTask {
     pub channel_id: String,
     /// When present, indicates the Slack assistant thread timestamp to reply into
     pub thread_ts: Option<String>,
+    /// Original assistant channel id initiating the request (for replies)
+    pub origin_channel_id: Option<String>,
     pub response_url: Option<String>,
     pub text: String,
     pub message_count: Option<u32>,
