@@ -21,6 +21,13 @@ impl AppConfig {
     ///
     /// Returns an error string when required environment variables are missing.
     pub fn from_env() -> Result<Self, String> {
+        fn require_nonempty(key: &str) -> Result<String, String> {
+            let v = env::var(key).map_err(|e| format!("{key}: {e}"))?;
+            if v.trim().is_empty() {
+                return Err(format!("{key}: empty"));
+            }
+            Ok(v)
+        }
         Ok(Self {
             processing_queue_url: env::var("PROCESSING_QUEUE_URL")
                 .map_err(|e| format!("PROCESSING_QUEUE_URL: {e}"))?,
@@ -28,10 +35,8 @@ impl AppConfig {
                 .map_err(|e| format!("SLACK_SIGNING_SECRET: {e}"))?,
             slack_bot_token: env::var("SLACK_BOT_TOKEN")
                 .map_err(|e| format!("SLACK_BOT_TOKEN: {e}"))?,
-            slack_client_id: env::var("SLACK_CLIENT_ID")
-                .map_err(|e| format!("SLACK_CLIENT_ID: {e}"))?,
-            slack_client_secret: env::var("SLACK_CLIENT_SECRET")
-                .map_err(|e| format!("SLACK_CLIENT_SECRET: {e}"))?,
+            slack_client_id: require_nonempty("SLACK_CLIENT_ID")?,
+            slack_client_secret: require_nonempty("SLACK_CLIENT_SECRET")?,
             slack_redirect_url: env::var("SLACK_REDIRECT_URL").ok(),
             user_token_param_prefix: env::var("USER_TOKEN_PARAM_PREFIX")
                 .unwrap_or_else(|_| "/tldr/user_tokens/".to_string()),
