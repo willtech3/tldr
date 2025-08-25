@@ -66,11 +66,19 @@ pub async fn deliver_summary(
     if let (Destination::Thread, Some(thread_ts)) = (task.destination, task.thread_ts.as_deref()) {
         info!(
             "Replying in assistant thread {} in channel {} (corr_id={})",
-            thread_ts, source_channel_id, task.correlation_id
+            thread_ts,
+            task.origin_channel_id
+                .as_deref()
+                .unwrap_or(source_channel_id),
+            task.correlation_id
         );
+        let reply_channel = task
+            .origin_channel_id
+            .as_deref()
+            .unwrap_or(source_channel_id);
         if let Err(e) = slack_bot
             .slack_client()
-            .post_message_in_thread(source_channel_id, thread_ts, summary)
+            .post_message_in_thread(reply_channel, thread_ts, summary)
             .await
         {
             error!(
@@ -281,7 +289,16 @@ pub async fn notify_no_messages(
     task: &ProcessingTask,
 ) -> Result<(), SlackError> {
     let no_messages_text = "No messages found to summarize.";
-    if task.dest_dm {
+    if let (Destination::Thread, Some(thread_ts)) = (task.destination, task.thread_ts.as_deref()) {
+        let reply_channel = task
+            .origin_channel_id
+            .as_deref()
+            .unwrap_or(&task.channel_id);
+        let _ = slack_bot
+            .slack_client()
+            .post_message_in_thread(reply_channel, thread_ts, no_messages_text)
+            .await;
+    } else if task.dest_dm {
         let _ = slack_bot
             .slack_client()
             .send_dm(&task.user_id, no_messages_text)
