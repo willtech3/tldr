@@ -21,6 +21,7 @@ pub use self::function_handler as handler;
 /// Returns an error response payload if the request is malformed or fails
 /// Slack signature verification; otherwise returns a 200 with a JSON body.
 #[allow(clippy::too_many_lines, clippy::manual_let_else)]
+#[tracing::instrument(level = "info", skip(event))]
 pub async fn function_handler(
     event: LambdaEvent<serde_json::Value>,
 ) -> Result<impl Serialize, Error> {
@@ -37,27 +38,14 @@ pub async fn function_handler(
             "body": json!({ "error": "Missing headers" }).to_string()
         }));
     };
-
-    let body = if let Some(body) = event.payload.get("body") {
-        if let Some(body_str) = body.as_str() {
-            body_str
-        } else {
-            error!("Request body is not a string");
-            return Ok(json!({
-                "statusCode": 400,
-                "body": json!({ "error": "Invalid body format" }).to_string()
-            }));
-        }
-    } else {
-        error!("Request missing body");
-        return Ok(json!({
-            "statusCode": 400,
-            "body": json!({ "error": "Missing body" }).to_string()
-        }));
-    };
-
-    // Lightweight path: public OAuth endpoints are not signed by Slack
-    if let Some(path) = event.payload.get("rawPath").and_then(|v| v.as_str()) {
+    // Lightweight path: public OAuth endpoints are not signed by Slack and may not include a body
+    let path_opt = event
+        .payload
+        .get("rawPath")
+        .and_then(|v| v.as_str())
+        .or_else(|| event.payload.get("path").and_then(|v| v.as_str()));
+    if let Some(path) = path_opt {
+        info!(raw_path = %path, "Request path");
         if path.ends_with("/auth/slack/start") {
             let state = Uuid::new_v4().to_string();
             // Prefer configured redirect, otherwise derive from headers
@@ -66,6 +54,8 @@ pub async fn function_handler(
                 .unwrap_or("https");
             let derived_redirect = parsing::get_header_value(headers, "Host")
                 .map(|host| format!("{scheme}://{host}/auth/slack/callback"));
+            let xray = parsing::get_header_value(headers, "X-Amzn-Trace-Id").unwrap_or("");
+            info!(?derived_redirect, xray_trace_id=%xray, state=%state, "Building Slack authorize URL");
             let url = oauth::build_authorize_url(&config, &state, derived_redirect.as_deref());
             return Ok(json!({
                 "statusCode": 302,
@@ -83,6 +73,14 @@ pub async fn function_handler(
                     q.split('&')
                         .find(|kv| kv.starts_with("code="))
                         .map(|kv| kv.trim_start_matches("code=").to_string())
+                })
+                .or_else(|| {
+                    event
+                        .payload
+                        .get("queryStringParameters")
+                        .and_then(|m| m.get("code"))
+                        .and_then(|v| v.as_str())
+                        .map(std::string::ToString::to_string)
                 });
             if let Some(code) = code_opt {
                 let http = reqwest::Client::new();
@@ -91,6 +89,8 @@ pub async fn function_handler(
                     .unwrap_or("https");
                 let derived_redirect = parsing::get_header_value(headers, "Host")
                     .map(|host| format!("{base}://{host}/auth/slack/callback"));
+                let xray = parsing::get_header_value(headers, "X-Amzn-Trace-Id").unwrap_or("");
+                info!(?derived_redirect, xray_trace_id=%xray, "Handling OAuth callback");
                 match oauth::handle_callback(&config, &http, &code, derived_redirect.as_deref())
                     .await
                 {
@@ -115,6 +115,25 @@ pub async fn function_handler(
             }));
         }
     }
+
+    // For Slack-signed routes, a body is required
+    let body = if let Some(body) = event.payload.get("body") {
+        if let Some(body_str) = body.as_str() {
+            body_str
+        } else {
+            error!("Request body is not a string");
+            return Ok(json!({
+                "statusCode": 400,
+                "body": json!({ "error": "Invalid body format" }).to_string()
+            }));
+        }
+    } else {
+        error!("Request missing body");
+        return Ok(json!({
+            "statusCode": 400,
+            "body": json!({ "error": "Missing body" }).to_string()
+        }));
+    };
 
     // Verify the Slack signature
     let Some(signature) = parsing::get_header_value(headers, "X-Slack-Signature") else {
