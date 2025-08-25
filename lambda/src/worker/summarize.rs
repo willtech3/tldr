@@ -1,7 +1,7 @@
 // Keep function focused; consider splitting if it grows significantly.
 use crate::core::config::AppConfig;
 use crate::core::models::ProcessingTask;
-use crate::core::user_tokens::{get_user_token, has_user_been_notified, mark_user_notified};
+use crate::core::user_tokens::get_user_token;
 use crate::errors::SlackError;
 use crate::slack::SlackBot;
 
@@ -55,17 +55,6 @@ pub async fn summarize_task(
                                 .post_message_in_thread(source_channel_id, ts, &thread_msg)
                                 .await;
                         }
-                        // DM only once to avoid spam
-                        if !has_user_been_notified(config, &task.user_id)
-                            .await
-                            .unwrap_or(false)
-                        {
-                            let _ = slack_bot
-                                .slack_client()
-                                .send_dm(&task.user_id, &thread_msg)
-                                .await;
-                            let _ = mark_user_notified(config, &task.user_id).await;
-                        }
                         return Ok(SummarizeResult::OAuthInitiated);
                     }
                     // Non-auth related failure
@@ -85,13 +74,6 @@ pub async fn summarize_task(
                     .slack_client()
                     .post_message_in_thread(source_channel_id, ts, &msg)
                     .await;
-            }
-            if !has_user_been_notified(config, &task.user_id)
-                .await
-                .unwrap_or(false)
-            {
-                let _ = slack_bot.slack_client().send_dm(&task.user_id, &msg).await;
-                let _ = mark_user_notified(config, &task.user_id).await;
             }
             return Ok(SummarizeResult::OAuthInitiated);
         }
