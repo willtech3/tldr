@@ -75,12 +75,19 @@ export class TldrStack extends cdk.Stack {
       },
     });
 
+    // Require Slack OAuth credentials at synth-time to avoid deploying blanks
+    if (!process.env.SLACK_CLIENT_ID || !process.env.SLACK_CLIENT_SECRET) {
+      throw new Error(
+        'Missing SLACK_CLIENT_ID or SLACK_CLIENT_SECRET in environment for CDK deploy. Add them as GitHub Actions secrets or .env.'
+      );
+    }
+
     // Common environment variables for both functions (excluding API URL to avoid cycles)
     const commonEnvironment = {
       SLACK_BOT_TOKEN: props.slackBotToken,
       SLACK_SIGNING_SECRET: props.slackSigningSecret,
-      SLACK_CLIENT_ID: process.env.SLACK_CLIENT_ID || '',
-      SLACK_CLIENT_SECRET: process.env.SLACK_CLIENT_SECRET || '',
+      SLACK_CLIENT_ID: process.env.SLACK_CLIENT_ID!,
+      SLACK_CLIENT_SECRET: process.env.SLACK_CLIENT_SECRET!,
       SLACK_REDIRECT_URL: process.env.SLACK_REDIRECT_URL || '',
       USER_TOKEN_PARAM_PREFIX: process.env.USER_TOKEN_PARAM_PREFIX || '/tldr/user_tokens/',
       USER_TOKEN_NOTIFY_PREFIX: process.env.USER_TOKEN_NOTIFY_PREFIX || '/tldr/user_token_notified/',
