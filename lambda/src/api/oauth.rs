@@ -27,6 +27,14 @@ pub fn build_authorize_url(
 
     let client_id = &config.slack_client_id;
     let redirect_uri_opt = redirect_override.or(config.slack_redirect_url.as_deref());
+
+    // Log the exact redirect URI being used
+    if let Some(uri) = redirect_uri_opt {
+        info!("OAuth authorize using redirect_uri: {}", uri);
+    } else {
+        info!("OAuth authorize without redirect_uri parameter");
+    }
+
     let base =
         format!("https://slack.com/oauth/v2/authorize?client_id={client_id}&user_scope={scopes}");
     match redirect_uri_opt {
@@ -52,8 +60,15 @@ pub async fn handle_callback(
         ("client_id", config.slack_client_id.clone()),
         ("client_secret", config.slack_client_secret.clone()),
     ];
-    if let Some(redirect) = redirect_override.or(config.slack_redirect_url.as_deref()) {
+    let redirect_uri_opt = redirect_override.or(config.slack_redirect_url.as_deref());
+    if let Some(redirect) = redirect_uri_opt {
+        info!(
+            "OAuth callback exchanging code with redirect_uri: {}",
+            redirect
+        );
         payload.push(("redirect_uri", redirect.to_string()));
+    } else {
+        info!("OAuth callback exchanging code without redirect_uri parameter");
     }
 
     let resp = http

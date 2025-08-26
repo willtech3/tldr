@@ -47,41 +47,24 @@ pub async fn function_handler(
     if let Some(path) = path_opt {
         info!(raw_path = %path, "Request path");
         if path.ends_with("/auth/slack/start") {
+            // Require SLACK_REDIRECT_URL to be configured
+            if config.slack_redirect_url.is_none() {
+                error!("OAuth failed: SLACK_REDIRECT_URL environment variable is not configured");
+                return Ok(json!({
+                    "statusCode": 500,
+                    "body": json!({
+                        "error": "OAuth configuration error: SLACK_REDIRECT_URL is not set. Please contact your administrator."
+                    }).to_string()
+                }));
+            }
+
             let state = Uuid::new_v4().to_string();
-            // Prefer configured redirect, otherwise derive from headers
-            let scheme = parsing::get_header_value(headers, "X-Forwarded-Proto")
-                .or_else(|| parsing::get_header_value(headers, "CloudFront-Forwarded-Proto"))
-                .unwrap_or("https");
-            // Include API Gateway stage prefix from requestContext.stage if present (e.g., "/prod")
-            let stage_prefix = event
-                .payload
-                .get("requestContext")
-                .and_then(|rc| rc.get("stage"))
-                .and_then(|v| v.as_str())
-                .map(|s| format!("/{s}"))
-                .unwrap_or_default();
-            let host = event
-                .payload
-                .get("requestContext")
-                .and_then(|rc| rc.get("domainName"))
-                .and_then(|v| v.as_str())
-                .map(str::to_string)
-                .or_else(|| parsing::get_header_value(headers, "Host").map(str::to_string))
-                .unwrap_or_default();
-            let derived_redirect = if host.is_empty() {
-                None
-            } else {
-                Some(format!("{scheme}://{host}{stage_prefix}/auth/slack/callback"))
-            };
-            // If SLACK_REDIRECT_URL is configured, prefer it over derived
-            let redirect_override = if config.slack_redirect_url.is_some() {
-                None
-            } else {
-                derived_redirect.as_deref()
-            };
             let xray = parsing::get_header_value(headers, "X-Amzn-Trace-Id").unwrap_or("");
-            info!(?derived_redirect, use_config_redirect=%config.slack_redirect_url.is_some(), stage_prefix=%stage_prefix, xray_trace_id=%xray, state=%state, "Building Slack authorize URL");
-            let url = oauth::build_authorize_url(&config, &state, redirect_override);
+            // Safe to use as_ref() here since we checked is_none() above
+            if let Some(redirect_url) = &config.slack_redirect_url {
+                info!(redirect_url=%redirect_url, xray_trace_id=%xray, state=%state, "Building Slack authorize URL");
+            }
+            let url = oauth::build_authorize_url(&config, &state, None);
             return Ok(json!({
                 "statusCode": 302,
                 "headers": { "Location": url },
@@ -108,42 +91,26 @@ pub async fn function_handler(
                         .map(std::string::ToString::to_string)
                 });
             if let Some(code) = code_opt {
+                // Require SLACK_REDIRECT_URL to be configured
+                if config.slack_redirect_url.is_none() {
+                    error!(
+                        "OAuth callback failed: SLACK_REDIRECT_URL environment variable is not configured"
+                    );
+                    return Ok(json!({
+                        "statusCode": 500,
+                        "body": json!({
+                            "error": "OAuth configuration error: SLACK_REDIRECT_URL is not set. Please contact your administrator."
+                        }).to_string()
+                    }));
+                }
+
                 let http = reqwest::Client::new();
-                let base = parsing::get_header_value(headers, "X-Forwarded-Proto")
-                    .or_else(|| parsing::get_header_value(headers, "CloudFront-Forwarded-Proto"))
-                    .unwrap_or("https");
-                // Include API Gateway stage prefix from requestContext.stage if present (e.g., "/prod")
-                let stage_prefix = event
-                    .payload
-                    .get("requestContext")
-                    .and_then(|rc| rc.get("stage"))
-                    .and_then(|v| v.as_str())
-                    .map(|s| format!("/{s}"))
-                    .unwrap_or_default();
-                let host = event
-                    .payload
-                    .get("requestContext")
-                    .and_then(|rc| rc.get("domainName"))
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string)
-                    .or_else(|| parsing::get_header_value(headers, "Host").map(str::to_string))
-                    .unwrap_or_default();
-                let derived_redirect = if host.is_empty() {
-                    None
-                } else {
-                    Some(format!("{base}://{host}{stage_prefix}/auth/slack/callback"))
-                };
-                // If SLACK_REDIRECT_URL is configured, prefer it over derived
-                let redirect_override = if config.slack_redirect_url.is_some() {
-                    None
-                } else {
-                    derived_redirect.as_deref()
-                };
                 let xray = parsing::get_header_value(headers, "X-Amzn-Trace-Id").unwrap_or("");
-                info!(?derived_redirect, use_config_redirect=%config.slack_redirect_url.is_some(), stage_prefix=%stage_prefix, xray_trace_id=%xray, "Handling OAuth callback");
-                match oauth::handle_callback(&config, &http, &code, redirect_override)
-                    .await
-                {
+                // Safe to use as_ref() here since we checked is_none() above
+                if let Some(redirect_url) = &config.slack_redirect_url {
+                    info!(redirect_url=%redirect_url, xray_trace_id=%xray, "Handling OAuth callback");
+                }
+                match oauth::handle_callback(&config, &http, &code, None).await {
                     Ok((user_id, _)) => {
                         return Ok(json!({
                             "statusCode": 200,
