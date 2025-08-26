@@ -73,6 +73,151 @@ impl SlackClient {
         }
     }
 
+    /// List conversations that currently have unread messages for the authenticated user token.
+    /// Returns a vector of `(channel_id, label)` where label is a human-friendly name.
+    ///
+    /// This prefers lightweight signals from `users.conversations` (e.g., `unread_count_display`).
+    /// When that field is unavailable, it falls back to checking recent history since `last_read`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if Slack API calls fail or response parsing fails.
+    #[allow(clippy::too_many_lines)]
+    pub async fn list_unread_conversations_for_user(
+        &self,
+    ) -> Result<Vec<(String, String)>, SlackError> {
+        // Page through users.conversations for the authenticated user
+        let mut cursor: Option<String> = None;
+        let mut candidates: Vec<Value> = Vec::new();
+
+        loop {
+            let mut req = HTTP_CLIENT
+                .get("https://slack.com/api/users.conversations")
+                .bearer_auth(&self.token.token_value.0)
+                .query(&[
+                    ("types", "public_channel,private_channel,im,mpim"),
+                    ("exclude_archived", "true"),
+                    ("limit", "200"),
+                ]);
+
+            if let Some(c) = &cursor {
+                req = req.query(&[("cursor", c)]);
+            }
+
+            let resp = req
+                .send()
+                .await
+                .map_err(|e| SlackError::GeneralError(format!("users.conversations HTTP: {e}")))?;
+
+            if !resp.status().is_success() {
+                return Err(SlackError::ApiError(format!(
+                    "users.conversations HTTP {}",
+                    resp.status()
+                )));
+            }
+
+            let body: Value = resp
+                .json()
+                .await
+                .map_err(|e| SlackError::GeneralError(format!("users.conversations parse: {e}")))?;
+
+            if !body.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+                return Err(SlackError::ApiError(format!(
+                    "users.conversations error: {}",
+                    body.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown")
+                )));
+            }
+
+            if let Some(arr) = body.get("channels").and_then(Value::as_array) {
+                candidates.extend(arr.iter().cloned());
+            }
+
+            cursor = body
+                .get("response_metadata")
+                .and_then(|m| m.get("next_cursor"))
+                .and_then(Value::as_str)
+                .and_then(|s| {
+                    if s.is_empty() {
+                        None
+                    } else {
+                        Some(s.to_string())
+                    }
+                });
+
+            if cursor.is_none() {
+                break;
+            }
+        }
+
+        let mut result: Vec<(String, String)> = Vec::new();
+
+        for chan in candidates {
+            let id = match chan.get("id").and_then(Value::as_str) {
+                Some(s) => s.to_string(),
+                None => continue,
+            };
+
+            // Quick signal when available
+            let unread_quick = chan
+                .get("unread_count_display")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                > 0
+                || chan
+                    .get("unread_count")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+                    > 0;
+
+            let has_unreads = if unread_quick {
+                true
+            } else {
+                // Fallback: call into message fetch since last_read
+                // Using the same token as this client (expected to be a user token)
+                match self.get_unread_messages(&id).await {
+                    Ok(msgs) => !msgs.is_empty(),
+                    Err(_) => false,
+                }
+            };
+
+            if !has_unreads {
+                continue;
+            }
+
+            // Build a friendly label
+            let is_im = chan.get("is_im").and_then(Value::as_bool).unwrap_or(false);
+            let is_mpim = chan
+                .get("is_mpim")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let label = if is_im {
+                // For IMs, try to fetch the user's human name
+                if let Some(user_id) = chan.get("user").and_then(Value::as_str) {
+                    match self.get_user_info(user_id).await {
+                        Ok(name) => format!("DM with {name}"),
+                        Err(_) => format!("DM with {user_id}"),
+                    }
+                } else {
+                    "Direct message".to_string()
+                }
+            } else if is_mpim {
+                chan.get("name")
+                    .and_then(Value::as_str)
+                    .map_or_else(|| "Group DM".to_string(), std::string::ToString::to_string)
+            } else {
+                chan.get("name")
+                    .and_then(Value::as_str)
+                    .map_or_else(|| id.clone(), |n| format!("#{n}"))
+            };
+
+            result.push((id, label));
+        }
+
+        Ok(result)
+    }
+
     /// Build a Slack client that uses a user token for read operations.
     /// This is identical to `new` but named explicitly for clarity at call sites.
     #[must_use]

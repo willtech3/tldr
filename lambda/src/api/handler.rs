@@ -3,6 +3,7 @@
 use super::{oauth, parsing, signature, sqs, view_submission};
 use crate::core::config::AppConfig;
 use crate::core::models::{Destination, ProcessingTask};
+use crate::core::user_tokens::get_user_token;
 use crate::slack::SlackBot;
 use crate::slack::modal_builder::{Prefill, build_tldr_modal};
 use lambda_runtime::{Error, LambdaEvent};
@@ -343,6 +344,91 @@ pub async fn function_handler(
                         } else {
                             "tldr_pick_unread".to_string()
                         };
+
+                        // If this is the unread flow AND the user has a token, build a pre-filtered static_select
+                        if mode_unread {
+                            let user_id = event.get("user").and_then(|u| u.as_str()).unwrap_or("");
+
+                            if let Ok(Some(stored)) = get_user_token(&config, user_id).await {
+                                if let Ok(bot) = SlackBot::new(&config) {
+                                    let user_client =
+                                        crate::slack::client::SlackClient::from_user_token(
+                                            stored.access_token,
+                                        );
+                                    match user_client.list_unread_conversations_for_user().await {
+                                        Ok(mut items) => {
+                                            // Limit number of options to avoid overly long dropdowns
+                                            if items.is_empty() {
+                                                let _ = bot
+                                                    .slack_client()
+                                                    .post_message_in_thread(
+                                                        channel_id,
+                                                        thread_ts,
+                                                        "You have no unread messages in any channels.",
+                                                    )
+                                                    .await;
+                                            } else {
+                                                if items.len() > 100 {
+                                                    items.truncate(100);
+                                                }
+                                                let options: Vec<Value> = items
+                                                    .into_iter()
+                                                    .map(|(id, label)| {
+                                                        json!({
+                                                            "text": { "type": "plain_text", "text": label },
+                                                            "value": id
+                                                        })
+                                                    })
+                                                    .collect();
+
+                                                let blocks = json!([
+                                                    { "type": "section", "text": {"type": "mrkdwn", "text": "Choose a conversation with unread messages:"}},
+                                                    { "type": "actions", "block_id": block_id, "elements": [
+                                                        { "type": "static_select", "action_id": "tldr_pick_conv", "placeholder": {"type":"plain_text", "text":"Select conversation"}, "options": options }
+                                                    ]}
+                                                ]);
+                                                let fut =
+                                                    bot.slack_client().post_message_with_blocks(
+                                                        channel_id,
+                                                        Some(thread_ts),
+                                                        "Choose conversation",
+                                                        &blocks,
+                                                    );
+                                                let _ = tokio::time::timeout(
+                                                    std::time::Duration::from_millis(1500),
+                                                    fut,
+                                                )
+                                                .await;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("Failed to list unread conversations: {}", e);
+                                            // Fall back to generic conversations_select
+                                            let blocks = json!([
+                                                { "type": "section", "text": {"type": "mrkdwn", "text": "Choose a conversation to summarize:"}},
+                                                { "type": "actions", "block_id": block_id, "elements": [
+                                                    { "type": "conversations_select", "action_id": "tldr_pick_conv", "default_to_current_conversation": true }
+                                                ]}
+                                            ]);
+                                            let fut = bot.slack_client().post_message_with_blocks(
+                                                channel_id,
+                                                Some(thread_ts),
+                                                "Choose conversation",
+                                                &blocks,
+                                            );
+                                            let _ = tokio::time::timeout(
+                                                std::time::Duration::from_millis(1500),
+                                                fut,
+                                            )
+                                            .await;
+                                        }
+                                    }
+                                }
+                                return Ok(json!({ "statusCode": 200, "body": "{}" }));
+                            }
+                        }
+
+                        // Default flow: generic conversations_select (covers last-N and unread without token)
                         if let Ok(bot) = SlackBot::new(&config) {
                             let blocks = json!([
                                 { "type": "section", "text": {"type": "mrkdwn", "text": "Choose a conversation to summarize:"}},
@@ -512,9 +598,15 @@ pub async fn function_handler(
                 });
 
                 if let Some(a) = conv_pick {
+                    // Support both conversations_select and static_select payload shapes
                     let selected_channel = a
                         .get("selected_conversation")
                         .and_then(|v| v.as_str())
+                        .or_else(|| {
+                            a.get("selected_option")
+                                .and_then(|o| o.get("value"))
+                                .and_then(|v| v.as_str())
+                        })
                         .unwrap_or("");
 
                     // Recover intent from block_id: unread vs last-N
