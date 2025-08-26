@@ -141,6 +141,13 @@ jobs:
           SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
           OPENAI_API_KEY:       ${{ secrets.OPENAI_API_KEY }}
           OPENAI_ORG_ID:        ${{ secrets.OPENAI_ORG_ID }}
+          # Slack OAuth credentials required at synth/runtime
+          SLACK_CLIENT_ID:      ${{ secrets.SLACK_CLIENT_ID }}
+          SLACK_CLIENT_SECRET:  ${{ secrets.SLACK_CLIENT_SECRET }}
+          # Optional explicit redirect; otherwise derived from headers in code
+          SLACK_REDIRECT_URL:   ${{ secrets.SLACK_REDIRECT_URL }}
+          # Ensure region/account for CDK
+          CDK_DEFAULT_REGION:   ${{ env.AWS_REGION }}
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
       # Slack manifest updates must be done manually
