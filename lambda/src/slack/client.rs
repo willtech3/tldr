@@ -171,9 +171,58 @@ impl SlackClient {
                     .unwrap_or(0)
                     > 0;
 
-            // Only trust Slack's unread counters for accuracy. Avoid history fallback,
-            // which can include recent-but-read messages and cause false positives.
-            let has_unreads = unread_quick;
+            // Prefer Slack-provided counters when present. For channels where counters aren't set,
+            // perform a strict check using last_read (no time-window fallback).
+            let is_im = chan.get("is_im").and_then(Value::as_bool).unwrap_or(false);
+            let is_mpim = chan
+                .get("is_mpim")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let is_channel_like = !is_im && !is_mpim;
+            // For channels, ensure the user is a member
+            if is_channel_like {
+                let is_member = chan
+                    .get("is_member")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                if !is_member {
+                    continue;
+                }
+            }
+
+            let has_unreads = if unread_quick {
+                true
+            } else if is_channel_like {
+                // Strict unread detection: only include if last_read is present and history since then is non-empty
+                let session = SLACK_CLIENT
+                    .as_ref()
+                    .ok_or_else(|| {
+                        SlackError::GeneralError("Slack HTTP connector not initialized".to_string())
+                    })?
+                    .open_session(&self.token);
+
+                let info_req = SlackApiConversationsInfoRequest::new(SlackChannelId(id.clone()));
+                if let Ok(channel_info) = session.conversations_info(&info_req).await {
+                    if let Some(last_read) = channel_info.channel.last_state.last_read {
+                        let request = SlackApiConversationsHistoryRequest::new()
+                            .with_channel(SlackChannelId(id.clone()))
+                            .with_oldest(last_read)
+                            .with_limit(1);
+                        if let Ok(hist) = session.conversations_history(&request).await {
+                            !hist.messages.is_empty()
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                // For IM/MPIM, rely solely on Slack counters
+                false
+            };
 
             if !has_unreads {
                 continue;
