@@ -52,10 +52,14 @@ pub async fn function_handler(
             let scheme = parsing::get_header_value(headers, "X-Forwarded-Proto")
                 .or_else(|| parsing::get_header_value(headers, "CloudFront-Forwarded-Proto"))
                 .unwrap_or("https");
+            // Include API Gateway stage prefix if present (e.g., "/prod")
+            let stage_prefix = path
+                .strip_suffix("/auth/slack/start")
+                .unwrap_or("");
             let derived_redirect = parsing::get_header_value(headers, "Host")
-                .map(|host| format!("{scheme}://{host}/auth/slack/callback"));
+                .map(|host| format!("{scheme}://{host}{stage_prefix}/auth/slack/callback"));
             let xray = parsing::get_header_value(headers, "X-Amzn-Trace-Id").unwrap_or("");
-            info!(?derived_redirect, xray_trace_id=%xray, state=%state, "Building Slack authorize URL");
+            info!(?derived_redirect, stage_prefix=%stage_prefix, xray_trace_id=%xray, state=%state, "Building Slack authorize URL");
             let url = oauth::build_authorize_url(&config, &state, derived_redirect.as_deref());
             return Ok(json!({
                 "statusCode": 302,
@@ -87,10 +91,14 @@ pub async fn function_handler(
                 let base = parsing::get_header_value(headers, "X-Forwarded-Proto")
                     .or_else(|| parsing::get_header_value(headers, "CloudFront-Forwarded-Proto"))
                     .unwrap_or("https");
+                // Include API Gateway stage prefix if present (e.g., "/prod")
+                let stage_prefix = path
+                    .strip_suffix("/auth/slack/callback")
+                    .unwrap_or("");
                 let derived_redirect = parsing::get_header_value(headers, "Host")
-                    .map(|host| format!("{base}://{host}/auth/slack/callback"));
+                    .map(|host| format!("{base}://{host}{stage_prefix}/auth/slack/callback"));
                 let xray = parsing::get_header_value(headers, "X-Amzn-Trace-Id").unwrap_or("");
-                info!(?derived_redirect, xray_trace_id=%xray, "Handling OAuth callback");
+                info!(?derived_redirect, stage_prefix=%stage_prefix, xray_trace_id=%xray, "Handling OAuth callback");
                 match oauth::handle_callback(&config, &http, &code, derived_redirect.as_deref())
                     .await
                 {
