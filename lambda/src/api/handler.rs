@@ -52,10 +52,14 @@ pub async fn function_handler(
             let scheme = parsing::get_header_value(headers, "X-Forwarded-Proto")
                 .or_else(|| parsing::get_header_value(headers, "CloudFront-Forwarded-Proto"))
                 .unwrap_or("https");
-            // Include API Gateway stage prefix if present (e.g., "/prod")
-            let stage_prefix = path
-                .strip_suffix("/auth/slack/start")
-                .unwrap_or("");
+            // Include API Gateway stage prefix from requestContext.stage if present (e.g., "/prod")
+            let stage_prefix = event
+                .payload
+                .get("requestContext")
+                .and_then(|rc| rc.get("stage"))
+                .and_then(|v| v.as_str())
+                .map(|s| format!("/{s}"))
+                .unwrap_or_default();
             let derived_redirect = parsing::get_header_value(headers, "Host")
                 .map(|host| format!("{scheme}://{host}{stage_prefix}/auth/slack/callback"));
             let xray = parsing::get_header_value(headers, "X-Amzn-Trace-Id").unwrap_or("");
@@ -91,10 +95,14 @@ pub async fn function_handler(
                 let base = parsing::get_header_value(headers, "X-Forwarded-Proto")
                     .or_else(|| parsing::get_header_value(headers, "CloudFront-Forwarded-Proto"))
                     .unwrap_or("https");
-                // Include API Gateway stage prefix if present (e.g., "/prod")
-                let stage_prefix = path
-                    .strip_suffix("/auth/slack/callback")
-                    .unwrap_or("");
+                // Include API Gateway stage prefix from requestContext.stage if present (e.g., "/prod")
+                let stage_prefix = event
+                    .payload
+                    .get("requestContext")
+                    .and_then(|rc| rc.get("stage"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| format!("/{s}"))
+                    .unwrap_or_default();
                 let derived_redirect = parsing::get_header_value(headers, "Host")
                     .map(|host| format!("{base}://{host}{stage_prefix}/auth/slack/callback"));
                 let xray = parsing::get_header_value(headers, "X-Amzn-Trace-Id").unwrap_or("");
