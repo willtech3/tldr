@@ -60,11 +60,28 @@ pub async fn function_handler(
                 .and_then(|v| v.as_str())
                 .map(|s| format!("/{s}"))
                 .unwrap_or_default();
-            let derived_redirect = parsing::get_header_value(headers, "Host")
-                .map(|host| format!("{scheme}://{host}{stage_prefix}/auth/slack/callback"));
+            let host = event
+                .payload
+                .get("requestContext")
+                .and_then(|rc| rc.get("domainName"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .or_else(|| parsing::get_header_value(headers, "Host").map(str::to_string))
+                .unwrap_or_default();
+            let derived_redirect = if host.is_empty() {
+                None
+            } else {
+                Some(format!("{scheme}://{host}{stage_prefix}/auth/slack/callback"))
+            };
+            // If SLACK_REDIRECT_URL is configured, prefer it over derived
+            let redirect_override = if config.slack_redirect_url.is_some() {
+                None
+            } else {
+                derived_redirect.as_deref()
+            };
             let xray = parsing::get_header_value(headers, "X-Amzn-Trace-Id").unwrap_or("");
-            info!(?derived_redirect, stage_prefix=%stage_prefix, xray_trace_id=%xray, state=%state, "Building Slack authorize URL");
-            let url = oauth::build_authorize_url(&config, &state, derived_redirect.as_deref());
+            info!(?derived_redirect, use_config_redirect=%config.slack_redirect_url.is_some(), stage_prefix=%stage_prefix, xray_trace_id=%xray, state=%state, "Building Slack authorize URL");
+            let url = oauth::build_authorize_url(&config, &state, redirect_override);
             return Ok(json!({
                 "statusCode": 302,
                 "headers": { "Location": url },
@@ -103,11 +120,28 @@ pub async fn function_handler(
                     .and_then(|v| v.as_str())
                     .map(|s| format!("/{s}"))
                     .unwrap_or_default();
-                let derived_redirect = parsing::get_header_value(headers, "Host")
-                    .map(|host| format!("{base}://{host}{stage_prefix}/auth/slack/callback"));
+                let host = event
+                    .payload
+                    .get("requestContext")
+                    .and_then(|rc| rc.get("domainName"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .or_else(|| parsing::get_header_value(headers, "Host").map(str::to_string))
+                    .unwrap_or_default();
+                let derived_redirect = if host.is_empty() {
+                    None
+                } else {
+                    Some(format!("{base}://{host}{stage_prefix}/auth/slack/callback"))
+                };
+                // If SLACK_REDIRECT_URL is configured, prefer it over derived
+                let redirect_override = if config.slack_redirect_url.is_some() {
+                    None
+                } else {
+                    derived_redirect.as_deref()
+                };
                 let xray = parsing::get_header_value(headers, "X-Amzn-Trace-Id").unwrap_or("");
-                info!(?derived_redirect, stage_prefix=%stage_prefix, xray_trace_id=%xray, "Handling OAuth callback");
-                match oauth::handle_callback(&config, &http, &code, derived_redirect.as_deref())
+                info!(?derived_redirect, use_config_redirect=%config.slack_redirect_url.is_some(), stage_prefix=%stage_prefix, xray_trace_id=%xray, "Handling OAuth callback");
+                match oauth::handle_callback(&config, &http, &code, redirect_override)
                     .await
                 {
                     Ok((user_id, _)) => {
