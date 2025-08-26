@@ -171,16 +171,9 @@ impl SlackClient {
                     .unwrap_or(0)
                     > 0;
 
-            let has_unreads = if unread_quick {
-                true
-            } else {
-                // Fallback: call into message fetch since last_read
-                // Using the same token as this client (expected to be a user token)
-                match self.get_unread_messages(&id).await {
-                    Ok(msgs) => !msgs.is_empty(),
-                    Err(_) => false,
-                }
-            };
+            // Only trust Slack's unread counters for accuracy. Avoid history fallback,
+            // which can include recent-but-read messages and cause false positives.
+            let has_unreads = unread_quick;
 
             if !has_unreads {
                 continue;
