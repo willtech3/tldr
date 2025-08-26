@@ -59,6 +59,8 @@ pub async fn deliver_summary(
     task: &ProcessingTask,
     source_channel_id: &str,
     summary: &str,
+    message_count: u32,
+    custom_prompt: Option<String>,
 ) -> Result<(), SlackError> {
     let mut sent_successfully = false;
 
@@ -87,6 +89,24 @@ pub async fn deliver_summary(
             );
         } else {
             sent_successfully = true;
+            // Post a Share button in the same thread so user can share to another channel
+            let meta = serde_json::json!({
+                "thread_ts": thread_ts,
+                "source_channel_id": reply_channel,
+                "message_count": message_count,
+                "has_custom_prompt": custom_prompt.is_some(),
+                "custom_prompt": custom_prompt.as_deref().unwrap_or("")
+            })
+            .to_string();
+            let blocks = serde_json::json!([
+                {"type":"actions","block_id":"tldr_share","elements":[
+                    {"type":"button","text":{"type":"plain_text","text":"Share…"},"action_id":"tldr_share_open","value": meta}
+                ]}
+            ]);
+            let _ = slack_bot
+                .slack_client()
+                .post_message_with_blocks(reply_channel, Some(thread_ts), "Share", &blocks)
+                .await;
         }
     }
 

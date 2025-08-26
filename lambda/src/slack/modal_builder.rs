@@ -7,9 +7,6 @@ pub struct Prefill {
     pub initial_conversation: Option<String>,
     pub last_n: Option<u32>,
     pub custom_prompt: Option<String>,
-    pub dest_canvas: bool,
-    pub dest_dm: bool,
-    pub dest_public_post: bool,
 }
 
 /// Build the Block Kit modal for TLDR configuration.
@@ -19,7 +16,6 @@ pub struct Prefill {
 /// - range radio (`unread_since_last_run` | `last_n` | `date_range`)
 /// - `number_input` for last N
 /// - datepickers for from/to
-/// - destination checkboxes
 /// - style/prompt multiline input
 /// # Panics
 ///
@@ -44,27 +40,6 @@ pub fn build_tldr_modal(prefill: &Prefill) -> Value {
             .as_object_mut()
             .unwrap()
             .remove("default_to_current_conversation");
-    }
-
-    let mut dest_initial_options: Vec<Value> = vec![];
-
-    if prefill.dest_canvas {
-        dest_initial_options.push(json!({
-            "text": { "type": "plain_text", "text": "Update channel Canvas (recommended)" },
-            "value": "canvas"
-        }));
-    }
-    if prefill.dest_dm {
-        dest_initial_options.push(json!({
-            "text": { "type": "plain_text", "text": "DM me the summary" },
-            "value": "dm"
-        }));
-    }
-    if prefill.dest_public_post {
-        dest_initial_options.push(json!({
-            "text": { "type": "plain_text", "text": "Post publicly in channel" },
-            "value": "public_post"
-        }));
     }
 
     let blocks = vec![
@@ -109,21 +84,6 @@ pub fn build_tldr_modal(prefill: &Prefill) -> Value {
             "optional": true,
             "label": { "type": "plain_text", "text": "To date" },
             "element": { "type": "datepicker", "action_id": "to_date" }
-        }),
-        json!({
-            "type": "section",
-            "block_id": "dest",
-            "text": { "type": "mrkdwn", "text": "*Destination*" },
-            "accessory": {
-                "type": "checkboxes",
-                "action_id": "dest_flags",
-                "options": [
-                    { "text": { "type": "plain_text", "text": "Update channel Canvas (recommended)" }, "value": "canvas" },
-                    { "text": { "type": "plain_text", "text": "DM me the summary" }, "value": "dm" },
-                    { "text": { "type": "plain_text", "text": "Post publicly in channel" }, "value": "public_post" }
-                ],
-                "initial_options": dest_initial_options
-            }
         }),
         json!({
             "type": "input",
@@ -194,4 +154,54 @@ pub fn validate_view_submission(view: &Value) -> Result<(), serde_json::Map<Stri
     } else {
         Err(errors)
     }
+}
+
+/// Build the "Share summary" modal.
+///
+/// `has_custom_prompt` controls whether the checkbox to include the custom prompt is shown.
+/// `private_metadata_json` will be attached to the modal and returned on `view_submission`.
+#[must_use]
+pub fn build_share_modal(has_custom_prompt: bool, private_metadata_json: &str) -> Value {
+    let mut options: Vec<Value> = vec![json!({
+        "text": {"type": "plain_text", "text": "Include number of messages summarized"},
+        "value": "include_count"
+    })];
+
+    if has_custom_prompt {
+        options.push(json!({
+            "text": {"type": "plain_text", "text": "Include custom prompt"},
+            "value": "include_custom"
+        }));
+    }
+
+    // By default, preselect include_count
+    let initial_options: Vec<Value> = vec![json!({
+        "text": {"type": "plain_text", "text": "Include number of messages summarized"},
+        "value": "include_count"
+    })];
+
+    let blocks = vec![
+        json!({
+            "type": "input",
+            "block_id": "share_dest",
+            "label": {"type": "plain_text", "text": "Destination Channel"},
+            "element": {"type": "conversations_select", "action_id": "share_conv"}
+        }),
+        json!({
+            "type": "section",
+            "block_id": "share_opts",
+            "text": {"type": "mrkdwn", "text": "Options"},
+            "accessory": {"type": "checkboxes", "action_id": "share_flags", "options": options, "initial_options": initial_options}
+        }),
+    ];
+
+    json!({
+        "type": "modal",
+        "callback_id": "tldr_share_submit",
+        "title": {"type": "plain_text", "text": "Share summary"},
+        "submit": {"type": "plain_text", "text": "Share"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "private_metadata": private_metadata_json,
+        "blocks": blocks
+    })
 }

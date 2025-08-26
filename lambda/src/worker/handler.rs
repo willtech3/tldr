@@ -49,10 +49,22 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
     let http_client = HttpClient::new();
 
     match summarize::summarize_task(&mut slack_bot, &config, &task).await {
-        Ok(SummarizeResult::Summary(summary)) => {
-            deliver::deliver_summary(&slack_bot, &http_client, &task, &task.channel_id, &summary)
-                .await
-                .map_err(|e| Error::from(format!("Delivery error: {e}")))?;
+        Ok(SummarizeResult::Summary {
+            text,
+            message_count,
+            custom_prompt,
+        }) => {
+            deliver::deliver_summary(
+                &slack_bot,
+                &http_client,
+                &task,
+                &task.channel_id,
+                &text,
+                message_count,
+                custom_prompt,
+            )
+            .await
+            .map_err(|e| Error::from(format!("Delivery error: {e}")))?;
         }
         Ok(SummarizeResult::NoMessages) => {
             deliver::notify_no_messages(&slack_bot, &http_client, &task)

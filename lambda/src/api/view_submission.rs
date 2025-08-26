@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use super::parsing::{v_array, v_path, v_str};
+use super::parsing::{v_path, v_str};
 use crate::ai::prompt_builder::sanitize_custom_prompt;
 use crate::core::models::{Destination, ProcessingTask};
 use crate::errors::SlackError;
@@ -46,27 +46,11 @@ pub fn build_task_from_view(
     let message_count = v_str(view, &["state", "values", "lastn", "n", "value"])
         .and_then(|s| s.parse::<u32>().ok());
 
-    let mut dest_canvas = false;
-    let mut dest_dm = false;
-    let mut dest_public_post = false;
-
-    if let Some(selected) = v_array(
-        view,
-        &["state", "values", "dest", "dest_flags", "selected_options"],
-    ) {
-        for opt in selected {
-            if let Some(val) = opt.get("value").and_then(|s| s.as_str()) {
-                match val {
-                    "canvas" => dest_canvas = true,
-                    "dm" => dest_dm = true,
-                    "public_post" => dest_public_post = true,
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    let visible = dest_public_post;
+    // Destinations are disabled in the UI; always reply to assistant thread
+    let dest_canvas = false;
+    let dest_dm = false;
+    let dest_public_post = false;
+    let visible = false;
 
     let custom_prompt = v_str(view, &["state", "values", "style", "custom", "value"])
         .map(std::string::ToString::to_string)
@@ -91,9 +75,7 @@ pub fn build_task_from_view(
         };
         text_parts.push(display_prompt);
     }
-    if dest_public_post {
-        text_parts.push("--visible".to_string());
-    }
+    // No visible flag supported via modal
     let text = text_parts.join(" ");
 
     Ok(ProcessingTask {

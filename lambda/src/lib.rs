@@ -70,7 +70,7 @@
 ///         .await?;
 ///         
 ///         match result {
-///             SummarizeResult::Summary(summary) => println!("Summary: {}", summary),
+///             SummarizeResult::Summary { text, .. } => println!("Summary: {}", text),
 ///             SummarizeResult::NoMessages => println!("No messages to summarize"),
 ///             SummarizeResult::OAuthInitiated => println!("OAuth flow initiated"),
 ///         }

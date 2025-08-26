@@ -5,6 +5,7 @@ use crate::core::config::AppConfig;
 use crate::core::models::{Destination, ProcessingTask};
 use crate::core::user_tokens::get_user_token;
 use crate::slack::SlackBot;
+use crate::slack::modal_builder::build_share_modal;
 use crate::slack::modal_builder::{Prefill, build_tldr_modal};
 use lambda_runtime::{Error, LambdaEvent};
 use serde::Serialize;
@@ -312,8 +313,6 @@ pub async fn function_handler(
                     }
 
                     let mode_unread = text_lc.contains("unread");
-                    let to_canvas = text_lc.contains("to canvas");
-                    let dm_me = text_lc.contains("dm me");
                     let post_here = text_lc.contains("post here") || text_lc.contains("public");
 
                     // Extract channel mention like <#C123|name>
@@ -469,9 +468,9 @@ pub async fn function_handler(
                             custom_prompt: None,
                             visible: post_here,
                             destination: Destination::Thread,
-                            dest_canvas: to_canvas,
-                            dest_dm: dm_me,
-                            dest_public_post: post_here,
+                            dest_canvas: false,
+                            dest_dm: false,
+                            dest_public_post: false,
                         };
                         let cfg = config.clone();
                         let ch = channel_id.to_string();
@@ -526,9 +525,6 @@ pub async fn function_handler(
                     prefill.initial_conversation = Some(ch.to_string());
                 }
                 prefill.last_n = Some(100);
-                prefill.dest_canvas = true;
-                prefill.dest_dm = true;
-                prefill.dest_public_post = false;
 
                 let view = build_tldr_modal(&prefill);
                 let trigger_id = parsing::v_str(&payload, &["trigger_id"])
@@ -560,13 +556,45 @@ pub async fn function_handler(
                         .and_then(|id| id.as_str())
                         .is_some_and(|id| id == "tldr_open_config")
                 });
+                // Share button handler: open Share modal
+                if let Some(share_action) = actions.iter().find(|a| {
+                    a.get("action_id")
+                        .and_then(|id| id.as_str())
+                        .is_some_and(|id| id == "tldr_share_open")
+                }) {
+                    let meta = share_action
+                        .get("value")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let has_custom = serde_json::from_str::<serde_json::Value>(meta)
+                        .ok()
+                        .and_then(|v| {
+                            v.get("has_custom_prompt")
+                                .and_then(serde_json::Value::as_bool)
+                        })
+                        .unwrap_or(false);
+                    let view = build_share_modal(has_custom, meta);
+                    let trigger_id = parsing::v_str(&payload, &["trigger_id"])
+                        .unwrap_or("")
+                        .to_string();
+                    let view_clone = view.clone();
+                    let config_clone = config.clone();
+                    tokio::spawn(async move {
+                        match SlackBot::new(&config_clone) {
+                            Ok(bot) => {
+                                if let Err(e) = bot.open_modal(&trigger_id, &view_clone).await {
+                                    error!("Failed to open share modal: {}", e);
+                                }
+                            }
+                            Err(e) => error!("Failed to init SlackBot for share modal: {}", e),
+                        }
+                    });
+                    return Ok(json!({ "statusCode": 200, "body": "{}" }));
+                }
 
                 if open_clicked {
                     let prefill = Prefill {
                         last_n: Some(100),
-                        dest_canvas: true,
-                        dest_dm: true,
-                        dest_public_post: false,
                         ..Default::default()
                     };
 
@@ -614,9 +642,6 @@ pub async fn function_handler(
                             let prefill = Prefill {
                                 initial_conversation: Some(ch.to_string()),
                                 last_n: Some(100),
-                                dest_canvas: true,
-                                dest_dm: true,
-                                dest_public_post: false,
                                 ..Default::default()
                             };
 
@@ -737,6 +762,104 @@ pub async fn function_handler(
                     correlation_id
                 );
                 if let Some(view) = payload.get("view") {
+                    // Handle share modal submissions
+                    if parsing::v_str(view, &["callback_id"])
+                        .is_some_and(|s| s == "tldr_share_submit")
+                    {
+                        // Extract private_metadata
+                        let meta_str = parsing::v_str(view, &["private_metadata"]).unwrap_or("");
+                        let meta: Value = serde_json::from_str(meta_str).unwrap_or(json!({}));
+                        let thread_ts =
+                            meta.get("thread_ts").and_then(|v| v.as_str()).unwrap_or("");
+                        let source_channel_id = meta
+                            .get("source_channel_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let message_count = meta
+                            .get("message_count")
+                            .and_then(serde_json::Value::as_u64)
+                            .and_then(|v| u32::try_from(v).ok())
+                            .unwrap_or(0);
+                        let custom_prompt = meta
+                            .get("custom_prompt")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string);
+
+                        // Determine destination channel from modal
+                        let dest_channel = parsing::v_str(
+                            view,
+                            &[
+                                "state",
+                                "values",
+                                "share_dest",
+                                "share_conv",
+                                "selected_conversation",
+                            ],
+                        )
+                        .unwrap_or("");
+                        // Determine selected options
+                        let mut include_count = false;
+                        let mut include_custom = false;
+                        if let Some(opts) = view
+                            .get("state")
+                            .and_then(|s| s.get("values"))
+                            .and_then(|v| v.get("share_opts"))
+                            .and_then(|b| b.get("share_flags"))
+                            .and_then(|a| a.get("selected_options"))
+                            .and_then(|o| o.as_array())
+                        {
+                            for o in opts {
+                                if let Some(val) = o.get("value").and_then(|v| v.as_str()) {
+                                    match val {
+                                        "include_count" => include_count = true,
+                                        "include_custom" => include_custom = true,
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+
+                        // Fetch the summary text from the thread
+                        let summary_text = match SlackBot::new(&config) {
+                            Ok(bot) => bot
+                                .slack_client()
+                                .get_summary_text_from_thread(source_channel_id, thread_ts)
+                                .await
+                                .unwrap_or_default(),
+                            Err(_) => String::new(),
+                        };
+
+                        // Compose share message
+                        let mut share_body = String::new();
+                        if include_count {
+                            use std::fmt::Write as _;
+                            let _ =
+                                write!(share_body, "_Summarized {message_count} messages._\n\n");
+                        }
+                        share_body.push_str(&summary_text);
+                        if include_custom {
+                            if let Some(cp) = custom_prompt.as_deref() {
+                                if !cp.is_empty() {
+                                    share_body.push_str("\n\n> Custom prompt: \"");
+                                    share_body.push_str(cp);
+                                    share_body.push('"');
+                                }
+                            }
+                        }
+
+                        if let Ok(bot) = SlackBot::new(&config) {
+                            if !dest_channel.is_empty() {
+                                let _ = bot
+                                    .slack_client()
+                                    .post_message(dest_channel, &share_body)
+                                    .await;
+                            }
+                        }
+
+                        return Ok(
+                            json!({ "statusCode": 200, "body": json!({"response_action":"clear"}).to_string() }),
+                        );
+                    }
                     match crate::slack::modal_builder::validate_view_submission(view) {
                         Ok(()) => {
                             let user_id = parsing::v_str(&payload, &["user", "id"]).unwrap_or("");
@@ -824,9 +947,6 @@ pub async fn function_handler(
             initial_conversation: Some(slack_event.channel_id.clone()),
             last_n: message_count,
             custom_prompt: custom_prompt.clone(),
-            dest_canvas: true,
-            dest_dm: true,
-            dest_public_post: visible,
         };
         let view = build_tldr_modal(&prefill);
         let trigger_id = slack_event.trigger_id.clone();
@@ -871,8 +991,8 @@ pub async fn function_handler(
             Destination::DM
         },
         dest_canvas: false,
-        dest_dm: !visible && target_channel_id.is_none(),
-        dest_public_post: visible || target_channel_id.is_some(),
+        dest_dm: false,
+        dest_public_post: false,
     };
 
     if let Err(e) = sqs::send_to_sqs(&task, &config).await {

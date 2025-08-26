@@ -395,8 +395,8 @@ impl SlackBot {
         // Generate the summary using the LlmClient
         let summary_text = self.llm_client.generate_summary(prompt).await?;
 
-        // Format the final summary message
-        let formatted_summary = format!("*Summary from #{channel_name}*\n\n{summary_text}");
+        // Format the final summary message. Use a channel mention so Slack renders the name.
+        let formatted_summary = format!("*Summary from <#{channel_id}>*\n\n{summary_text}");
         Ok(formatted_summary)
     }
 }

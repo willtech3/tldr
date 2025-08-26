@@ -6,7 +6,11 @@ use crate::errors::SlackError;
 use crate::slack::SlackBot;
 
 pub enum SummarizeResult {
-    Summary(String),
+    Summary {
+        text: String,
+        message_count: u32,
+        custom_prompt: Option<String>,
+    },
     NoMessages,
     OAuthInitiated,
 }
@@ -114,5 +118,9 @@ pub async fn summarize_task(
             task.custom_prompt.as_deref(),
         )
         .await?;
-    Ok(SummarizeResult::Summary(summary))
+    Ok(SummarizeResult::Summary {
+        text: summary,
+        message_count: u32::try_from(messages.len()).unwrap_or(u32::MAX),
+        custom_prompt: task.custom_prompt.clone(),
+    })
 }

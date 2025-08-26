@@ -813,6 +813,77 @@ impl SlackClient {
             .ok_or_else(|| SlackError::GeneralError("No permalink in response".to_string()))
     }
 
+    /// Fetch the summary text posted by this bot in a specific thread.
+    ///
+    /// Looks up `conversations.replies` and returns the last message authored by the bot
+    /// that begins with "*Summary from ". Returns an error if none is found.
+    ///
+    /// # Errors
+    pub async fn get_summary_text_from_thread(
+        &self,
+        channel_id: &str,
+        thread_ts: &str,
+    ) -> Result<String, SlackError> {
+        // Use raw HTTP to avoid additional type mapping
+        let payload = json!({
+            "channel": channel_id,
+            "ts": thread_ts,
+            "limit": 200
+        });
+
+        let resp = HTTP_CLIENT
+            .post("https://slack.com/api/conversations.replies")
+            .bearer_auth(&self.token.token_value.0)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| SlackError::GeneralError(format!("conversations.replies HTTP: {e}")))?;
+
+        if !resp.status().is_success() {
+            return Err(SlackError::ApiError(format!(
+                "conversations.replies HTTP {}",
+                resp.status()
+            )));
+        }
+
+        let body: Value = resp
+            .json()
+            .await
+            .map_err(|e| SlackError::GeneralError(format!("conversations.replies parse: {e}")))?;
+
+        if !body.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+            return Err(SlackError::ApiError(format!(
+                "conversations.replies error: {}",
+                body.get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            )));
+        }
+
+        let bot_user_id = self.get_bot_user_id().await.ok();
+        if let Some(arr) = body.get("messages").and_then(Value::as_array) {
+            // Iterate from newest to oldest
+            for msg in arr.iter().rev() {
+                let text_opt = msg.get("text").and_then(Value::as_str);
+                let from_bot = msg.get("bot_id").is_some()
+                    || bot_user_id
+                        .as_ref()
+                        .and_then(|uid| msg.get("user").and_then(Value::as_str).map(|u| u == uid))
+                        .unwrap_or(false);
+                if from_bot {
+                    if let Some(text) = text_opt {
+                        if text.trim_start().starts_with("*Summary from ") {
+                            return Ok(text.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(SlackError::GeneralError(
+            "No summary message found in thread".to_string(),
+        ))
+    }
     /// Post a message with Block Kit `blocks` to a channel or thread.
     ///
     /// If `thread_ts_opt` is provided, the message will be posted as a reply in that thread.

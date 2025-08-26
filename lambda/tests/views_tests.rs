@@ -8,7 +8,7 @@ fn build_modal_with_prefill_defaults() {
     assert_eq!(view["type"], "modal");
     assert_eq!(view["callback_id"], "tldr_config_submit");
     let blocks = view["blocks"].as_array().expect("blocks array");
-    assert!(blocks.len() >= 6);
+    assert!(blocks.len() >= 5);
     // conversations_select present
     assert_eq!(blocks[0]["type"], "input");
     assert_eq!(blocks[0]["block_id"], "conv");
@@ -21,9 +21,6 @@ fn build_modal_prefill_values() {
         initial_conversation: Some("C123".into()),
         last_n: Some(250),
         custom_prompt: Some("Bulleted, action items".into()),
-        dest_canvas: true,
-        dest_dm: true,
-        dest_public_post: false,
     };
     let view = build_tldr_modal(&prefill);
     // Check initial conversation applied
