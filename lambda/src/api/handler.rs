@@ -239,18 +239,16 @@ pub async fn function_handler(
                                     .assistant_set_suggested_prompts(&ch, &ts, &suggestions)
                                     .await;
 
+                                // Do not show Configure button until a channel is selected
                                 let blocks = json!([
-                                    { "type": "section", "text": {"type": "mrkdwn", "text": "Ready to summarize. Configure options or choose a suggested prompt."}},
-                                    { "type": "actions", "elements": [
-                                        { "type": "button", "text": {"type": "plain_text", "text": "Configure summary"}, "action_id": "tldr_open_config", "style": "primary" }
-                                    ]}
+                                    { "type": "section", "text": {"type": "mrkdwn", "text": "Ready to summarize. Choose a suggested prompt or type a request."}}
                                 ]);
                                 let _ = bot
                                     .slack_client()
                                     .post_message_with_blocks(
                                         &ch,
                                         Some(&ts),
-                                        "Configure summary",
+                                        "Ready to summarize",
                                         &blocks,
                                     )
                                     .await;
@@ -280,13 +278,13 @@ pub async fn function_handler(
                         .map(str::to_lowercase)
                         .unwrap_or_default();
 
-                    // If the user typed "customize" (from suggested prompt), surface the Configure button
+                    // If the user typed "customize", show a channel picker first
                     if text_lc.contains("customize") || text_lc.contains("configure") {
                         if let Ok(bot) = SlackBot::new(&config) {
                             let blocks = json!([
-                                { "type": "section", "text": {"type": "mrkdwn", "text": "Open the configuration to customize range, destination, and style."}},
-                                { "type": "actions", "elements": [
-                                    { "type": "button", "text": {"type": "plain_text", "text": "Configure summary"}, "action_id": "tldr_open_config", "style": "primary" }
+                                { "type": "section", "text": {"type": "mrkdwn", "text": "Pick a conversation to configure TLDR for:"}},
+                                { "type": "actions", "block_id": "tldr_pick_config", "elements": [
+                                    { "type": "conversations_select", "action_id": "tldr_pick_conv", "default_to_current_conversation": true, "response_url_enabled": true }
                                 ]}
                             ]);
                             let _ = bot
@@ -294,7 +292,7 @@ pub async fn function_handler(
                                 .post_message_with_blocks(
                                     channel_id,
                                     Some(thread_ts),
-                                    "Configure summary",
+                                    "Pick conversation",
                                     &blocks,
                                 )
                                 .await;
@@ -598,6 +596,55 @@ pub async fn function_handler(
                 });
 
                 if let Some(a) = conv_pick {
+                    // If this came from a config pick, open the config modal with that channel
+                    let block_id_ctx = a.get("block_id").and_then(|v| v.as_str()).unwrap_or("");
+                    if block_id_ctx == "tldr_pick_config" {
+                        let selected_channel = a
+                            .get("selected_conversation")
+                            .and_then(|v| v.as_str())
+                            .or_else(|| {
+                                a.get("selected_option")
+                                    .and_then(|o| o.get("value"))
+                                    .and_then(|v| v.as_str())
+                            })
+                            .unwrap_or("");
+
+                        if let Some(ch) = (!selected_channel.is_empty()).then_some(selected_channel)
+                        {
+                            let prefill = Prefill {
+                                initial_conversation: Some(ch.to_string()),
+                                last_n: Some(100),
+                                dest_canvas: true,
+                                dest_dm: true,
+                                dest_public_post: false,
+                                ..Default::default()
+                            };
+
+                            let view = build_tldr_modal(&prefill);
+                            let trigger_id = parsing::v_str(&payload, &["trigger_id"])
+                                .unwrap_or("")
+                                .to_string();
+                            let view_clone = view.clone();
+                            let config_clone = config.clone();
+                            tokio::spawn(async move {
+                                match SlackBot::new(&config_clone) {
+                                    Ok(bot) => {
+                                        if let Err(e) =
+                                            bot.open_modal(&trigger_id, &view_clone).await
+                                        {
+                                            error!("Failed to open modal from pick_config: {}", e);
+                                        }
+                                    }
+                                    Err(e) => error!(
+                                        "Failed to initialize SlackBot for views.open: {}",
+                                        e
+                                    ),
+                                }
+                            });
+                        }
+
+                        return Ok(json!({ "statusCode": 200, "body": "{}" }));
+                    }
                     // Support both conversations_select and static_select payload shapes
                     let selected_channel = a
                         .get("selected_conversation")
