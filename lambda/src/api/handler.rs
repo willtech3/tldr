@@ -229,26 +229,29 @@ pub async fn function_handler(
                         let ts = thread_ts.to_string();
                         tokio::spawn(async move {
                             if let Ok(bot) = SlackBot::new(&cfg) {
-                                let suggestions = [
-                                    "Summarize unread",
-                                    "Summarize last 50",
-                                    "Open configuration",
-                                ];
+                                let suggestions =
+                                    ["Summarize unread", "Summarize last 50", "Help", "Configure"];
                                 let _ = bot
                                     .slack_client()
                                     .assistant_set_suggested_prompts(&ch, &ts, &suggestions)
                                     .await;
 
-                                // Do not show Configure button until a channel is selected
+                                // Show a more welcoming initial message with clear guidance
                                 let blocks = json!([
-                                    { "type": "section", "text": {"type": "mrkdwn", "text": "Ready to summarize. Choose a suggested prompt or type a request."}}
+                                    {
+                                        "type": "section",
+                                        "text": {
+                                            "type": "mrkdwn",
+                                            "text": "👋 Hi! I'm TLDR Bot. I can summarize channel messages for you.\n\n*Quick start:*\n• Click a suggested prompt below\n• Or type `help` to see all commands\n• Just type `summarize` to get started"
+                                        }
+                                    }
                                 ]);
                                 let _ = bot
                                     .slack_client()
                                     .post_message_with_blocks(
                                         &ch,
                                         Some(&ts),
-                                        "Ready to summarize",
+                                        "Welcome to TLDR Bot",
                                         &blocks,
                                     )
                                     .await;
@@ -277,6 +280,80 @@ pub async fn function_handler(
                         .and_then(|t| t.as_str())
                         .map(str::to_lowercase)
                         .unwrap_or_default();
+
+                    // If the user typed "help", show available commands
+                    if text_lc.contains("help") || text_lc == "?" || text_lc.contains("what can") {
+                        if let Ok(bot) = SlackBot::new(&config) {
+                            let blocks = json!([
+                                {
+                                    "type": "header",
+                                    "text": {"type": "plain_text", "text": "🤖 TLDR Bot Commands"}
+                                },
+                                {
+                                    "type": "section",
+                                    "text": {
+                                        "type": "mrkdwn",
+                                        "text": "*Basic Commands:*\n• `summarize` - Summarize recent messages from a channel\n• `summarize unread` - Only summarize unread messages (Slack-tracked)\n• `summarize last 50` - Summarize the last 50 messages\n• `help` - Show this help message"
+                                    }
+                                },
+                                {
+                                    "type": "section",
+                                    "text": {
+                                        "type": "mrkdwn",
+                                        "text": "*Advanced Features:*\n• `customize` or `configure` - Set custom prompt styles for a channel\n• `share` - Share the last summary to a channel\n• Mention a channel (e.g., `summarize #general`) to target specific channels"
+                                    }
+                                },
+                                {
+                                    "type": "section",
+                                    "text": {
+                                        "type": "mrkdwn",
+                                        "text": "*Tips:*\n• The bot will ask you to select a channel if you don't mention one\n• Summaries are sent as DMs by default\n• Use Canvas integration to save and edit summaries\n• Add custom style prompts for creative summaries (poems, haikus, etc.)"
+                                    }
+                                },
+                                {
+                                    "type": "context",
+                                    "elements": [
+                                        {"type": "mrkdwn", "text": "Try one of the suggested prompts below or type your own command!"}
+                                    ]
+                                }
+                            ]);
+                            let _ = bot
+                                .slack_client()
+                                .post_message_with_blocks(
+                                    channel_id,
+                                    Some(thread_ts),
+                                    "TLDR Bot Help",
+                                    &blocks,
+                                )
+                                .await;
+                        }
+                        return Ok(json!({ "statusCode": 200, "body": "{}" }));
+                    }
+
+                    // If the user typed "share", provide guidance on sharing summaries
+                    if text_lc.contains("share") && !text_lc.contains("summarize") {
+                        if let Ok(bot) = SlackBot::new(&config) {
+                            let blocks = json!([
+                                {
+                                    "type": "section",
+                                    "text": {
+                                        "type": "mrkdwn",
+                                        "text": "*To share a summary:*\n1. First generate a summary using `summarize`\n2. The Share button will appear in the summary message\n3. Click Share to send it to any channel with optional custom styling\n\n_No recent summary found. Generate one first!_"
+                                    }
+                                }
+                            ]);
+                            let _ = bot
+                                .slack_client()
+                                .post_message_with_blocks(
+                                    channel_id,
+                                    Some(thread_ts),
+                                    "Share Summary",
+                                    &blocks,
+                                )
+                                .await;
+                        }
+                        return Ok(json!({ "statusCode": 200, "body": "{}" }));
+                    }
 
                     // If the user typed "customize", show a channel picker first
                     if text_lc.contains("customize") || text_lc.contains("configure") {
