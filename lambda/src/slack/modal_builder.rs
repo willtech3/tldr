@@ -156,49 +156,66 @@ pub fn validate_view_submission(view: &Value) -> Result<(), serde_json::Map<Stri
     }
 }
 
-/// Build the "Share summary" modal.
+/// Build the "Share summary" modal with preview.
 ///
 /// `has_custom_prompt` controls whether the checkbox to include the custom prompt is shown.
 /// `private_metadata_json` will be attached to the modal and returned on `view_submission`.
 #[must_use]
 pub fn build_share_modal(has_custom_prompt: bool, private_metadata_json: &str) -> Value {
-    let mut options: Vec<Value> = vec![json!({
+    let mut options: Vec<Value> = vec![
+        json!({
+            "text": {"type": "plain_text", "text": "Include number of messages summarized"},
+            "value": "include_count"
+        }),
+        json!({
+            "text": {"type": "plain_text", "text": "Include my username as creator"},
+            "value": "include_user"
+        }),
+    ];
+
+    if has_custom_prompt {
+        options.push(json!({
+            "text": {"type": "plain_text", "text": "Include custom style prompt ✨"},
+            "value": "include_custom"
+        }));
+    }
+
+    // By default, preselect include_count and include_custom (if available)
+    let mut initial_options: Vec<Value> = vec![json!({
         "text": {"type": "plain_text", "text": "Include number of messages summarized"},
         "value": "include_count"
     })];
 
     if has_custom_prompt {
-        options.push(json!({
-            "text": {"type": "plain_text", "text": "Include custom prompt"},
+        initial_options.push(json!({
+            "text": {"type": "plain_text", "text": "Include custom style prompt ✨"},
             "value": "include_custom"
         }));
     }
-
-    // By default, preselect include_count
-    let initial_options: Vec<Value> = vec![json!({
-        "text": {"type": "plain_text", "text": "Include number of messages summarized"},
-        "value": "include_count"
-    })];
 
     let blocks = vec![
         json!({
             "type": "input",
             "block_id": "share_dest",
-            "label": {"type": "plain_text", "text": "Destination Channel"},
-            "element": {"type": "conversations_select", "action_id": "share_conv"}
+            "label": {"type": "plain_text", "text": "Share to"},
+            "element": {"type": "conversations_select", "action_id": "share_conv", "filter": {"include": ["public", "private", "im", "mpim"]}}
         }),
         json!({
             "type": "section",
             "block_id": "share_opts",
-            "text": {"type": "mrkdwn", "text": "Options"},
+            "text": {"type": "mrkdwn", "text": "*What to include:*"},
             "accessory": {"type": "checkboxes", "action_id": "share_flags", "options": options, "initial_options": initial_options}
+        }),
+        json!({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": "The summary will be shared with attribution and metadata based on your selections above."}]
         }),
     ];
 
     json!({
         "type": "modal",
         "callback_id": "tldr_share_submit",
-        "title": {"type": "plain_text", "text": "Share summary"},
+        "title": {"type": "plain_text", "text": "Share Summary"},
         "submit": {"type": "plain_text", "text": "Share"},
         "close": {"type": "plain_text", "text": "Cancel"},
         "private_metadata": private_metadata_json,

@@ -3,7 +3,6 @@
 use super::{oauth, parsing, signature, sqs, view_submission};
 use crate::core::config::AppConfig;
 use crate::core::models::{Destination, ProcessingTask};
-use crate::core::user_tokens::get_user_token;
 use crate::slack::SlackBot;
 use crate::slack::modal_builder::build_share_modal;
 use crate::slack::modal_builder::{Prefill, build_tldr_modal};
@@ -331,7 +330,7 @@ pub async fn function_handler(
                             })
                         });
 
-                    // If no channel hint and user asked to run, offer quick-pick
+                    // If no channel hint and user asked to run, offer channel selector
                     let asked_to_run =
                         mode_unread || text_lc.contains("summarize") || count_opt.is_some();
                     if asked_to_run && target_channel_id.is_none() {
@@ -339,96 +338,19 @@ pub async fn function_handler(
                         let block_id = if let Some(n) = count_opt {
                             format!("tldr_pick_lastn_{n}")
                         } else {
-                            "tldr_pick_unread".to_string()
+                            "tldr_pick_recent".to_string()
                         };
 
-                        // If this is the unread flow AND the user has a token, build a pre-filtered static_select
-                        if mode_unread {
-                            let user_id = event.get("user").and_then(|u| u.as_str()).unwrap_or("");
-
-                            if let Ok(Some(stored)) = get_user_token(&config, user_id).await {
-                                if let Ok(bot) = SlackBot::new(&config) {
-                                    let user_client =
-                                        crate::slack::client::SlackClient::from_user_token(
-                                            stored.access_token,
-                                        );
-                                    match user_client.list_unread_conversations_for_user().await {
-                                        Ok(mut items) => {
-                                            // Limit number of options to avoid overly long dropdowns
-                                            if items.is_empty() {
-                                                let _ = bot
-                                                    .slack_client()
-                                                    .post_message_in_thread(
-                                                        channel_id,
-                                                        thread_ts,
-                                                        "You have no unread messages in any channels.",
-                                                    )
-                                                    .await;
-                                            } else {
-                                                if items.len() > 100 {
-                                                    items.truncate(100);
-                                                }
-                                                let options: Vec<Value> = items
-                                                    .into_iter()
-                                                    .map(|(id, label)| {
-                                                        json!({
-                                                            "text": { "type": "plain_text", "text": label },
-                                                            "value": id
-                                                        })
-                                                    })
-                                                    .collect();
-
-                                                let blocks = json!([
-                                                    { "type": "section", "text": {"type": "mrkdwn", "text": "Choose a conversation with unread messages:"}},
-                                                    { "type": "actions", "block_id": block_id, "elements": [
-                                                        { "type": "static_select", "action_id": "tldr_pick_conv", "placeholder": {"type":"plain_text", "text":"Select conversation"}, "options": options }
-                                                    ]}
-                                                ]);
-                                                let fut =
-                                                    bot.slack_client().post_message_with_blocks(
-                                                        channel_id,
-                                                        Some(thread_ts),
-                                                        "Choose conversation",
-                                                        &blocks,
-                                                    );
-                                                let _ = tokio::time::timeout(
-                                                    std::time::Duration::from_millis(1500),
-                                                    fut,
-                                                )
-                                                .await;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            error!("Failed to list unread conversations: {}", e);
-                                            // Fall back to generic conversations_select
-                                            let blocks = json!([
-                                                { "type": "section", "text": {"type": "mrkdwn", "text": "Choose a conversation to summarize:"}},
-                                                { "type": "actions", "block_id": block_id, "elements": [
-                                                    { "type": "conversations_select", "action_id": "tldr_pick_conv", "default_to_current_conversation": true }
-                                                ]}
-                                            ]);
-                                            let fut = bot.slack_client().post_message_with_blocks(
-                                                channel_id,
-                                                Some(thread_ts),
-                                                "Choose conversation",
-                                                &blocks,
-                                            );
-                                            let _ = tokio::time::timeout(
-                                                std::time::Duration::from_millis(1500),
-                                                fut,
-                                            )
-                                            .await;
-                                        }
-                                    }
-                                }
-                                return Ok(json!({ "statusCode": 200, "body": "{}" }));
-                            }
-                        }
-
-                        // Default flow: generic conversations_select (covers last-N and unread without token)
+                        // Always show standard conversations_select for channel selection
                         if let Ok(bot) = SlackBot::new(&config) {
+                            let prompt_text = if let Some(n) = count_opt {
+                                format!("Select a channel to summarize the last {n} messages:")
+                            } else {
+                                "Select a channel to summarize recent messages:".to_string()
+                            };
+
                             let blocks = json!([
-                                { "type": "section", "text": {"type": "mrkdwn", "text": "Choose a conversation to summarize:"}},
+                                { "type": "section", "text": {"type": "mrkdwn", "text": prompt_text}},
                                 { "type": "actions", "block_id": block_id, "elements": [
                                     { "type": "conversations_select", "action_id": "tldr_pick_conv", "default_to_current_conversation": true }
                                 ]}
@@ -436,7 +358,7 @@ pub async fn function_handler(
                             let fut = bot.slack_client().post_message_with_blocks(
                                 channel_id,
                                 Some(thread_ts),
-                                "Choose conversation",
+                                "Choose channel",
                                 &blocks,
                             );
                             let _ =
@@ -800,6 +722,7 @@ pub async fn function_handler(
                         // Determine selected options
                         let mut include_count = false;
                         let mut include_custom = false;
+                        let mut include_user = false;
                         if let Some(opts) = view
                             .get("state")
                             .and_then(|s| s.get("values"))
@@ -813,11 +736,15 @@ pub async fn function_handler(
                                     match val {
                                         "include_count" => include_count = true,
                                         "include_custom" => include_custom = true,
+                                        "include_user" => include_user = true,
                                         _ => {}
                                     }
                                 }
                             }
                         }
+
+                        // Get user ID from payload for attribution
+                        let user_id = parsing::v_str(&payload, &["user", "id"]).unwrap_or("");
 
                         // Fetch the summary text from the thread
                         let summary_text = match SlackBot::new(&config) {
@@ -829,23 +756,44 @@ pub async fn function_handler(
                             Err(_) => String::new(),
                         };
 
-                        // Compose share message
+                        // Compose share message with enhanced formatting
                         let mut share_body = String::new();
-                        if include_count {
+
+                        // Add attribution header if requested
+                        if include_user && !user_id.is_empty() {
                             use std::fmt::Write as _;
-                            let _ =
-                                write!(share_body, "_Summarized {message_count} messages._\n\n");
+                            let _ = writeln!(share_body, "_Summary created by <@{user_id}>_");
                         }
-                        share_body.push_str(&summary_text);
+
+                        // Add custom prompt prominently if included
                         if include_custom {
                             if let Some(cp) = custom_prompt.as_deref() {
                                 if !cp.is_empty() {
-                                    share_body.push_str("\n\n> Custom prompt: \"");
-                                    share_body.push_str(cp);
-                                    share_body.push('"');
+                                    use std::fmt::Write as _;
+                                    let _ = writeln!(share_body, "✨ *Style: \"{cp}\"*");
                                 }
                             }
                         }
+
+                        // Add message count if included
+                        if include_count && message_count > 0 {
+                            use std::fmt::Write as _;
+                            let _ = writeln!(
+                                share_body,
+                                "📊 _Summary of {message_count} messages from <#{source_channel_id}>_"
+                            );
+                        }
+
+                        // Add separator if we have metadata
+                        if include_user || include_custom || include_count {
+                            share_body.push_str("\n───────────\n\n");
+                        }
+
+                        // Add the actual summary
+                        share_body.push_str(&summary_text);
+
+                        // Add footer
+                        share_body.push_str("\n\n_Generated with TLDR AI Assistant_");
 
                         if let Ok(bot) = SlackBot::new(&config) {
                             if !dest_channel.is_empty() {
