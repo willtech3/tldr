@@ -725,12 +725,11 @@ impl SlackClient {
                         .as_ref()
                         .and_then(|uid| msg.get("user").and_then(Value::as_str).map(|u| u == uid))
                         .unwrap_or(false);
-                if from_bot {
-                    if let Some(text) = text_opt {
-                        if text.trim_start().starts_with("*Summary from ") {
-                            return Ok(text.to_string());
-                        }
-                    }
+                if from_bot
+                    && let Some(text) = text_opt
+                    && text.trim_start().starts_with("*Summary from ")
+                {
+                    return Ok(text.to_string());
                 }
             }
         }
@@ -997,5 +996,202 @@ impl SlackClient {
         };
 
         Ok(permalink)
+    }
+
+    /// List the authed user's joined conversations (public/private channels), up to `limit_total`.
+    /// Uses `users.conversations` with the current token. Must be a user token to reflect
+    /// the user's actual membership and read state.
+    async fn list_user_conversations_basic(
+        &self,
+        limit_total: usize,
+    ) -> Result<Vec<(String, String)>, SlackError> {
+        let mut results: Vec<(String, String)> = Vec::new();
+        let mut cursor: Option<String> = None;
+
+        loop {
+            let mut payload = json!({
+                "types": "public_channel,private_channel",
+                "exclude_archived": true,
+                "limit": 200
+            });
+            if let Some(c) = &cursor {
+                payload["cursor"] = Value::String(c.clone());
+            }
+
+            let resp = HTTP_CLIENT
+                .post("https://slack.com/api/users.conversations")
+                .bearer_auth(&self.token.token_value.0)
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|e| {
+                    SlackError::GeneralError(format!("users.conversations request failed: {e}"))
+                })?;
+
+            let data: Value = resp.json().await.map_err(|e| {
+                SlackError::GeneralError(format!("users.conversations parse failed: {e}"))
+            })?;
+
+            if !data.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+                return Err(SlackError::ApiError(format!(
+                    "users.conversations error: {}",
+                    data.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown")
+                )));
+            }
+
+            if let Some(arr) = data.get("channels").and_then(Value::as_array) {
+                for ch in arr {
+                    if let (Some(id), Some(name)) = (
+                        ch.get("id").and_then(Value::as_str),
+                        ch.get("name").and_then(Value::as_str),
+                    ) {
+                        results.push((id.to_string(), name.to_string()));
+                        if results.len() >= limit_total {
+                            return Ok(results);
+                        }
+                    }
+                }
+            }
+
+            cursor = data
+                .get("response_metadata")
+                .and_then(|m| m.get("next_cursor"))
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(std::string::ToString::to_string);
+
+            if cursor.is_none() {
+                break;
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Determine whether the authed user has unreads in the given channel.
+    async fn channel_has_unreads(&self, channel_id: &str) -> Result<bool, SlackError> {
+        // Step 1: conversations.info → last_read
+        let info_payload = json!({
+            "channel": channel_id,
+        });
+
+        let info_resp = HTTP_CLIENT
+            .post("https://slack.com/api/conversations.info")
+            .bearer_auth(&self.token.token_value.0)
+            .json(&info_payload)
+            .send()
+            .await
+            .map_err(|e| {
+                SlackError::GeneralError(format!("conversations.info request failed: {e}"))
+            })?;
+
+        let info_data: Value = info_resp.json().await.map_err(|e| {
+            SlackError::GeneralError(format!("conversations.info parse failed: {e}"))
+        })?;
+
+        if !info_data
+            .get("ok")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Err(SlackError::ApiError(format!(
+                "conversations.info error: {}",
+                info_data
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            )));
+        }
+
+        // Some workspaces/tokens may not return last_read; treat as no-unread signal,
+        // and let the main flow fall back to the generic picker.
+        let channel_obj = info_data.get("channel");
+        let last_read_ts = channel_obj
+            .and_then(|c| c.get("last_read"))
+            .and_then(Value::as_str)
+            .map(std::string::ToString::to_string)
+            .or_else(|| {
+                channel_obj
+                    .and_then(|c| c.get("last_state"))
+                    .and_then(|s| s.get("last_read"))
+                    .and_then(Value::as_str)
+                    .map(std::string::ToString::to_string)
+            });
+
+        let Some(last_read) = last_read_ts else {
+            return Ok(false);
+        };
+
+        // Step 2: conversations.history with oldest=last_read, inclusive=false, limit=1
+        let history_payload = json!({
+            "channel": channel_id,
+            "oldest": last_read,
+            "inclusive": false,
+            "limit": 1
+        });
+
+        let hist_resp = HTTP_CLIENT
+            .post("https://slack.com/api/conversations.history")
+            .bearer_auth(&self.token.token_value.0)
+            .json(&history_payload)
+            .send()
+            .await
+            .map_err(|e| {
+                SlackError::GeneralError(format!("conversations.history request failed: {e}"))
+            })?;
+
+        let hist_data: Value = hist_resp.json().await.map_err(|e| {
+            SlackError::GeneralError(format!("conversations.history parse failed: {e}"))
+        })?;
+
+        if !hist_data
+            .get("ok")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Err(SlackError::ApiError(format!(
+                "conversations.history error: {}",
+                hist_data
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            )));
+        }
+
+        let count = hist_data
+            .get("messages")
+            .and_then(Value::as_array)
+            .map_or(0, std::vec::Vec::len);
+
+        Ok(count > 0)
+    }
+
+    /// Return up to `max_results` channels that have unreads for the authed user.
+    /// Best-effort: falls back to an empty vector if read state is unavailable.
+    /// Note: this method may perform multiple API calls and should be used judiciously.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if Slack API calls for listing or probing channels fail.
+    pub async fn list_unread_channels(
+        &self,
+        max_results: usize,
+    ) -> Result<Vec<(String, String)>, SlackError> {
+        // Gather up to ~200 joined channels and probe them in order until we collect `max_results`.
+        let joined = self.list_user_conversations_basic(200).await?;
+        let mut out: Vec<(String, String)> = Vec::new();
+
+        for (id, name) in joined {
+            if out.len() >= max_results {
+                break;
+            }
+            if let Ok(true) = self.channel_has_unreads(&id).await {
+                out.push((id, name));
+            }
+        }
+
+        Ok(out)
     }
 }

@@ -3,7 +3,9 @@
 use super::{oauth, parsing, signature, sqs, view_submission};
 use crate::core::config::AppConfig;
 use crate::core::models::{Destination, ProcessingTask};
+use crate::core::user_tokens::get_user_token;
 use crate::slack::SlackBot;
+use crate::slack::client::SlackClient as SlackApiClient;
 use crate::slack::modal_builder::build_share_modal;
 use crate::slack::modal_builder::{Prefill, build_tldr_modal};
 use lambda_runtime::{Error, LambdaEvent};
@@ -418,29 +420,80 @@ pub async fn function_handler(
                             "tldr_pick_recent".to_string()
                         };
 
-                        // Always show standard conversations_select for channel selection
-                        if let Ok(bot) = SlackBot::new(&config) {
-                            let prompt_text = if let Some(n) = count_opt {
-                                format!("Select a channel to summarize the last {n} messages:")
-                            } else {
-                                "Select a channel to summarize recent messages:".to_string()
-                            };
+                        // If the user explicitly asked for "unread", try to offer a curated list
+                        // of channels that currently have unreads using a user token. Fallback
+                        // to the standard conversations_select when not available.
+                        let mut used_static = false;
+                        if mode_unread
+                            && let Some(user_id) = event.get("user").and_then(|u| u.as_str())
+                            && let Ok(Some(stored)) = get_user_token(&config, user_id).await
+                        {
+                            let user_client =
+                                SlackApiClient::from_user_token(stored.access_token);
+                            if let Ok(unreads) = user_client.list_unread_channels(25).await
+                                && !unreads.is_empty()
+                                && let Ok(bot) = SlackBot::new(&config)
+                            {
+                                let prompt_text = "Select a channel with unread messages:";
+                                let options: Vec<Value> = unreads
+                                    .into_iter()
+                                    .map(|(id, name)| {
+                                        json!({
+                                            "text": {"type": "plain_text", "text": format!("# {}", name)},
+                                            "value": id
+                                        })
+                                    })
+                                    .collect();
 
-                            let blocks = json!([
-                                { "type": "section", "text": {"type": "mrkdwn", "text": prompt_text}},
-                                { "type": "actions", "block_id": block_id, "elements": [
-                                    { "type": "conversations_select", "action_id": "tldr_pick_conv", "default_to_current_conversation": true }
-                                ]}
-                            ]);
-                            let fut = bot.slack_client().post_message_with_blocks(
-                                channel_id,
-                                Some(thread_ts),
-                                "Choose channel",
-                                &blocks,
-                            );
-                            let _ =
-                                tokio::time::timeout(std::time::Duration::from_millis(1500), fut)
-                                    .await;
+                                let blocks = json!([
+                                    { "type": "section", "text": {"type": "mrkdwn", "text": prompt_text}},
+                                    { "type": "actions", "block_id": block_id, "elements": [
+                                        { "type": "static_select", "action_id": "tldr_pick_conv", "options": options }
+                                    ]}
+                                ]);
+
+                                let fut = bot.slack_client().post_message_with_blocks(
+                                    channel_id,
+                                    Some(thread_ts),
+                                    "Choose channel",
+                                    &blocks,
+                                );
+                                let _ = tokio::time::timeout(
+                                    std::time::Duration::from_millis(1500),
+                                    fut,
+                                )
+                                .await;
+                                used_static = true;
+                            }
+                        }
+
+                        // Fallback to standard conversations_select if we didn't render static options
+                        if !used_static && let Ok(bot) = SlackBot::new(&config) {
+                                let prompt_text = if let Some(n) = count_opt {
+                                    format!("Select a channel to summarize the last {n} messages:")
+                                } else if mode_unread {
+                                    "Select a channel to summarize unread messages:".to_string()
+                                } else {
+                                    "Select a channel to summarize recent messages:".to_string()
+                                };
+
+                                let blocks = json!([
+                                    { "type": "section", "text": {"type": "mrkdwn", "text": prompt_text}},
+                                    { "type": "actions", "block_id": block_id, "elements": [
+                                        { "type": "conversations_select", "action_id": "tldr_pick_conv", "default_to_current_conversation": true }
+                                    ]}
+                                ]);
+                                let fut = bot.slack_client().post_message_with_blocks(
+                                    channel_id,
+                                    Some(thread_ts),
+                                    "Choose channel",
+                                    &blocks,
+                                );
+                                let _ = tokio::time::timeout(
+                                    std::time::Duration::from_millis(1500),
+                                    fut,
+                                )
+                                .await;
                         }
                         return Ok(json!({ "statusCode": 200, "body": "{}" }));
                     }
@@ -843,13 +896,12 @@ pub async fn function_handler(
                         }
 
                         // Add custom prompt prominently if included
-                        if include_custom {
-                            if let Some(cp) = custom_prompt.as_deref() {
-                                if !cp.is_empty() {
-                                    use std::fmt::Write as _;
-                                    let _ = writeln!(share_body, "✨ *Style: \"{cp}\"*");
-                                }
-                            }
+                        if include_custom
+                            && let Some(cp) = custom_prompt.as_deref()
+                            && !cp.is_empty()
+                        {
+                            use std::fmt::Write as _;
+                            let _ = writeln!(share_body, "✨ *Style: \"{cp}\"*");
                         }
 
                         // Add message count if included
@@ -872,13 +924,13 @@ pub async fn function_handler(
                         // Add footer
                         share_body.push_str("\n\n_Generated with TLDR AI Assistant_");
 
-                        if let Ok(bot) = SlackBot::new(&config) {
-                            if !dest_channel.is_empty() {
-                                let _ = bot
-                                    .slack_client()
-                                    .post_message(dest_channel, &share_body)
-                                    .await;
-                            }
+                        if let Ok(bot) = SlackBot::new(&config)
+                            && !dest_channel.is_empty()
+                        {
+                            let _ = bot
+                                .slack_client()
+                                .post_message(dest_channel, &share_body)
+                                .await;
                         }
 
                         return Ok(
