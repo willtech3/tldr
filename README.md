@@ -1,4 +1,4 @@
-# TLDR — Slack ChatGPT Summarizer
+# TLDR — Slack ChatGPT Summarizer 
 
 TLDR is a serverless, Rust-powered Slack bot that turns a wall of unread messages into a concise, ChatGPT-generated summary delivered straight to your DM.
 
