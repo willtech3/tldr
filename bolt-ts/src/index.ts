@@ -6,8 +6,16 @@
  */
 
 import { AwsLambdaReceiver } from '@slack/bolt';
-import { AwsCallback, AwsEvent, AwsResponse } from '@slack/bolt/dist/receivers/AwsLambdaReceiver';
-import { loadConfig, AppConfig } from './config';
+// Note: These types are imported from Bolt's internal path. While not ideal,
+// Bolt doesn't export these types from the main package. The types are stable
+// and match AWS API Gateway event/response shapes.
+import type {
+  AwsCallback,
+  AwsEvent,
+  AwsResponse,
+} from '@slack/bolt/dist/receivers/AwsLambdaReceiver';
+import { loadConfig } from './config';
+import type { AppConfig } from './config';
 import { createApp } from './app';
 
 // Lazy-initialized receiver (reused across Lambda invocations)
@@ -54,9 +62,8 @@ export const handler = async (
 ): Promise<AwsResponse> => {
   const awsReceiver = initialize();
 
-  // Get the Lambda handler from the receiver
+  // Get the Lambda handler from the receiver and invoke it
   const boltHandler = awsReceiver.toHandler();
 
-  // Invoke the handler
   return boltHandler(event, context, callback);
 };

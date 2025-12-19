@@ -65,6 +65,9 @@ export function registerInteractiveHandlers(app: App, config: AppConfig): void {
       return;
     }
 
+    // Build descriptive text for the task (used in formatting when visible/public)
+    const taskText = messageCount !== null ? `summarize last ${messageCount}` : 'summarize recent';
+
     // Build and enqueue processing task
     const task: ProcessingTask = {
       correlation_id: uuidv4(),
@@ -73,7 +76,7 @@ export function registerInteractiveHandlers(app: App, config: AppConfig): void {
       thread_ts: threadTs,
       origin_channel_id: channelId,
       response_url: null,
-      text: '',
+      text: taskText,
       message_count: messageCount,
       target_channel_id: null,
       custom_prompt: null,
