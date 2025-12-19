@@ -161,7 +161,7 @@ async fn handle_summarize_conversation_pick(
     let text = if let Some(n) = message_count {
         format!("summarize last {n}")
     } else {
-        "summarize unread".to_string()
+        "summarize recent".to_string()
     };
 
     let task = ProcessingTask {
@@ -177,7 +177,6 @@ async fn handle_summarize_conversation_pick(
         custom_prompt: None,
         visible: false,
         destination: Destination::Thread,
-        dest_canvas: false,
         dest_dm: false,
         dest_public_post: false,
     };

@@ -4,10 +4,8 @@ pub mod event_handler;
 pub mod handler;
 pub mod helpers;
 pub mod interactive_handler;
-pub mod oauth;
 pub mod parsing;
 pub mod signature;
-pub mod slash_handler;
 pub mod sqs;
 pub mod view_submission;
 

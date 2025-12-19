@@ -132,3 +132,4 @@ cargo lambda invoke --data-file test/fixtures/slash_command.json
 - Follow least-privilege IAM principles
 - never write persistent scripts unless specifically directed
 - only deploy using ci
+- If working off of a checklist in a markdown file then make sure tasks are checked after they are completed

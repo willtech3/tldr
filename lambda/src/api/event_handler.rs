@@ -12,8 +12,6 @@ use super::helpers::{ok_empty, post_blocks_with_timeout, set_suggested_prompts_a
 use super::sqs;
 use crate::core::config::AppConfig;
 use crate::core::models::{Destination, ProcessingTask};
-use crate::core::user_tokens::get_user_token;
-use crate::slack::client::SlackClient as SlackApiClient;
 
 // ============================================================================
 // Block Kit Builders
@@ -55,7 +53,7 @@ fn build_help_blocks() -> Value {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": "*Tips:*\n• The bot will ask you to select a channel if you don't mention one\n• Summaries are sent as DMs by default\n• Use Canvas integration to save and edit summaries\n• Add custom style prompts for creative summaries (poems, haikus, etc.)"
+                "text": "*Tips:*\n• The bot will ask you to select a channel if you don't mention one\n• Summaries are sent as DMs by default\n• Add custom style prompts for creative summaries (poems, haikus, etc.)"
             }
         },
         {
@@ -93,19 +91,6 @@ fn build_channel_picker_blocks(block_id: &str, prompt_text: &str) -> Value {
         { "type": "section", "text": {"type": "mrkdwn", "text": prompt_text}},
         { "type": "actions", "block_id": block_id, "elements": [
             { "type": "conversations_select", "action_id": "tldr_pick_conv", "default_to_current_conversation": true }
-        ]}
-    ])
-}
-
-fn build_static_channel_picker_blocks(
-    block_id: &str,
-    prompt_text: &str,
-    options: &[Value],
-) -> Value {
-    json!([
-        { "type": "section", "text": {"type": "mrkdwn", "text": prompt_text}},
-        { "type": "actions", "block_id": block_id, "elements": [
-            { "type": "static_select", "action_id": "tldr_pick_conv", "options": options }
         ]}
     ])
 }
@@ -217,7 +202,7 @@ async fn handle_assistant_thread_started(config: &AppConfig, event: &Value) -> V
         config,
         channel_id,
         thread_ts,
-        &["Summarize unread", "Summarize last 50", "Help", "Configure"],
+        &["Summarize recent", "Summarize last 50", "Help", "Configure"],
     );
 
     // Post welcome message
@@ -233,55 +218,6 @@ async fn handle_assistant_thread_started(config: &AppConfig, event: &Value) -> V
     .await;
 
     ok_empty()
-}
-
-/// Try to show a static select with unread channels. Returns true if successful.
-async fn try_show_unread_channels(
-    config: &AppConfig,
-    user_id: &str,
-    channel_id: &str,
-    thread_ts: &str,
-    block_id: &str,
-) -> bool {
-    let Ok(Some(stored)) = get_user_token(config, user_id).await else {
-        return false;
-    };
-
-    let user_client = SlackApiClient::from_user_token(stored.access_token);
-    let Ok(unreads) = user_client.list_unread_channels(25).await else {
-        return false;
-    };
-
-    if unreads.is_empty() {
-        return false;
-    }
-
-    let options: Vec<Value> = unreads
-        .into_iter()
-        .map(|(id, name)| {
-            json!({
-                "text": {"type": "plain_text", "text": format!("# {}", name)},
-                "value": id
-            })
-        })
-        .collect();
-
-    let blocks = build_static_channel_picker_blocks(
-        block_id,
-        "Select a channel with unread messages:",
-        &options,
-    );
-    post_blocks_with_timeout(
-        config,
-        channel_id,
-        Some(thread_ts),
-        "Choose channel",
-        &blocks,
-        1500,
-    )
-    .await;
-
-    true
 }
 
 /// Handle `message.im` or `message` event in assistant thread.
@@ -348,7 +284,7 @@ async fn handle_message_event(config: &AppConfig, event: &Value) -> Value {
         }
 
         UserIntent::Summarize {
-            mode_unread,
+            mode_unread: _,
             count,
             target_channel,
             post_here,
@@ -361,35 +297,22 @@ async fn handle_message_event(config: &AppConfig, event: &Value) -> Value {
                     "tldr_pick_recent".to_string()
                 };
 
-                // Try to show unread channels if user asked for unread and has a token
-                let used_static = if mode_unread {
-                    try_show_unread_channels(config, user_id, channel_id, thread_ts, &block_id)
-                        .await
+                let prompt_text = if let Some(n) = count {
+                    format!("Select a channel to summarize the last {n} messages:")
                 } else {
-                    false
+                    "Select a channel to summarize recent messages:".to_string()
                 };
 
-                // Fallback to standard conversations_select
-                if !used_static {
-                    let prompt_text = if let Some(n) = count {
-                        format!("Select a channel to summarize the last {n} messages:")
-                    } else if mode_unread {
-                        "Select a channel to summarize unread messages:".to_string()
-                    } else {
-                        "Select a channel to summarize recent messages:".to_string()
-                    };
-
-                    let blocks = build_channel_picker_blocks(&block_id, &prompt_text);
-                    post_blocks_with_timeout(
-                        config,
-                        channel_id,
-                        Some(thread_ts),
-                        "Choose channel",
-                        &blocks,
-                        1500,
-                    )
-                    .await;
-                }
+                let blocks = build_channel_picker_blocks(&block_id, &prompt_text);
+                post_blocks_with_timeout(
+                    config,
+                    channel_id,
+                    Some(thread_ts),
+                    "Choose channel",
+                    &blocks,
+                    1500,
+                )
+                .await;
 
                 return ok_empty();
             }
@@ -410,7 +333,6 @@ async fn handle_message_event(config: &AppConfig, event: &Value) -> Value {
                     custom_prompt: None,
                     visible: post_here,
                     destination: Destination::Thread,
-                    dest_canvas: false,
                     dest_dm: false,
                     dest_public_post: false,
                 };

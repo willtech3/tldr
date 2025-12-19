@@ -47,7 +47,6 @@ pub fn build_task_from_view(
         .and_then(|s| s.parse::<u32>().ok());
 
     // Destinations are disabled in the UI; always reply to assistant thread
-    let dest_canvas = false;
     let dest_dm = false;
     let dest_public_post = false;
     let visible = false;
@@ -91,7 +90,6 @@ pub fn build_task_from_view(
         custom_prompt,
         visible,
         destination: Destination::Thread,
-        dest_canvas,
         dest_dm,
         dest_public_post,
     })

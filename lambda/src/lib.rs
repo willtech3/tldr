@@ -42,8 +42,8 @@
 ///     // Initialize the Slack bot
 ///     let mut bot = SlackBot::new(&config)?;
 ///
-///     // Get and summarize unread messages in a channel
-///     let messages = bot.slack_client().get_unread_messages("C12345678").await?;
+///     // Get and summarize recent messages in a channel
+///     let messages = bot.slack_client().get_recent_messages("C12345678", 50).await?;
 ///     if !messages.is_empty() {
 ///         use tldr::worker::summarize::SummarizeResult;
 ///         let result = tldr::worker::summarize::summarize_task(
@@ -62,17 +62,15 @@
 ///                 custom_prompt: None,
 ///                 visible: false,
 ///                 destination: tldr::core::models::Destination::DM,
-///                 dest_canvas: false,
 ///                 dest_dm: true,
 ///                 dest_public_post: false,
 ///             },
 ///         )
 ///         .await?;
-///         
+///
 ///         match result {
 ///             SummarizeResult::Summary { text, .. } => println!("Summary: {}", text),
 ///             SummarizeResult::NoMessages => println!("No messages to summarize"),
-///             SummarizeResult::OAuthInitiated => println!("OAuth flow initiated"),
 ///         }
 ///     }
 ///

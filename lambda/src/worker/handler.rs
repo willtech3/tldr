@@ -71,14 +71,6 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
                 .await
                 .map_err(|e| Error::from(format!("Delivery error: {e}")))?;
         }
-        Ok(SummarizeResult::OAuthInitiated) => {
-            // OAuth flow was initiated, DM already sent by summarize_task
-            // Don't send any additional messages
-            info!(
-                "OAuth flow initiated for user {}, no summary generated",
-                task.user_id
-            );
-        }
         Err(e) => {
             error!("Failed to generate summary: {}", e);
             let error_message =
