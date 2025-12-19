@@ -17,11 +17,9 @@ import { AppConfig } from '../config';
 import type { ThreadContext } from '../types';
 import {
   buildThreadStateMetadata,
-  findThreadStateMessage,
   getCachedThreadState,
   makeThreadKey,
   setCachedThreadState,
-  type SlackWebApiClient,
 } from '../thread_state';
 
 // Basic message event type for our use case
@@ -71,26 +69,17 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
     const intent = parseUserIntent(text);
     const threadKey = makeThreadKey(channelId, threadTs);
 
-    const getThreadState = async (): Promise<{
+    // IMPORTANT: Avoid Slack Web API calls in this hot path to minimize risk of
+    // breaching Slack's 3s ACK window. The assistant thread events
+    // (`assistant_thread_started` / `assistant_thread_context_changed`) populate this
+    // cache on warm containers; on cold starts we fall back to best-effort behavior.
+    const getThreadStateFromCache = (): {
       state: ThreadContext;
       stateMessageTs: string | null;
-    }> => {
+    } => {
       const cached = getCachedThreadState(threadKey);
       if (cached) {
         return { state: cached.state, stateMessageTs: cached.state_message_ts };
-      }
-
-      try {
-        const found = await findThreadStateMessage({
-          client: client as unknown as SlackWebApiClient,
-          assistantChannelId: channelId,
-          assistantThreadTs: threadTs,
-        });
-        if (found) {
-          return { state: found.state, stateMessageTs: found.state_message_ts };
-        }
-      } catch (error) {
-        logger.warn('Failed to load thread state from Slack:', error);
       }
 
       return { state: { viewingChannelId: null, customStyle: null }, stateMessageTs: null };
@@ -109,7 +98,7 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
         }
 
         case 'style': {
-          const { state, stateMessageTs } = await getThreadState();
+          const { state, stateMessageTs } = getThreadStateFromCache();
           const nextState: ThreadContext = {
             viewingChannelId: state.viewingChannelId,
             customStyle: intent.instructions,
@@ -134,7 +123,8 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
               const resp = await client.chat.postMessage({
                 channel: channelId,
                 thread_ts: threadTs,
-                text: 'Style updated for this assistant thread.',
+                text: 'Welcome to TLDR',
+                blocks: buildWelcomeBlocks(),
                 metadata: buildThreadStateMetadata(nextState),
               });
               if (resp.ts) {
@@ -160,16 +150,7 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
         }
 
         case 'summarize': {
-          // Set status immediately to reflect that we're working.
-          client.assistant.threads
-            .setStatus({
-              channel_id: channelId,
-              thread_ts: threadTs,
-              status: 'Summarizing...',
-            })
-            .catch((err) => logger.error('Failed to set status:', err));
-
-          const { state } = await getThreadState();
+          const { state } = getThreadStateFromCache();
           const targetChannelId = intent.targetChannel ?? state.viewingChannelId;
 
           if (!targetChannelId) {
@@ -181,6 +162,15 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
             });
             return;
           }
+
+          // Set status after validation so we don't show "Summarizing..." for an immediate error.
+          client.assistant.threads
+            .setStatus({
+              channel_id: channelId,
+              thread_ts: threadTs,
+              status: 'Summarizing...',
+            })
+            .catch((err) => logger.error('Failed to set status:', err));
 
           // Build and enqueue processing task
           const task: ProcessingTask = {
