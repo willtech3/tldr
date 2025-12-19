@@ -1,5 +1,4 @@
 use super::client::SlackClient;
-use super::response_builder::create_replace_original_payload;
 use crate::ai::LlmClient;
 use futures::future::join_all;
 use openai_api_rs::v1::chat_completion::{
@@ -85,26 +84,6 @@ impl SlackBot {
                 Err(e)
             }
         }
-    }
-
-    /// Hides a slash command invocation by replacing it with an empty message
-    /// Uses Slack's `response_url` mechanism which allows modifying the original message
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the HTTP call to the `response_url` fails.
-    pub async fn replace_original_message(
-        &self,
-        response_url: &str,
-        text: Option<&str>,
-    ) -> Result<(), SlackError> {
-        let payload = create_replace_original_payload(text);
-        self.slack_client
-            .replace_original_message(response_url, payload)
-            .await
-            .map(|()| {
-                info!("Successfully replaced original message via response_url");
-            })
     }
 
     async fn fetch_image_size(&self, url: &str) -> Result<Option<usize>, SlackError> {

@@ -39,14 +39,14 @@ fn build_help_blocks() -> Value {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": "*Basic Commands:*\n• `summarize` - Summarize recent messages from a channel\n• `summarize unread` - Only summarize unread messages (Slack-tracked)\n• `summarize last 50` - Summarize the last 50 messages\n• `help` - Show this help message"
+                "text": "*Basic Commands:*\n• `summarize` - Summarize recent messages from a channel\n• `summarize last 50` - Summarize the last 50 messages\n• `help` - Show this help message"
             }
         },
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": "*Advanced Features:*\n• `customize` or `configure` - Set custom prompt styles for a channel\n• `share` - Share the last summary to a channel\n• Mention a channel (e.g., `summarize #general`) to target specific channels"
+                "text": "*Advanced Features:*\n• `customize` or `configure` - Set custom prompt styles for a channel\n• Mention a channel (e.g., `summarize #general`) to target specific channels"
             }
         },
         {
@@ -61,18 +61,6 @@ fn build_help_blocks() -> Value {
             "elements": [
                 {"type": "mrkdwn", "text": "Try one of the suggested prompts below or type your own command!"}
             ]
-        }
-    ])
-}
-
-fn build_share_guidance_blocks() -> Value {
-    json!([
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": "*To share a summary:*\n1. First generate a summary using `summarize`\n2. The Share button will appear in the summary message\n3. Click Share to send it to any channel with optional custom styling\n\n_No recent summary found. Generate one first!_"
-            }
         }
     ])
 }
@@ -103,10 +91,8 @@ fn build_channel_picker_blocks(block_id: &str, prompt_text: &str) -> Value {
 #[derive(Debug)]
 pub enum UserIntent {
     Help,
-    Share,
     Customize,
     Summarize {
-        mode_unread: bool,
         count: Option<u32>,
         target_channel: Option<String>,
         post_here: bool,
@@ -123,18 +109,12 @@ fn parse_user_intent(text: &str, raw_text: &str) -> UserIntent {
         return UserIntent::Help;
     }
 
-    // Share intent (but not "summarize and share")
-    if text_lc.contains("share") && !text_lc.contains("summarize") {
-        return UserIntent::Share;
-    }
-
     // Customize/configure intent
     if text_lc.contains("customize") || text_lc.contains("configure") {
         return UserIntent::Customize;
     }
 
     // Parse summarize intent
-    let mode_unread = text_lc.contains("unread");
     let post_here = text_lc.contains("post here") || text_lc.contains("public");
 
     // Parse "last N" pattern
@@ -162,11 +142,10 @@ fn parse_user_intent(text: &str, raw_text: &str) -> UserIntent {
         }
     });
 
-    let asked_to_run = mode_unread || text_lc.contains("summarize") || count.is_some();
+    let asked_to_run = text_lc.contains("summarize") || count.is_some();
 
     if asked_to_run {
         UserIntent::Summarize {
-            mode_unread,
             count,
             target_channel,
             post_here,
@@ -255,20 +234,6 @@ async fn handle_message_event(config: &AppConfig, event: &Value) -> Value {
             ok_empty()
         }
 
-        UserIntent::Share => {
-            let blocks = build_share_guidance_blocks();
-            post_blocks_with_timeout(
-                config,
-                channel_id,
-                Some(thread_ts),
-                "Share Summary",
-                &blocks,
-                1500,
-            )
-            .await;
-            ok_empty()
-        }
-
         UserIntent::Customize => {
             let blocks = build_configure_picker_blocks();
             post_blocks_with_timeout(
@@ -284,7 +249,6 @@ async fn handle_message_event(config: &AppConfig, event: &Value) -> Value {
         }
 
         UserIntent::Summarize {
-            mode_unread: _,
             count,
             target_channel,
             post_here,
