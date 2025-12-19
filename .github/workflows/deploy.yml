@@ -68,14 +68,14 @@ jobs:
       # Extract built Lambda artifacts from the container (only for deployments)
       - name: Extract Lambda artifacts
         run: |
-          mkdir -p lambda/target/lambda/tldr-api
+          mkdir -p lambda/target/lambda/tldr-bolt-api
           mkdir -p lambda/target/lambda/tldr-worker
           docker create --name lambda-builder tldr-lambda-builder:latest
-          docker cp lambda-builder:/tldr-api.zip lambda/target/lambda/tldr-api/function.zip
+          docker cp lambda-builder:/tldr-bolt-api.zip lambda/target/lambda/tldr-bolt-api/function.zip
           docker cp lambda-builder:/tldr-worker.zip lambda/target/lambda/tldr-worker/function.zip
           docker rm lambda-builder
-          echo '--- Verifying API Lambda artifact ---'
-          ls -l lambda/target/lambda/tldr-api/function.zip || (echo 'API function.zip not found!' && exit 1)
+          echo '--- Verifying Bolt API Lambda artifact ---'
+          ls -l lambda/target/lambda/tldr-bolt-api/function.zip || (echo 'Bolt API function.zip not found!' && exit 1)
           echo '--- Verifying Worker Lambda artifact ---'
           ls -l lambda/target/lambda/tldr-worker/function.zip || (echo 'Worker function.zip not found!' && exit 1)
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'

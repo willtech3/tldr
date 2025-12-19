@@ -18,7 +18,7 @@ export function buildWelcomeBlocks(): KnownBlock[] {
       text: {
         type: 'mrkdwn',
         text:
-          "👋 Hi! I'm TLDR Bot. I can summarize channel messages for you.\n\n" +
+          "👋 Hi! I'm TLDR. I can summarize the channel you're currently viewing.\n\n" +
           '*Quick start:*\n' +
           '• Click a suggested prompt below\n' +
           '• Or type `help` to see all commands\n' +
@@ -42,9 +42,10 @@ export function buildHelpBlocks(): KnownBlock[] {
       text: {
         type: 'mrkdwn',
         text:
-          '*Basic Commands:*\n' +
-          '• `summarize` - Summarize recent messages from a channel\n' +
-          '• `summarize last 50` - Summarize the last 50 messages\n' +
+          '*Commands:*\n' +
+          '• `summarize` - Summarize the last 50 messages in the channel you’re viewing\n' +
+          '• `summarize last N` - Summarize the last N messages (e.g., `summarize last 100`)\n' +
+          '• `style: <instructions>` - Set a custom style for this assistant thread\n' +
           '• `help` - Show this help message',
       },
     },
@@ -53,9 +54,9 @@ export function buildHelpBlocks(): KnownBlock[] {
       text: {
         type: 'mrkdwn',
         text:
-          '*Advanced Features:*\n' +
-          '• `customize` or `configure` - Set custom prompt styles for a channel\n' +
-          '• Mention a channel (e.g., `summarize #general`) to target specific channels',
+          '*Notes:*\n' +
+          '• TLDR automatically tracks your current channel as you navigate Slack\n' +
+          '• You can also mention a channel (e.g., `summarize <#C123|general>`) to override context',
       },
     },
     {
@@ -64,9 +65,8 @@ export function buildHelpBlocks(): KnownBlock[] {
         type: 'mrkdwn',
         text:
           '*Tips:*\n' +
-          '• Mention a channel like `summarize #general` to specify which channel\n' +
           '• Summaries appear in this assistant thread\n' +
-          '• Add custom style prompts for creative summaries (poems, haikus, etc.)',
+          '• Make styles specific (e.g., “funny, short, and include receipts”)',
       },
     },
     {
@@ -75,33 +75,6 @@ export function buildHelpBlocks(): KnownBlock[] {
         {
           type: 'mrkdwn',
           text: 'Try one of the suggested prompts below or type your own command!',
-        },
-      ],
-    },
-  ];
-}
-
-/**
- * Build channel picker blocks for configure flow.
- */
-export function buildConfigurePickerBlocks(): KnownBlock[] {
-  return [
-    {
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: 'Pick a conversation to configure TLDR for:',
-      },
-    },
-    {
-      type: 'actions',
-      block_id: 'tldr_pick_config',
-      elements: [
-        {
-          type: 'conversations_select',
-          action_id: 'tldr_pick_conv',
-          default_to_current_conversation: true,
-          response_url_enabled: true,
         },
       ],
     },

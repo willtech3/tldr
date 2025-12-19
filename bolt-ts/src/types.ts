@@ -39,7 +39,10 @@ export interface ProcessingTask {
  */
 export type UserIntent =
   | { type: 'help' }
-  | { type: 'customize' }
+  | {
+      type: 'style';
+      instructions: string;
+    }
   | {
       type: 'summarize';
       count: number | null;

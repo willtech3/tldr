@@ -27,15 +27,20 @@ describe('parseUserIntent', () => {
     });
   });
 
-  describe('customize intent', () => {
-    it('should recognize "customize" command', () => {
-      const result = parseUserIntent('customize');
-      expect(result).toEqual({ type: 'customize' });
+  describe('style intent', () => {
+    it('should recognize "style: ..." command', () => {
+      const result = parseUserIntent('style: write as a haiku');
+      expect(result).toEqual({ type: 'style', instructions: 'write as a haiku' });
     });
 
-    it('should recognize "configure" command', () => {
-      const result = parseUserIntent('configure');
-      expect(result).toEqual({ type: 'customize' });
+    it('should handle extra whitespace', () => {
+      const result = parseUserIntent('  style :   extremely concise   ');
+      expect(result).toEqual({ type: 'style', instructions: 'extremely concise' });
+    });
+
+    it('should treat "style:" with no instructions as help', () => {
+      const result = parseUserIntent('style:   ');
+      expect(result).toEqual({ type: 'help' });
     });
   });
 

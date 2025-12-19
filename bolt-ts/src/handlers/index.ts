@@ -6,4 +6,3 @@
 
 export { registerAssistantHandlers } from './assistant';
 export { registerMessageHandlers } from './message';
-export { registerInteractiveHandlers } from './interactive';
