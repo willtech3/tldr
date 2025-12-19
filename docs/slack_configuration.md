@@ -4,19 +4,15 @@ This guide covers the complete Slack app setup for TLDR, including app creation,
 
 ## Overview
 
-TLDR uses:
-- **Slash Command**: `/tldr` (use `--ui` flag to open modal)
-- **Message Shortcut**: Three-dot menu → "Summarize Thread"
-- **Modals**: Interactive UI for configuration
-- **Canvas Integration**: Automatic summary storage in channel canvases
- - **AI App split view**: Assistant thread with suggested prompts and in-thread runs
+TLDR uses the **AI App split-view** interface as its primary (and only) user surface:
+- **AI App split view**: Assistant thread with suggested prompts and in-thread summarization
 
 ## Prerequisites
 
-- Slack workspace with admin permissions
+- Slack workspace with admin permissions (paid plan required for AI Apps)
 - Deployed AWS infrastructure (via CDK)
 - API Gateway endpoints from deployment:
-  - Slash command: `https://{api-gateway}/commands`
+  - Events: `https://{api-gateway}/slack/events`
   - Interactivity: `https://{api-gateway}/slack/interactive`
 
 ## Step 1: Create Slack App
@@ -32,16 +28,14 @@ TLDR uses:
 Navigate to **OAuth & Permissions** and add these bot token scopes:
 
 ### Required Bot Scopes
-- `assistant:write`
-- `im:history`, `im:read`, `im:write`
-- `channels:history`, `channels:read`
-- `chat:write`, `chat:write.public`
-- `groups:history`, `groups:read`
-- `mpim:history`, `mpim:read`
-- `users:read`
-
-### Canvas Integration (Optional)
-- `canvases:read`, `canvases:write`
+- `assistant:write` - Required for AI App features
+- `im:history`, `im:read`, `im:write` - Read/write DM conversations
+- `channels:history`, `channels:read` - Read public channel messages
+- `chat:write` - Post messages
+- `groups:history`, `groups:read` - Read private channel messages
+- `mpim:history`, `mpim:read` - Read group DM history
+- `users:read` - Get user info
+- `files:read` - Download images for summarization
 
 After adding scopes, click **Install to Workspace**.
 
@@ -53,7 +47,6 @@ From **Basic Information**:
 
 From **OAuth & Permissions**:
 - **Bot User OAuth Token**: Starts with `xoxb-`
-- **Client ID / Client Secret**: For user-token flow
 
 ## Step 4: Configure GitHub Secrets
 
@@ -70,11 +63,6 @@ Add these secrets to your GitHub repository (Settings → Secrets and variables 
 ### OpenAI Secrets
 - `OPENAI_API_KEY` - OpenAI API key
 - `OPENAI_ORG_ID` - Organization ID (optional)
-
-### OAuth (User-token) Secrets
-- `SLACK_CLIENT_ID`
-- `SLACK_CLIENT_SECRET`
-- `SLACK_REDIRECT_URL` (set to `https://{api-gateway}/auth/slack/callback`)
 
 ## Step 5: Deploy Infrastructure
 
@@ -108,33 +96,27 @@ After deployment, update your Slack app with the API Gateway URL:
    - Paste updated manifest
    - Click **Save Changes**
 
-## Step 7: Configure Slash Command
+## Step 7: Enable AI App Features
 
-Navigate to **Slash Commands** → **Create New Command**:
-- **Command**: `/tldr`
-- **Request URL**: `https://{api-gateway}/commands`
-- **Short Description**: Summarize unread or recent messages
-- **Usage Hint**: `count=100 --visible custom="Use bullet points" --ui`
+Navigate to **Agents & AI Apps**:
+1. Enable **Agents & AI Apps** feature
+2. This unlocks assistant thread events
 
 ## Step 8: Enable Interactivity & Events
 
 Navigate to **Interactivity & Shortcuts**:
 1. Toggle **Interactivity** ON
 2. Set **Request URL**: `https://{api-gateway}/slack/interactive`
-3. Subscribe to Events:
-   - Request URL: `https://{api-gateway}/slack/events`
-   - Bot events: `assistant_thread_started`, `assistant_thread_context_changed`, `message.im`
 
-## Step 9: Create Shortcuts
+Navigate to **Event Subscriptions**:
+1. Toggle **Enable Events** ON
+2. Set **Request URL**: `https://{api-gateway}/slack/events`
+3. Subscribe to Bot Events:
+   - `assistant_thread_started`
+   - `assistant_thread_context_changed`
+   - `message.im`
 
-### Message Shortcut (Three-Dot Menu)
-1. Click **Create New Shortcut** → **On Messages**
-2. Configure:
-   - **Name**: Summarize Thread
-   - **Short Description**: Summarize this message thread
-   - **Callback ID**: `tldr_message_action`
-
-## Step 10: Reinstall App
+## Step 9: Reinstall App
 
 After all configuration:
 1. Go to **OAuth & Permissions**
@@ -143,29 +125,26 @@ After all configuration:
 
 ## Usage
 
-### Slash Command
-```
-/tldr                    # Opens modal
-/tldr count=50          # Direct summary of last 50 messages
-/tldr --visible         # Post publicly to channel
-/tldr --ui              # Force modal to open
-```
+### AI App Split View
 
-### AI App split view
-Open the TLDR app from Slack’s AI icon (top-right). Use suggested prompts like “Summarize unread” or type commands such as “summarize last 50”.
+Open the TLDR app from Slack's AI icon (top-right):
 
-### Message Shortcut
-1. Hover over any message
-2. Click ... (three-dot menu)
-3. Select "Summarize Thread"
+1. Click the AI Apps icon in the top-right corner of Slack
+2. Select **TLDR** from the list
+3. The assistant thread opens in split-view
+4. Use suggested prompts or type commands:
+   - `summarize` - Summarize last 50 messages from current channel
+   - `summarize last 100` - Summarize last 100 messages
+   - `style` - Change the summary style
+   - `help` - Show available commands
 
-## Canvas Integration
+### Changing Channels
 
-Summaries can be automatically stored in channel canvases:
-- Creates "📋 TLDR Summaries" canvas on first use
-- New summaries prepended at top (newest first)
-- Each summary includes timestamp, content, and attribution
-- Access via 📋 icon in channel header
+When you switch channels in Slack while the AI App is open, TLDR automatically updates its context. The next summarize command will target the new channel.
+
+### Custom Styles
+
+Click "Change style" or type `style: your custom instructions` to customize how summaries are written. Styles persist for the current assistant thread.
 
 ## Token Types Reference
 
@@ -173,8 +152,6 @@ Summaries can be automatically stored in channel canvases:
 |------------|--------|---------|----------|
 | Bot Token | `xoxb-` | Runtime API calls | OAuth & Permissions |
 | Signing Secret | (none) | Request verification | Basic Information |
-| Config Token | `xoxe.xoxp-` | Manifest updates (not used) | N/A |
-| App-Level Token | `xapp-` | Socket mode (not used) | N/A |
 
 ## Security Implementation
 
@@ -188,20 +165,15 @@ Reference: [Slack Request Verification](https://api.slack.com/authentication/ver
 
 ## Troubleshooting
 
-### Modal Submit Button Missing
-- Verify modal has at least one input block
-- Check callback_id is set correctly
-- Ensure app has required permissions
+### AI App Not Appearing
+- Verify **Agents & AI Apps** is enabled in app settings
+- Ensure workspace is on a paid plan (AI Apps require paid plans)
+- Reinstall app after enabling features
 
-### Shortcuts Not Appearing
-- Verify callback IDs match exactly
-- Confirm Interactivity is enabled
-- Reinstall app after changes
-
-### Canvas Creation Fails
-- Check bot has `channels:manage` and `bookmarks:write` scopes
-- Verify bot is member of the channel
-- Check CloudWatch logs for specific errors
+### Events Not Received
+- Verify Event Subscriptions URL responds with 200
+- Check CloudWatch logs for incoming requests
+- Ensure bot events are subscribed
 
 ### Signature Verification Fails
 - Ensure `SLACK_SIGNING_SECRET` is correct
@@ -210,17 +182,17 @@ Reference: [Slack Request Verification](https://api.slack.com/authentication/ver
 
 ## Testing Checklist
 
-- [ ] `/tldr` command opens modal
-- [ ] Message shortcut appears in three-dot menu
-- [ ] Modal submission processes successfully
-- [ ] Canvas creation works (if enabled)
-- [ ] DM delivery works
-- [ ] Public posting works with `--visible` flag
-- [ ] Error messages display correctly for invalid inputs
+- [ ] AI App appears in Slack's AI Apps menu
+- [ ] Opening TLDR shows welcome message and suggested prompts
+- [ ] Switching channels updates context
+- [ ] "Summarize" produces a summary in the thread
+- [ ] Custom styles are applied correctly
+- [ ] Error messages display correctly for failures
 
 ## Related Documentation
 
-- [Slack API: Slash Commands](https://api.slack.com/interactivity/slash-commands)
-- [Slack API: Shortcuts](https://api.slack.com/interactivity/shortcuts)
-- [Slack API: Modals](https://api.slack.com/surfaces/modals)
-- [Slack API: Canvas](https://api.slack.com/methods/conversations.canvases)
+- [Slack API: AI Apps](https://api.slack.com/docs/apps/ai)
+- [Slack API: Events](https://api.slack.com/events)
+- [Slack API: Interactivity](https://api.slack.com/interactivity)
+
+

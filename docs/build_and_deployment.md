@@ -131,6 +131,8 @@ cargo lambda invoke --data-file test/fixtures/slash_command.json
 
 ## Related Documentation
 
-- `SLACK_APP_SETUP.md` - Slack application configuration
+- `slack_configuration.md` - Slack application configuration
 - `README.md` - Project overview and setup
 - `.github/workflows/deploy.yml` - CI/CD pipeline source
+
+

@@ -1,84 +1,63 @@
-# TLDR — Slack ChatGPT Summarizer
+# TLDR — Slack AI App Summarizer
 
-TLDR is a serverless, Rust-powered Slack bot that turns a wall of unread messages into a concise, ChatGPT-generated summary delivered straight to your DM.
+TLDR is a serverless Slack bot that turns a wall of unread messages into a concise, AI-generated summary delivered straight to your Slack AI App assistant thread.
 
 ---
 
 ## ✨ Key Features
 
-- **Slash Command Workflow** – Trigger summaries with `/tldr` in any channel.
-- **AI-Generated Summaries** – Uses OpenAI ChatGPT to distill unread messages.
-- **Two-Lambda Architecture** – Instant slash-command acknowledgement + async processing for snappy UX.
-- **Built with Safe, Async Rust** – Tokio runtime, `slack-morphism` and `openai-api-rs`.
+- **AI App Experience** – Native Slack AI App split-view integration with suggested prompts and context tracking.
+- **AI-Generated Summaries** – Uses OpenAI (GPT-5.2 by default) to distill channel messages into digestible summaries.
+- **Custom Styles** – Make summaries funny, formal, or fit your friend group's vibe.
+- **Two-Lambda Architecture** – Instant acknowledgement + async processing for snappy UX.
+- **Built with Rust** – Fast, reliable worker using Tokio runtime.
 
 ---
 
-## 🏗️  High-Level Architecture
+## 🚀 Quick Start
+
+### Using TLDR
+
+1. **Open TLDR** – Click the AI Apps icon in the top-right corner of Slack, then select TLDR.
+2. **Navigate to a channel** – Switch to any channel in Slack's main view.
+3. **Summarize** – Click a suggested prompt or type:
+   - `summarize` – Summarize last 50 messages
+   - `summarize last 100` – Summarize last 100 messages
+   - `style: write as haiku` – Change the summary style
+   - `help` – Show available commands
+
+That's it! TLDR automatically tracks which channel you're viewing and summarizes it.
+
+---
+
+## 🏗️ High-Level Architecture
 
 ```
 ┌─────────┐    ┌────────────┐   SQS   ┌──────────────┐    ┌────────────────────┐
-│  Slack  │──►│ API Lambda │─▶Queue▶│ Worker Lambda │───►│ OpenAI Responses API │
+│  Slack  │──►│ API Lambda │─▶Queue▶│ Worker Lambda │───►│ OpenAI Responses API│
 └─────────┘    └────────────┘         └──────┬───────┘    └────────────────────┘
                                              │
                                              ▼
-                                        ┌─────────┐
-                                        │  User   │
-                                        └─────────┘
+                                     ┌───────────────┐
+                                     │ Assistant     │
+                                     │ Thread Reply  │
+                                     └───────────────┘
 ```
 
-1. **API Lambda** – Verifies Slack signatures and enqueues a summarisation job to SQS.
-2. **Worker Lambda** – Fetches unread channel messages, calls OpenAI Responses API (GPT‑5) to summarise them, and DMs the user.
+1. **API Lambda** – Handles Slack events and interactions, enqueues jobs to SQS.
+2. **Worker Lambda** – Fetches channel messages, calls OpenAI, posts summary to the assistant thread.
 
 ---
 
-## 🚀  Usage
-
-1. **Install the Slack App** in your workspace (see *Slack Setup* below).
-2. Use either method to generate summaries:
-
-### Slash Command (Direct Processing)
-
-Type `/tldr` in any channel to get a DM with a summary of unread messages:
-
-```text
-/tldr
-```
-
-The summary will be sent to your DM shortly. ✨
-
-### Message Shortcut
-
-Right-click any message and select **"Summarize Thread"** from the shortcuts menu to summarize that specific message thread.
-
-### Advanced Parameters
-
-For the slash command, you can append flags and parameters:
-
-| Parameter | Example | Description |
-|-----------|---------|-------------|
-| `count=<N>` | `/tldr count=50` | Summarise the **last N** messages instead of just unread messages. |
-| `channel=<#channel>` | `/tldr channel=#general` | Post the summary to a different channel (defaults to DM). |
-| `--visible` / `--public` | `/tldr --visible` | Make the summary visible to everyone in the target channel. |
-| `custom="…"` | `/tldr custom="Write at an 8th-grade level"` | Provide a custom prompt (max 800 chars) to influence the writing style. |
-| `--ui` / `--modal` | `/tldr --ui` | Open the interactive configuration UI instead of direct processing. |
-
-Parameters can be combined:
-
-```text
-/tldr count=100 channel=#project-updates --visible custom="Use bullet points and include action items"
-```
-
----
-
-## 🔧  Quick Start for Local Development
+## 🔧 Local Development
 
 ### Prerequisites
 
 - Rust (stable, Edition 2024)
 - `cargo-lambda` ≥ 0.17 for local Lambda builds
 - AWS CLI with a profile that can deploy Lambda + SQS
-- Node 18+ & npm (only for the CDK stack)
-- A Slack workspace & OpenAI API key (and optional OpenAI Org ID)
+- Node 18+ & npm (for the CDK stack)
+- A Slack workspace (paid plan required for AI Apps) & OpenAI API key
 
 ### Steps
 
@@ -94,24 +73,18 @@ $ cd lambda
 $ cargo test
 $ cargo lambda build --release
 
-# 4. Spin up a local Lambda for manual testing
-$ cargo lambda watch   # default on :9000
-```
-
-Invoke the API Lambda locally with a sample payload:
-
-```bash
-$ cargo lambda invoke --data-file test/fixtures/slash_command.json
+# 4. Run quality checks
+$ just qa
 ```
 
 ---
 
-## ☁️  Deployment (AWS CDK)
+## ☁️ Deployment (AWS CDK)
 
-The **`cdk/`** folder contains an *AWS CDK* stack that provisions:
+The **`cdk/`** folder contains an AWS CDK stack that provisions:
 
 - API Gateway endpoint
-- Two Lambda functions (API + Worker)
+- Lambda functions (API + Worker)
 - SQS queue
 - IAM roles & CloudWatch logs
 
@@ -123,13 +96,13 @@ $ npm install             # first time only
 $ npm run deploy
 ```
 
-After the stack is live, copy the API Gateway URL into your Slack slash-command configuration.
+After the stack is live, update your Slack app manifest with the API Gateway URL.
 
 ---
 
-## 🔐  Configuration
+## 🔐 Configuration
 
-Environment variables (set in Lambda or an `.env` file for local runs):
+Environment variables (set in Lambda or GitHub secrets):
 
 | Variable | Purpose |
 |----------|---------|
@@ -137,21 +110,23 @@ Environment variables (set in Lambda or an `.env` file for local runs):
 | `SLACK_SIGNING_SECRET` | Verifies Slack requests |
 | `OPENAI_API_KEY` | Access token for the OpenAI API |
 | `OPENAI_ORG_ID` | Optional, sets OpenAI-Organization header |
-| `OPENAI_MODEL` | Optional, override model (defaults to `gpt-5`) |
+| `OPENAI_MODEL` | Optional, override model (defaults to `gpt-5.2`) |
 | `PROCESSING_QUEUE_URL` | URL of the SQS queue |
 
 ---
 
-## 🗂️  Project Layout
+## 🗂️ Project Layout
 
 ```
-├─ lambda/          # Rust crate with both Lambda handlers
+├─ lambda/          # Rust crate with Lambda handlers
 │   ├─ src/
 │   │   ├─ bin/
 │   │   │   ├─ api.rs        # API Lambda entrypoint
-│   │   │   ├─ worker.rs     # Worker Lambda entrypoint
-│   │   │   └─ bootstrap.rs  # Shared bootstrap
-│   │   └─ bot.rs            # SlackBot implementation (shared)
+│   │   │   └─ worker.rs     # Worker Lambda entrypoint
+│   │   ├─ ai/               # OpenAI integration
+│   │   ├─ api/              # Slack event handlers
+│   │   ├─ slack/            # Slack API client
+│   │   └─ worker/           # Summarization logic
 │   └─ Cargo.toml
 ├─ cdk/             # AWS CDK stack (TypeScript)
 ├─ docs/            # Additional documentation
@@ -160,14 +135,24 @@ Environment variables (set in Lambda or an `.env` file for local runs):
 
 ---
 
-## 🤝  Contributing
+## 📚 Documentation
 
-1. Make sure `cargo check` and `cargo clippy -- -D warnings` pass.
-2. Add unit tests in `#[cfg(test)]` modules and doc-tests in public APIs.
-3. Open a PR – GitHub Actions will run the full test & lint suite.
+- [Slack Configuration](docs/slack_configuration.md) – Complete Slack app setup guide
+- [User Workflows](docs/user_workflows.md) – Detailed user interaction documentation
+- [Build & Deployment](docs/build_and_deployment.md) – CI/CD and deployment details
+- [AI App Rewrite Plan](docs/ai_app_first_rewrite_bolt_js.md) – Future architecture direction
 
 ---
 
-## 📄  License
+## 🤝 Contributing
+
+1. Make sure `cargo check` and `cargo clippy -- -D warnings` pass.
+2. Run `just qa` before committing.
+3. Add unit tests in `#[cfg(test)]` modules and doc-tests in public APIs.
+4. Open a PR – GitHub Actions will run the full test & lint suite.
+
+---
+
+## 📄 License
 
 MIT © 2025 TLDR Contributors
