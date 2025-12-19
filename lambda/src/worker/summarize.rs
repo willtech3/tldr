@@ -1,18 +1,12 @@
 // Keep function focused; consider splitting if it grows significantly.
 use crate::core::config::AppConfig;
 use crate::core::models::ProcessingTask;
-use crate::core::user_tokens::get_user_token;
 use crate::errors::SlackError;
 use crate::slack::SlackBot;
 
 pub enum SummarizeResult {
-    Summary {
-        text: String,
-        message_count: u32,
-        custom_prompt: Option<String>,
-    },
+    Summary { text: String },
     NoMessages,
-    OAuthInitiated,
 }
 
 /// # Errors
@@ -25,72 +19,12 @@ pub async fn summarize_task(
 ) -> Result<SummarizeResult, SlackError> {
     let source_channel_id = &task.channel_id;
 
-    // Determine retrieval mode: last N vs all unread (user-specific)
-    let mut messages = if let Some(count) = task.message_count {
-        // Last N using bot token
-        slack_bot
-            .slack_client()
-            .get_recent_messages(source_channel_id, count)
-            .await?
-    } else {
-        // All unread for the requesting user: prefer user token; fallback to last N=100
-        if let Some(stored) = get_user_token(config, &task.user_id).await? {
-            let user_client =
-                crate::slack::client::SlackClient::from_user_token(stored.access_token);
-            match user_client.get_unread_messages(source_channel_id).await {
-                Ok(ms) => ms,
-                Err(e) => {
-                    // If token is invalid/expired, require re-auth
-                    let err_text = format!("{e}");
-                    let token_invalid = err_text.contains("invalid_auth")
-                        || err_text.contains("account_inactive")
-                        || err_text.contains("token_revoked")
-                        || err_text.contains("not_authed");
-                    if token_invalid {
-                        let base = std::env::var("API_BASE_URL")
-                            .unwrap_or_else(|_| "https://example.com".to_string());
-                        let auth_url = format!("{base}/auth/slack/start");
-                        let thread_msg = format!(
-                            "Your Slack authorization has expired. Please reconnect to enable 'unread' summaries: {auth_url}"
-                        );
-                        if let Some(ts) = &task.thread_ts {
-                            let reply_channel = task
-                                .origin_channel_id
-                                .as_deref()
-                                .unwrap_or(source_channel_id);
-                            let _ = slack_bot
-                                .slack_client()
-                                .post_message_in_thread(reply_channel, ts, &thread_msg)
-                                .await;
-                        }
-                        return Ok(SummarizeResult::OAuthInitiated);
-                    }
-                    // Non-auth related failure
-                    return Err(e);
-                }
-            }
-        } else {
-            // No user token: always require OAuth for 'unread' flow
-            let base =
-                std::env::var("API_BASE_URL").unwrap_or_else(|_| "https://example.com".to_string());
-            let auth_url = format!("{base}/auth/slack/start");
-            let msg = format!(
-                "To get accurate 'All unread' summaries, please connect your Slack account: {auth_url}\n\nOnce connected, run it again."
-            );
-            if let Some(ts) = &task.thread_ts {
-                // Prefer replying to the assistant thread's channel if provided
-                let reply_channel = task
-                    .origin_channel_id
-                    .as_deref()
-                    .unwrap_or(source_channel_id);
-                let _ = slack_bot
-                    .slack_client()
-                    .post_message_in_thread(reply_channel, ts, &msg)
-                    .await;
-            }
-            return Ok(SummarizeResult::OAuthInitiated);
-        }
-    };
+    // Determine retrieval mode: always last N for now (defaulting to 50 if not specified)
+    let count = task.message_count.unwrap_or(50);
+    let mut messages = slack_bot
+        .slack_client()
+        .get_recent_messages(source_channel_id, count)
+        .await?;
 
     let is_public_or_visible = task.visible || task.dest_public_post;
     if let (true, Ok(bot_id)) = (
@@ -118,9 +52,5 @@ pub async fn summarize_task(
             task.custom_prompt.as_deref(),
         )
         .await?;
-    Ok(SummarizeResult::Summary {
-        text: summary,
-        message_count: u32::try_from(messages.len()).unwrap_or(u32::MAX),
-        custom_prompt: task.custom_prompt.clone(),
-    })
+    Ok(SummarizeResult::Summary { text: summary })
 }

@@ -1,10 +1,27 @@
+use percent_encoding::percent_decode_str;
 use regex::Regex;
 use serde_json::Value;
 
-use crate::{
-    errors::SlackError,
-    slack::command_parser::{SlackCommandEvent, decode_url_component, parse_form_data},
-};
+use crate::errors::SlackError;
+
+/// Decodes URL encoded string using `percent_encoding` crate
+///
+/// # Arguments
+/// * `input` - The URL-encoded string to decode
+///
+/// # Returns
+/// * `Ok(String)` - The decoded string if successful
+/// * `Err(String)` - An error message if decoding fails
+///
+/// # Errors
+///
+/// Returns an error string if the input contains invalid percent-encoding.
+pub fn decode_url_component(input: &str) -> Result<String, String> {
+    percent_decode_str(input)
+        .decode_utf8()
+        .map(|s| s.replace('+', " "))
+        .map_err(|e| format!("Failed to decode URL component: {e}"))
+}
 
 #[must_use]
 pub fn is_interactive_body(body: &str) -> bool {
@@ -49,14 +66,6 @@ pub fn v_str<'a>(root: &'a Value, path: &[&str]) -> Option<&'a str> {
 #[must_use]
 pub fn v_array<'a>(root: &'a Value, path: &[&str]) -> Option<&'a Vec<Value>> {
     v_path(root, path).and_then(|v| v.as_array())
-}
-
-/// # Errors
-///
-/// Returns an error if form parsing fails.
-pub fn parse_slack_event(payload: &str) -> Result<SlackCommandEvent, SlackError> {
-    parse_form_data(payload)
-        .map_err(|e| SlackError::ParseError(format!("Failed to parse form data: {e}")))
 }
 
 #[must_use]

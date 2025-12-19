@@ -29,11 +29,6 @@
 ///         processing_queue_url: "dummy_url".to_string(),
 ///         slack_signing_secret: "dummy_secret".to_string(),
 ///         slack_bot_token: "dummy_token".to_string(),
-///         slack_client_id: "dummy_client_id".to_string(),
-///         slack_client_secret: "dummy_client_secret".to_string(),
-///         slack_redirect_url: Some("https://example.com/auth/slack/callback".to_string()),
-///         user_token_param_prefix: "/tldr/user_tokens/".to_string(),
-///         user_token_notify_prefix: "/tldr/user_token_notified/".to_string(),
 ///         openai_api_key: "dummy_openai_key".to_string(),
 ///         openai_org_id: None,
 ///         openai_model: None,
@@ -42,8 +37,8 @@
 ///     // Initialize the Slack bot
 ///     let mut bot = SlackBot::new(&config)?;
 ///
-///     // Get and summarize unread messages in a channel
-///     let messages = bot.slack_client().get_unread_messages("C12345678").await?;
+///     // Get and summarize recent messages in a channel
+///     let messages = bot.slack_client().get_recent_messages("C12345678", 50).await?;
 ///     if !messages.is_empty() {
 ///         use tldr::worker::summarize::SummarizeResult;
 ///         let result = tldr::worker::summarize::summarize_task(
@@ -62,17 +57,15 @@
 ///                 custom_prompt: None,
 ///                 visible: false,
 ///                 destination: tldr::core::models::Destination::DM,
-///                 dest_canvas: false,
 ///                 dest_dm: true,
 ///                 dest_public_post: false,
 ///             },
 ///         )
 ///         .await?;
-///         
+///
 ///         match result {
 ///             SummarizeResult::Summary { text, .. } => println!("Summary: {}", text),
 ///             SummarizeResult::NoMessages => println!("No messages to summarize"),
-///             SummarizeResult::OAuthInitiated => println!("OAuth flow initiated"),
 ///         }
 ///     }
 ///

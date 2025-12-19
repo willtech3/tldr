@@ -8,9 +8,9 @@ use tracing::{error, info};
 
 use crate::core::models::{Destination, ProcessingTask};
 use crate::errors::SlackError;
+use crate::slack::SlackBot;
 use crate::slack::message_formatter::format_summary_message;
 use crate::slack::response_builder::create_ephemeral_payload;
-use crate::slack::{CanvasHelper, SlackBot};
 
 pub async fn send_response_url(
     http_client: &HttpClient,
@@ -59,8 +59,6 @@ pub async fn deliver_summary(
     task: &ProcessingTask,
     source_channel_id: &str,
     summary: &str,
-    message_count: u32,
-    custom_prompt: Option<String>,
 ) -> Result<(), SlackError> {
     let mut sent_successfully = false;
 
@@ -89,24 +87,6 @@ pub async fn deliver_summary(
             );
         } else {
             sent_successfully = true;
-            // Post a Share button in the same thread so user can share to another channel
-            let meta = serde_json::json!({
-                "thread_ts": thread_ts,
-                "source_channel_id": reply_channel,
-                "message_count": message_count,
-                "has_custom_prompt": custom_prompt.is_some(),
-                "custom_prompt": custom_prompt.as_deref().unwrap_or("")
-            })
-            .to_string();
-            let blocks = serde_json::json!([
-                {"type":"actions","block_id":"tldr_share","elements":[
-                    {"type":"button","text":{"type":"plain_text","text":"Share…"},"action_id":"tldr_share_open","value": meta}
-                ]}
-            ]);
-            let _ = slack_bot
-                .slack_client()
-                .post_message_with_blocks(reply_channel, Some(thread_ts), "Share", &blocks)
-                .await;
         }
     }
 
@@ -128,54 +108,6 @@ pub async fn deliver_summary(
             let normalized = src_name.trim_start_matches('#').to_string();
             if *target == normalized {
                 target_equals_source = true;
-            }
-        }
-    }
-
-    if task.dest_canvas {
-        info!(
-            "Writing summary to Canvas for channel {} (corr_id={})",
-            source_channel_id, task.correlation_id
-        );
-        let canvas_helper = CanvasHelper::new(slack_bot.slack_client());
-        match canvas_helper.ensure_channel_canvas(source_channel_id).await {
-            Ok(canvas_id) => {
-                use chrono_tz::US::Central;
-                let now = chrono::Utc::now().with_timezone(&Central);
-                let tz_abbr = if now.format("%Z").to_string() == "CDT" {
-                    "CDT"
-                } else {
-                    "CST"
-                };
-                let heading = format!(
-                    "TLDR - {} {} (God's time zone)",
-                    now.format("%Y-%m-%d %H:%M"),
-                    tz_abbr
-                );
-                let user_name = match slack_bot.slack_client().get_user_info(&task.user_id).await {
-                    Ok(name) => name,
-                    Err(_) => format!("<@{}>", task.user_id),
-                };
-                let canvas_content =
-                    format!("{summary}\n\n*Summary by {user_name} using TLDR bot*");
-                if let Err(e) = canvas_helper
-                    .prepend_summary_section(&canvas_id, &heading, &canvas_content)
-                    .await
-                {
-                    error!(
-                        "Failed to update Canvas: {} (corr_id={})",
-                        e, task.correlation_id
-                    );
-                } else {
-                    info!(
-                        "Successfully updated Canvas {} (corr_id={})",
-                        canvas_id, task.correlation_id
-                    );
-                    sent_successfully = true;
-                }
-            }
-            Err(e) => {
-                error!("Failed to ensure Canvas exists: {}", e);
             }
         }
     }
@@ -273,7 +205,7 @@ pub async fn deliver_summary(
         }
     }
 
-    if !sent_successfully && !task.dest_canvas && !task.dest_dm && !task.dest_public_post {
+    if !sent_successfully && !task.dest_dm && !task.dest_public_post {
         info!(
             "No destinations selected or all failed, defaulting to DM (corr_id={})",
             task.correlation_id

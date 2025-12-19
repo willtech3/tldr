@@ -27,7 +27,6 @@ pub struct ProcessingTask {
     /// compatibility during migration.
     pub destination: Destination,
     // Destination flags for output routing
-    pub dest_canvas: bool,
     pub dest_dm: bool,
     pub dest_public_post: bool,
 }

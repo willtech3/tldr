@@ -45,13 +45,19 @@ cargo lambda deploy
 
 ## Architecture
 
-The Lambda function:
-1. Receives events from Slack (via API Gateway)
+The Lambda functions use a two-Lambda architecture:
+
+**API Lambda** (`tldr-api`):
+1. Receives events from Slack AI App (via API Gateway)
 2. Authenticates and verifies requests using Slack signing secrets
-3. Processes slash commands like `/tldr`
-4. Fetches unread messages from specified channels
-5. Generates summaries
-6. Responds back to Slack
+3. Enqueues summarization tasks to SQS
+4. Returns immediate acknowledgement to Slack
+
+**Worker Lambda** (`tldr-worker`):
+1. Processes SQS messages asynchronously
+2. Fetches recent messages from specified channels
+3. Generates AI summaries using OpenAI
+4. Posts summaries to the assistant thread
 
 ## Configuration
 

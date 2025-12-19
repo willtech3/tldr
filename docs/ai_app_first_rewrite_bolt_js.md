@@ -144,11 +144,11 @@ This section is intentionally written as a **checklist** so coding agents can ex
 
 ### PR 1 — Delete legacy code (Canvas + slash command) BEFORE writing new Bolt logic
 
-- [ ] Delete Canvas code (see "Canvas (delete completely)" checklist below).
-- [ ] Delete slash command code (see "Slash command `/tldr` (delete completely)" checklist below).
-- [ ] Delete OAuth unread code (recommended) or explicitly defer it to a future branch (but don't keep partially-used code).
-- [ ] Remove dead dependencies from `lambda/Cargo.toml` (only after code deletion proves they're unused).
-- [ ] Run `just qa` locally and ensure CI passes.
+- [x] Delete Canvas code (see "Canvas (delete completely)" checklist below).
+- [x] Delete slash command code (see "Slash command `/tldr` (delete completely)" checklist below).
+- [x] Delete OAuth unread code (recommended) or explicitly defer it to a future branch (but don't keep partially-used code).
+- [x] Remove dead dependencies from `lambda/Cargo.toml` (only after code deletion proves they're unused).
+- [x] Run `just qa` locally and ensure CI passes.
 
 ### PR 2 — Add Bolt TypeScript "AI App API Lambda" scaffold (minimal viable)
 
@@ -189,26 +189,26 @@ This section is intentionally written as a **checklist** so coding agents can ex
 ### Delete legacy features (behavior-changing; desired)
 
 #### Canvas (delete completely)
-- Delete `lambda/src/slack/canvas_helper.rs`
-- Remove all Canvas API code from `lambda/src/slack/client.rs` (Canvas endpoints + helpers).
-- Remove Canvas delivery path from `lambda/src/worker/deliver.rs`
-- Remove any "dest_canvas" flags and related branching in `lambda/src/core/models.rs`
-- Remove docs that describe Canvas as a feature
+- [x] Delete `lambda/src/slack/canvas_helper.rs`
+- [x] Remove all Canvas API code from `lambda/src/slack/client.rs` (Canvas endpoints + helpers).
+- [x] Remove Canvas delivery path from `lambda/src/worker/deliver.rs`
+- [x] Remove any "dest_canvas" flags and related branching in `lambda/src/core/models.rs`
+- [x] Remove docs that describe Canvas as a feature
 
 #### Slash command `/tldr` (delete completely)
-- Delete slash parsing + handler code in the Rust API surface:
-  - `lambda/src/api/slash_handler.rs`
-  - `lambda/src/slack/command_parser.rs` (if only used by slash commands)
-  - Remove slash routing from `lambda/src/api/handler.rs`
-- Remove `/tldr` from `slack-app-manifest.yaml.template`.
+- [x] Delete slash parsing + handler code in the Rust API surface:
+  - [x] `lambda/src/api/slash_handler.rs`
+  - [x] `lambda/src/slack/command_parser.rs` (if only used by slash commands)
+  - [x] Remove slash routing from `lambda/src/api/handler.rs`
+- [x] Remove `/tldr` from `slack-app-manifest.yaml.template`.
 
 #### Recommended extra deletions (to keep the repo tiny)
-- Delete OAuth "unread" user-token flow:
-  - `lambda/src/api/oauth.rs`
-  - `lambda/src/core/user_tokens.rs`
-- Delete "Share" UX:
-  - Remove share button posting in `lambda/src/worker/deliver.rs`
-  - Delete share modal builder/interactive handling if it becomes unused
+- [x] Delete OAuth "unread" user-token flow:
+  - [x] `lambda/src/api/oauth.rs`
+  - [x] `lambda/src/core/user_tokens.rs`
+- [x] Delete "Share" UX:
+  - [x] Remove share button posting in `lambda/src/worker/deliver.rs`
+  - [x] Delete share modal builder/interactive handling if it becomes unused
 
 ---
 

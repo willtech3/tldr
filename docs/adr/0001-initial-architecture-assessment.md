@@ -1,5 +1,7 @@
 # ADR-0001: Initial Architecture Assessment and Current State
 
+> **⚠️ Historical Document**: This ADR was written before the legacy code deletion (PR #99). References to `/tldr` slash commands, OAuth user-token flow, and Canvas integration describe features that have since been removed. The current system is AI App-only.
+
 ## Status
 
 **Accepted** — This ADR captures the current state of the system as of December 2025 and serves as a baseline for future architectural decisions.

@@ -2,7 +2,7 @@ display_information:
   name: TLDR Bot
   description: AI-powered message summarization for Slack
   background_color: "#2C2D30"
-  long_description: TLDR Bot uses ChatGPT to generate intelligent summaries of your Slack conversations. Get quick TLDR summaries of unread messages, long threads, or specific message ranges. Features include customizable prompts, Canvas integration for persistent summaries, message count control, and flexible output destinations. Perfect for catching up on busy channels, understanding lengthy discussions, or creating meeting notes.
+  long_description: TLDR Bot uses ChatGPT to generate intelligent summaries of your Slack conversations. Get quick TLDR summaries of unread messages, long threads, or specific message ranges. Features include customizable prompts, message count control, and flexible output destinations. Perfect for catching up on busy channels, understanding lengthy discussions, or creating meeting notes.
 
 features:
   app_home:
@@ -17,26 +17,16 @@ features:
       type: message
       callback_id: summarize_thread
       description: Summarize this message thread
-  slash_commands:
-    - command: /tldr
-      # Replace YOUR-API-ID and YOUR-REGION with your actual values from CDK output
-      # Get it by running: aws cloudformation describe-stacks --stack-name TldrStack --query "Stacks[0].Outputs[?OutputKey=='ApiGatewayUrl'].OutputValue" --output text
-      url: "https://YOUR-API-ID.execute-api.YOUR-REGION.amazonaws.com/prod/slack/commands"
-      description: Generate a summary of channel messages
-      usage_hint: "[count=N] [channel=#channel] [custom='prompt'] [--visible] [--ui]"
-      should_escape: false
 
 oauth_config:
   scopes:
     bot:
       - assistant:write
-      - im:history
-      - chat:write
       - channels:history
       - channels:read
       - chat:write
       - chat:write.public
-      - commands
+      - files:read
       - groups:history
       - groups:read
       - im:history
@@ -45,20 +35,6 @@ oauth_config:
       - mpim:history
       - mpim:read
       - users:read
-      - files:read
-      # Canvas permissions (CRITICAL for Canvas API)
-      - canvases:read
-      - canvases:write
-  user:
-    scopes:
-      - channels:read
-      - channels:history
-      - groups:read
-      - groups:history
-      - im:read
-      - im:history
-      - mpim:read
-      - mpim:history
 
 settings:
   event_subscriptions:

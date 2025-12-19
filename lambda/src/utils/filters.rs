@@ -22,13 +22,8 @@ pub fn filter_user_messages(
             let is_from_this_bot = bot_user_id
                 .and_then(|bot_id| msg.sender.user.as_ref().map(|u| u.0 == bot_id))
                 .unwrap_or(false);
-            let contains_tldr_command = msg
-                .content
-                .text
-                .as_deref()
-                .is_some_and(|text| text.contains("/tldr"));
 
-            is_user_message && !is_system_message && !is_from_this_bot && !contains_tldr_command
+            is_user_message && !is_system_message && !is_from_this_bot
         })
         .collect()
 }
