@@ -22,13 +22,11 @@ oauth_config:
   scopes:
     bot:
       - assistant:write
-      - im:history
-      - chat:write
       - channels:history
       - channels:read
       - chat:write
       - chat:write.public
-      - commands
+      - files:read
       - groups:history
       - groups:read
       - im:history
@@ -37,17 +35,6 @@ oauth_config:
       - mpim:history
       - mpim:read
       - users:read
-      - files:read
-  user:
-    scopes:
-      - channels:read
-      - channels:history
-      - groups:read
-      - groups:history
-      - im:read
-      - im:history
-      - mpim:read
-      - mpim:history
 
 settings:
   event_subscriptions:

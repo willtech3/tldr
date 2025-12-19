@@ -59,15 +59,6 @@ impl SlackClient {
         }
     }
 
-    /// Build a Slack client that uses a user token for read operations.
-    /// This is identical to `new` but named explicitly for clarity at call sites.
-    #[must_use]
-    pub fn from_user_token(user_token: String) -> Self {
-        Self {
-            token: SlackApiToken::new(SlackApiTokenValue::new(user_token)),
-        }
-    }
-
     #[must_use]
     pub fn token(&self) -> &SlackApiToken {
         &self.token
@@ -301,33 +292,6 @@ impl SlackClient {
             );
 
             session.chat_delete(&delete_req).await?;
-            Ok(())
-        })
-        .await
-    }
-
-    /// # Errors
-    pub async fn replace_original_message(
-        &self,
-        response_url: &str,
-        payload: Value,
-    ) -> Result<(), SlackError> {
-        self.with_retry(|| async {
-            let response = HTTP_CLIENT
-                .post(response_url)
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|e| SlackError::GeneralError(format!("HTTP request failed: {e}")))?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let text = response.text().await.unwrap_or_default();
-                return Err(SlackError::GeneralError(format!(
-                    "Failed to update message: {status} - {text}"
-                )));
-            }
-
             Ok(())
         })
         .await

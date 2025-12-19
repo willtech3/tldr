@@ -5,12 +5,6 @@ pub struct AppConfig {
     pub processing_queue_url: String,
     pub slack_signing_secret: String,
     pub slack_bot_token: String,
-    // OAuth for user-token flow
-    pub slack_client_id: String,
-    pub slack_client_secret: String,
-    pub slack_redirect_url: Option<String>,
-    pub user_token_param_prefix: String,
-    pub user_token_notify_prefix: String,
     pub openai_api_key: String,
     pub openai_org_id: Option<String>,
     pub openai_model: Option<String>,
@@ -21,13 +15,6 @@ impl AppConfig {
     ///
     /// Returns an error string when required environment variables are missing.
     pub fn from_env() -> Result<Self, String> {
-        fn require_nonempty(key: &str) -> Result<String, String> {
-            let v = env::var(key).map_err(|e| format!("{key}: {e}"))?;
-            if v.trim().is_empty() {
-                return Err(format!("{key}: empty"));
-            }
-            Ok(v)
-        }
         Ok(Self {
             processing_queue_url: env::var("PROCESSING_QUEUE_URL")
                 .map_err(|e| format!("PROCESSING_QUEUE_URL: {e}"))?,
@@ -35,13 +22,6 @@ impl AppConfig {
                 .map_err(|e| format!("SLACK_SIGNING_SECRET: {e}"))?,
             slack_bot_token: env::var("SLACK_BOT_TOKEN")
                 .map_err(|e| format!("SLACK_BOT_TOKEN: {e}"))?,
-            slack_client_id: require_nonempty("SLACK_CLIENT_ID")?,
-            slack_client_secret: require_nonempty("SLACK_CLIENT_SECRET")?,
-            slack_redirect_url: env::var("SLACK_REDIRECT_URL").ok(),
-            user_token_param_prefix: env::var("USER_TOKEN_PARAM_PREFIX")
-                .unwrap_or_else(|_| "/tldr/user_tokens/".to_string()),
-            user_token_notify_prefix: env::var("USER_TOKEN_NOTIFY_PREFIX")
-                .unwrap_or_else(|_| "/tldr/user_token_notified/".to_string()),
             openai_api_key: env::var("OPENAI_API_KEY")
                 .map_err(|e| format!("OPENAI_API_KEY: {e}"))?,
             openai_org_id: env::var("OPENAI_ORG_ID").ok(),

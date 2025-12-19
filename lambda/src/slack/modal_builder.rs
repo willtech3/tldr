@@ -11,11 +11,9 @@ pub struct Prefill {
 
 /// Build the Block Kit modal for TLDR configuration.
 ///
-/// This matches the JSON shape described in the implementation plan:
+/// Modal contains:
 /// - `conversations_select` (default to current, or prefilled)
-/// - range radio (`unread_since_last_run` | `last_n` | `date_range`)
-/// - `number_input` for last N
-/// - datepickers for from/to
+/// - `number_input` for message count
 /// - style/prompt multiline input
 /// # Panics
 ///
@@ -51,39 +49,9 @@ pub fn build_tldr_modal(prefill: &Prefill) -> Value {
         }),
         json!({
             "type": "input",
-            "block_id": "range",
-            "label": { "type": "plain_text", "text": "Range" },
-            "element": {
-                "type": "radio_buttons",
-                "action_id": "mode",
-                "options": [
-                    { "text": { "type": "plain_text", "text": "All unread (user-specific)" }, "value": "unread" },
-                    { "text": { "type": "plain_text", "text": "Last N messages" }, "value": "last_n" },
-                    { "text": { "type": "plain_text", "text": "Date range" }, "value": "date_range" }
-                ],
-                "initial_option": { "text": { "type": "plain_text", "text": "All unread (user-specific)" }, "value": "unread" }
-            }
-        }),
-        json!({
-            "type": "input",
             "block_id": "lastn",
-            "optional": true,
             "label": { "type": "plain_text", "text": "How many messages?" },
             "element": { "type": "number_input", "is_decimal_allowed": false, "action_id": "n", "initial_value": prefill.last_n.map_or_else(|| "100".to_string(), |n| n.to_string()), "min_value": "2", "max_value": "500" }
-        }),
-        json!({
-            "type": "input",
-            "block_id": "from",
-            "optional": true,
-            "label": { "type": "plain_text", "text": "From date" },
-            "element": { "type": "datepicker", "action_id": "from_date" }
-        }),
-        json!({
-            "type": "input",
-            "block_id": "to",
-            "optional": true,
-            "label": { "type": "plain_text", "text": "To date" },
-            "element": { "type": "datepicker", "action_id": "to_date" }
         }),
         json!({
             "type": "input",
@@ -154,71 +122,4 @@ pub fn validate_view_submission(view: &Value) -> Result<(), serde_json::Map<Stri
     } else {
         Err(errors)
     }
-}
-
-/// Build the "Share summary" modal with preview.
-///
-/// `has_custom_prompt` controls whether the checkbox to include the custom prompt is shown.
-/// `private_metadata_json` will be attached to the modal and returned on `view_submission`.
-#[must_use]
-pub fn build_share_modal(has_custom_prompt: bool, private_metadata_json: &str) -> Value {
-    let mut options: Vec<Value> = vec![
-        json!({
-            "text": {"type": "plain_text", "text": "Include number of messages summarized"},
-            "value": "include_count"
-        }),
-        json!({
-            "text": {"type": "plain_text", "text": "Include my username as creator"},
-            "value": "include_user"
-        }),
-    ];
-
-    if has_custom_prompt {
-        options.push(json!({
-            "text": {"type": "plain_text", "text": "Include custom style prompt ✨"},
-            "value": "include_custom"
-        }));
-    }
-
-    // By default, preselect include_count and include_custom (if available)
-    let mut initial_options: Vec<Value> = vec![json!({
-        "text": {"type": "plain_text", "text": "Include number of messages summarized"},
-        "value": "include_count"
-    })];
-
-    if has_custom_prompt {
-        initial_options.push(json!({
-            "text": {"type": "plain_text", "text": "Include custom style prompt ✨"},
-            "value": "include_custom"
-        }));
-    }
-
-    let blocks = vec![
-        json!({
-            "type": "input",
-            "block_id": "share_dest",
-            "label": {"type": "plain_text", "text": "Share to"},
-            "element": {"type": "conversations_select", "action_id": "share_conv", "filter": {"include": ["public", "private", "im", "mpim"]}}
-        }),
-        json!({
-            "type": "section",
-            "block_id": "share_opts",
-            "text": {"type": "mrkdwn", "text": "*What to include:*"},
-            "accessory": {"type": "checkboxes", "action_id": "share_flags", "options": options, "initial_options": initial_options}
-        }),
-        json!({
-            "type": "context",
-            "elements": [{"type": "mrkdwn", "text": "The summary will be shared with attribution and metadata based on your selections above."}]
-        }),
-    ];
-
-    json!({
-        "type": "modal",
-        "callback_id": "tldr_share_submit",
-        "title": {"type": "plain_text", "text": "Share Summary"},
-        "submit": {"type": "plain_text", "text": "Share"},
-        "close": {"type": "plain_text", "text": "Cancel"},
-        "private_metadata": private_metadata_json,
-        "blocks": blocks
-    })
 }
