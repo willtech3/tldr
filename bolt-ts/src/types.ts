@@ -43,11 +43,14 @@ export type UserIntent =
       type: 'style';
       instructions: string;
     }
+  | { type: 'clear_style' }
   | {
       type: 'summarize';
       count: number | null;
       targetChannel: string | null;
       postHere: boolean;
+      /** Per-run style override (doesn't persist to thread state) */
+      styleOverride: string | null;
     }
   | { type: 'unknown' };
 

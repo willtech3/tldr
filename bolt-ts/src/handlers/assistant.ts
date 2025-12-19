@@ -34,6 +34,7 @@ const DEFAULT_PROMPTS: Array<{ title: string; message: string }> = [
   { title: 'Summarize', message: 'summarize' },
   { title: 'Summarize last 50', message: 'summarize last 50' },
   { title: 'Summarize last 100', message: 'summarize last 100' },
+  { title: 'Set style', message: 'Click the button above to set a custom style' },
   { title: 'Help', message: 'help' },
 ];
 
@@ -163,7 +164,7 @@ export function registerAssistantHandlers(app: App): void {
           channel: channelId,
           thread_ts: threadTs,
           text: WELCOME_TEXT,
-          blocks: buildWelcomeBlocks(),
+          blocks: buildWelcomeBlocks(nextState.customStyle),
           metadata: buildThreadStateMetadata(nextState),
         });
         if (welcome.ts) {
@@ -182,7 +183,7 @@ export function registerAssistantHandlers(app: App): void {
         channel: channelId,
         ts: stateMessageTs,
         text: WELCOME_TEXT,
-        blocks: buildWelcomeBlocks(),
+        blocks: buildWelcomeBlocks(nextState.customStyle),
         metadata: buildThreadStateMetadata(nextState),
       })
       .then(() => {

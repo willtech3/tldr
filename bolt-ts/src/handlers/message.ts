@@ -10,7 +10,7 @@
 import { App } from '@slack/bolt';
 import { v4 as uuidv4 } from 'uuid';
 import { parseUserIntent } from '../intent';
-import { buildHelpBlocks, buildWelcomeBlocks } from '../blocks';
+import { buildHelpBlocks, buildWelcomeBlocks, buildStyleConfirmationBlocks } from '../blocks';
 import { sendToSqs } from '../sqs';
 import { ProcessingTask } from '../types';
 import { AppConfig } from '../config';
@@ -21,6 +21,8 @@ import {
   makeThreadKey,
   setCachedThreadState,
 } from '../thread_state';
+
+const WELCOME_TEXT = 'Welcome to TLDR';
 
 // Basic message event type for our use case
 interface MessageEvent {
@@ -109,8 +111,8 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
               .update({
                 channel: channelId,
                 ts: stateMessageTs,
-                text: 'Welcome to TLDR',
-                blocks: buildWelcomeBlocks(),
+                text: WELCOME_TEXT,
+                blocks: buildWelcomeBlocks(nextState.customStyle),
                 metadata: buildThreadStateMetadata(nextState),
               })
               .then(() => {
@@ -123,8 +125,8 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
               const resp = await client.chat.postMessage({
                 channel: channelId,
                 thread_ts: threadTs,
-                text: 'Welcome to TLDR',
-                blocks: buildWelcomeBlocks(),
+                text: WELCOME_TEXT,
+                blocks: buildWelcomeBlocks(nextState.customStyle),
                 metadata: buildThreadStateMetadata(nextState),
               });
               if (resp.ts) {
@@ -144,7 +146,55 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
           await client.chat.postMessage({
             channel: channelId,
             thread_ts: threadTs,
-            text: 'Style saved for this assistant thread.',
+            text: 'Style saved for this thread.',
+            blocks: buildStyleConfirmationBlocks(intent.instructions),
+          });
+          break;
+        }
+
+        case 'clear_style': {
+          const { state, stateMessageTs } = getThreadStateFromCache();
+          const nextState: ThreadContext = {
+            viewingChannelId: state.viewingChannelId,
+            customStyle: null,
+          };
+
+          if (stateMessageTs) {
+            void client.chat
+              .update({
+                channel: channelId,
+                ts: stateMessageTs,
+                text: WELCOME_TEXT,
+                blocks: buildWelcomeBlocks(null),
+                metadata: buildThreadStateMetadata(nextState),
+              })
+              .then(() => {
+                setCachedThreadState({ threadKey, stateMessageTs, state: nextState });
+              })
+              .catch((err) => logger.error('Failed to clear style in thread state:', err));
+          } else {
+            // If no state message exists, create one with cleared style
+            try {
+              const resp = await client.chat.postMessage({
+                channel: channelId,
+                thread_ts: threadTs,
+                text: WELCOME_TEXT,
+                blocks: buildWelcomeBlocks(null),
+                metadata: buildThreadStateMetadata(nextState),
+              });
+              if (resp.ts) {
+                setCachedThreadState({ threadKey, stateMessageTs: resp.ts, state: nextState });
+              }
+            } catch (error) {
+              logger.error('Failed to create thread state message for clear style:', error);
+            }
+          }
+
+          await client.chat.postMessage({
+            channel: channelId,
+            thread_ts: threadTs,
+            text: 'Style cleared.',
+            blocks: buildStyleConfirmationBlocks(null),
           });
           break;
         }
@@ -162,6 +212,9 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
             });
             return;
           }
+
+          // Use per-run style override if present, otherwise fall back to thread's customStyle
+          const effectiveStyle = intent.styleOverride ?? state.customStyle;
 
           // Set status after validation so we don't show "Summarizing..." for an immediate error.
           client.assistant.threads
@@ -183,7 +236,7 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
             text: text.toLowerCase(),
             message_count: intent.count,
             target_channel_id: null,
-            custom_prompt: state.customStyle,
+            custom_prompt: effectiveStyle,
             // AI App UX: always reply in-thread (never post publicly from the worker).
             visible: false,
             destination: 'Thread',

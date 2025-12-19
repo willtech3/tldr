@@ -13,11 +13,20 @@ import { UserIntent } from './types';
  * @returns The parsed user intent
  */
 export function parseUserIntent(text: string): UserIntent {
-  const textLower = text.toLowerCase();
+  const textLower = text.toLowerCase().trim();
 
   // Help intent
   if (textLower.includes('help') || textLower === '?' || textLower.includes('what can')) {
     return { type: 'help' };
+  }
+
+  // Clear style intent
+  // Examples:
+  // - "clear style"
+  // - "reset style"
+  // - "remove style"
+  if (/^\s*(clear|reset|remove)\s+style\s*$/i.test(text)) {
+    return { type: 'clear_style' };
   }
 
   // Style intent (thread-scoped; persisted via Slack message metadata)
@@ -35,6 +44,16 @@ export function parseUserIntent(text: string): UserIntent {
 
   // Parse summarize intent
   const postHere = textLower.includes('post here') || textLower.includes('public');
+
+  // Parse per-run style override (doesn't persist)
+  // Examples:
+  // - "summarize with style: be funny"
+  // - "summarize last 50 with style: write as haiku"
+  let styleOverride: string | null = null;
+  const styleOverrideMatch = text.match(/with\s+style\s*:\s*(.+?)$/i);
+  if (styleOverrideMatch) {
+    styleOverride = styleOverrideMatch[1]?.trim() || null;
+  }
 
   // Parse "last N" pattern
   const words = textLower.split(/\s+/);
@@ -64,6 +83,7 @@ export function parseUserIntent(text: string): UserIntent {
       count,
       targetChannel,
       postHere,
+      styleOverride,
     };
   }
 

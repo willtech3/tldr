@@ -171,9 +171,9 @@ This section is intentionally written as a **checklist** so coding agents can ex
 
 ### PR 4 — Style UX (the "funny summaries" feature)
 
-- [ ] Add a "Set style" modal (custom prompt only)
-- [ ] Persist style state **only inside Slack** (thread state message metadata). No per-user defaults.
-- [ ] Make the assistant thread clearly show the active style.
+- [x] Add a "Set style" modal (custom prompt only)
+- [x] Persist style state **only inside Slack** (thread state message metadata). No per-user defaults.
+- [x] Make the assistant thread clearly show the active style.
 
 ### PR 5 — Images + links depth (V1 quality bar)
 
