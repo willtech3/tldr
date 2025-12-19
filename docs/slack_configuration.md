@@ -15,6 +15,8 @@ TLDR uses the **AI App split-view** interface as its primary (and only) user sur
   - Events: `https://{api-gateway}/slack/events`
   - Interactivity: `https://{api-gateway}/slack/interactive`
 
+> **Note:** In the current Rust API Lambda stack, Slack interactivity is handled at `/slack/interactive` and Events API at `/slack/events` (see `cdk/lib/tldr-stack.ts`). In the Bolt.js rewrite, it’s also valid (and often simpler) to point **both** Event Subscriptions and Interactivity to the same Bolt handler endpoint (commonly `/slack/events`), as shown in the manifest example in `docs/ai_app_first_rewrite_bolt_js.md`.
+
 ## Step 1: Create Slack App
 
 1. Go to [api.slack.com/apps](https://api.slack.com/apps)

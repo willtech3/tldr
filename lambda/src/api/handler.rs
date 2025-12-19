@@ -428,8 +428,7 @@ pub async fn function_handler(
                             && let Some(user_id) = event.get("user").and_then(|u| u.as_str())
                             && let Ok(Some(stored)) = get_user_token(&config, user_id).await
                         {
-                            let user_client =
-                                SlackApiClient::from_user_token(stored.access_token);
+                            let user_client = SlackApiClient::from_user_token(stored.access_token);
                             if let Ok(unreads) = user_client.list_unread_channels(25).await
                                 && !unreads.is_empty()
                                 && let Ok(bot) = SlackBot::new(&config)
@@ -469,31 +468,29 @@ pub async fn function_handler(
 
                         // Fallback to standard conversations_select if we didn't render static options
                         if !used_static && let Ok(bot) = SlackBot::new(&config) {
-                                let prompt_text = if let Some(n) = count_opt {
-                                    format!("Select a channel to summarize the last {n} messages:")
-                                } else if mode_unread {
-                                    "Select a channel to summarize unread messages:".to_string()
-                                } else {
-                                    "Select a channel to summarize recent messages:".to_string()
-                                };
+                            let prompt_text = if let Some(n) = count_opt {
+                                format!("Select a channel to summarize the last {n} messages:")
+                            } else if mode_unread {
+                                "Select a channel to summarize unread messages:".to_string()
+                            } else {
+                                "Select a channel to summarize recent messages:".to_string()
+                            };
 
-                                let blocks = json!([
-                                    { "type": "section", "text": {"type": "mrkdwn", "text": prompt_text}},
-                                    { "type": "actions", "block_id": block_id, "elements": [
-                                        { "type": "conversations_select", "action_id": "tldr_pick_conv", "default_to_current_conversation": true }
-                                    ]}
-                                ]);
-                                let fut = bot.slack_client().post_message_with_blocks(
-                                    channel_id,
-                                    Some(thread_ts),
-                                    "Choose channel",
-                                    &blocks,
-                                );
-                                let _ = tokio::time::timeout(
-                                    std::time::Duration::from_millis(1500),
-                                    fut,
-                                )
-                                .await;
+                            let blocks = json!([
+                                { "type": "section", "text": {"type": "mrkdwn", "text": prompt_text}},
+                                { "type": "actions", "block_id": block_id, "elements": [
+                                    { "type": "conversations_select", "action_id": "tldr_pick_conv", "default_to_current_conversation": true }
+                                ]}
+                            ]);
+                            let fut = bot.slack_client().post_message_with_blocks(
+                                channel_id,
+                                Some(thread_ts),
+                                "Choose channel",
+                                &blocks,
+                            );
+                            let _ =
+                                tokio::time::timeout(std::time::Duration::from_millis(1500), fut)
+                                    .await;
                         }
                         return Ok(json!({ "statusCode": 200, "body": "{}" }));
                     }
