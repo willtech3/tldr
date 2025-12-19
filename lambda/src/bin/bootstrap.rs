@@ -1,11 +1,6 @@
-// This is the shared Lambda bootstrap entry point
-// It conditionally compiles to either the API or Worker function based on features
+// This is the Lambda bootstrap entry point for the Worker function
 
-// Include the actual implementation files
-#[cfg(feature = "api")]
-#[path = "api.rs"]
-mod api;
-
+// Include the worker implementation
 #[cfg(feature = "worker")]
 #[path = "worker.rs"]
 mod worker;
@@ -19,18 +14,14 @@ async fn main() -> Result<(), Error> {
         .with_max_level(tracing::Level::INFO)
         .init();
 
-    // Run the appropriate function handler based on features
-    #[cfg(feature = "api")]
-    {
-        run(service_fn(api::handler)).await?;
-    }
+    // Run the worker handler
     #[cfg(feature = "worker")]
     {
         run(service_fn(worker::handler)).await?;
     }
-    #[cfg(not(any(feature = "api", feature = "worker")))]
+    #[cfg(not(feature = "worker"))]
     {
-        panic!("Either 'api' or 'worker' feature must be enabled");
+        panic!("'worker' feature must be enabled");
     }
 
     Ok(())

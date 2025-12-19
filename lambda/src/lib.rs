@@ -1,12 +1,16 @@
 /// TLDR - A Slack chatbot that summarizes unread messages in channels using ChatGPT.
 ///
-/// This crate implements a two-Lambda architecture for the TLDR Slack bot:
-/// 1. An API Lambda that receives and verifies Slack slash commands, then queues tasks
-/// 2. A Worker Lambda that processes queued tasks and generates summaries with ChatGPT
+/// This crate implements the Worker Lambda for the TLDR Slack bot. The API layer
+/// is handled by a separate Bolt TypeScript Lambda (see bolt-ts/).
 ///
 /// # Architecture
 ///
-/// The system uses:
+/// The system uses a two-Lambda design:
+/// - **Bolt TypeScript Lambda** (bolt-ts/): Handles Slack events, validates requests, enqueues to SQS
+/// - **Rust Worker Lambda** (this crate): Processes SQS messages, fetches channel history,
+///   calls OpenAI, and delivers summaries
+///
+/// Key technologies:
 /// - AWS Lambda for serverless execution
 /// - SQS for task queuing between Lambdas
 /// - slack-morphism for Slack API interactions
@@ -74,7 +78,6 @@
 /// ```
 // Module declarations
 pub mod ai;
-pub mod api;
 pub mod core;
 pub mod errors;
 pub mod slack;

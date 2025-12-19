@@ -4,18 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [[bin]]
-name = "tldr-api"
-path = "src/bin/api.rs"
-required-features = ["api"]
-
-[[bin]]
 name = "tldr-worker"
 path = "src/bin/bootstrap.rs"
 required-features = ["worker"]
 
 [features]
 default = []
-api = []
 worker = []
 debug-logs = []
 

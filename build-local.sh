@@ -38,7 +38,7 @@ docker tag tldr-lambda-builder:local tldr-lambda-builder:latest # Add the :lates
 
 # Create directories for the Lambda artifacts
 echo "📋 Extracting Lambda artifacts..."
-mkdir -p lambda/target/lambda/tldr-api
+mkdir -p bolt-ts/bundle
 mkdir -p lambda/target/lambda/tldr-worker
 
 # Remove existing container if it exists
@@ -51,14 +51,7 @@ if ! docker create --name lambda-artifact-extractor tldr-lambda-builder:local; t
     exit 1
 fi
 
-# Extract the Lambda artifacts
-echo "Copying API Lambda artifact..."
-if ! docker cp lambda-artifact-extractor:/dist/tldr-api/bootstrap lambda/target/lambda/tldr-api/bootstrap; then
-    echo "❌ Failed to copy API Lambda artifact from container"
-    docker rm lambda-artifact-extractor
-    exit 1
-fi
-
+# Extract the Rust Worker Lambda artifact
 echo "Copying Worker Lambda artifact..."
 if ! docker cp lambda-artifact-extractor:/dist/tldr-worker/bootstrap lambda/target/lambda/tldr-worker/bootstrap; then
     echo "❌ Failed to copy Worker Lambda artifact from container"
@@ -66,16 +59,24 @@ if ! docker cp lambda-artifact-extractor:/dist/tldr-worker/bootstrap lambda/targ
     exit 1
 fi
 
-# Extract ZIP files directly from the container
-echo "Copying ZIP files from container..."
-if ! docker cp lambda-artifact-extractor:/tldr-api.zip lambda/target/lambda/tldr-api/function.zip; then
-    echo "❌ Failed to copy API Lambda ZIP from container"
+# Extract the Bolt TypeScript Lambda bundle
+echo "Copying Bolt Lambda bundle..."
+if ! docker cp lambda-artifact-extractor:/dist/tldr-bolt-api/. bolt-ts/bundle/; then
+    echo "❌ Failed to copy Bolt Lambda bundle from container"
     docker rm lambda-artifact-extractor
     exit 1
 fi
 
+# Extract ZIP files directly from the container
+echo "Copying ZIP files from container..."
 if ! docker cp lambda-artifact-extractor:/tldr-worker.zip lambda/target/lambda/tldr-worker/function.zip; then
     echo "❌ Failed to copy Worker Lambda ZIP from container"
+    docker rm lambda-artifact-extractor
+    exit 1
+fi
+
+if ! docker cp lambda-artifact-extractor:/tldr-bolt-api.zip bolt-ts/function.zip; then
+    echo "❌ Failed to copy Bolt Lambda ZIP from container"
     docker rm lambda-artifact-extractor
     exit 1
 fi
@@ -84,27 +85,31 @@ fi
 docker rm lambda-artifact-extractor
 
 # Verify artifacts were created successfully
-if [ -f "lambda/target/lambda/tldr-api/bootstrap" ] && [ -f "lambda/target/lambda/tldr-worker/bootstrap" ] && \
-   [ -f "lambda/target/lambda/tldr-api/function.zip" ] && [ -f "lambda/target/lambda/tldr-worker/function.zip" ]; then
+if [ -f "lambda/target/lambda/tldr-worker/bootstrap" ] && \
+   [ -f "lambda/target/lambda/tldr-worker/function.zip" ] && \
+   [ -f "bolt-ts/bundle/index.js" ] && \
+   [ -f "bolt-ts/function.zip" ]; then
     echo "✅ Lambda artifacts built successfully!"
 
-    # Verify linkage type
+    # Verify linkage type for Rust binary
     echo "🔍 Verifying binary linkage..."
-    echo "API Bootstrap Type:" 
-    file lambda/target/lambda/tldr-api/bootstrap
     echo "Worker Bootstrap Type:"
     file lambda/target/lambda/tldr-worker/bootstrap
 
-    echo "   - API Lambda: lambda/target/lambda/tldr-api/bootstrap"
-    echo "   - Worker Lambda: lambda/target/lambda/tldr-worker/bootstrap"
-    echo "   - API Lambda ZIP: lambda/target/lambda/tldr-api/function.zip"
+    echo ""
+    echo "Artifacts:"
+    echo "   - Worker Lambda (Rust): lambda/target/lambda/tldr-worker/bootstrap"
     echo "   - Worker Lambda ZIP: lambda/target/lambda/tldr-worker/function.zip"
-    
+    echo "   - Bolt API Lambda (TypeScript): bolt-ts/bundle/"
+    echo "   - Bolt API Lambda ZIP: bolt-ts/function.zip"
+
     # Display file sizes
-    echo "API Lambda size: $(du -h lambda/target/lambda/tldr-api/bootstrap | cut -f1)"
+    echo ""
+    echo "Sizes:"
     echo "Worker Lambda size: $(du -h lambda/target/lambda/tldr-worker/bootstrap | cut -f1)"
-    echo "API Lambda ZIP size: $(du -h lambda/target/lambda/tldr-api/function.zip | cut -f1)"
     echo "Worker Lambda ZIP size: $(du -h lambda/target/lambda/tldr-worker/function.zip | cut -f1)"
+    echo "Bolt API Lambda bundle size: $(du -sh bolt-ts/bundle | cut -f1)"
+    echo "Bolt API Lambda ZIP size: $(du -h bolt-ts/function.zip | cut -f1)"
 else
     echo "❌ Lambda artifacts build failed"
     exit 1

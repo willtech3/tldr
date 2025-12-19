@@ -23,24 +23,41 @@ check:
 test:
 	cd lambda && cargo test --all-features
 
+# --- Bolt TypeScript (bolt-ts/) ---
+
+bolt-install:
+	cd bolt-ts && npm ci
+
+bolt-build:
+	cd bolt-ts && npm run build
+
+bolt-bundle:
+	cd bolt-ts && npm run bundle
+
+bolt-lint:
+	cd bolt-ts && npm run lint
+
+bolt-test:
+	cd bolt-ts && npm test
+
 # --- CDK (TypeScript) ---
 
 cdk-build:
 	cd cdk && npm run --silent build
 
 # Aggregate: Code Quality (what CI runs on PRs)
-qa: fmt-check check clippy test cdk-build
+qa: fmt-check check clippy test bolt-build bolt-bundle bolt-test cdk-build
 	@echo "✅ All code quality checks passed"
 
 # Clean build artifacts and caches
 clean:
 	cd lambda && cargo clean
 	cd cdk && rm -rf node_modules dist cdk.out .tsbuildinfo
+	cd bolt-ts && rm -rf node_modules dist coverage
 	rm -rf lambda/target
 	rm -rf lambda/.cargo
 	rm -f lambda/Cargo.lock
 	find . -name "*.orig" -type f -delete
 	find . -name ".DS_Store" -type f -delete
 	@echo "🧹 Cleaned build artifacts and caches"
-
 
