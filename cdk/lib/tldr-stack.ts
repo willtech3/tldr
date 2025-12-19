@@ -75,22 +75,10 @@ export class TldrStack extends cdk.Stack {
       },
     });
 
-    // Require Slack OAuth credentials at synth-time to avoid deploying blanks
-    if (!process.env.SLACK_CLIENT_ID || !process.env.SLACK_CLIENT_SECRET) {
-      throw new Error(
-        'Missing SLACK_CLIENT_ID or SLACK_CLIENT_SECRET in environment for CDK deploy. Add them as GitHub Actions secrets or .env.'
-      );
-    }
-
     // Common environment variables for both functions (excluding API URL to avoid cycles)
     const commonEnvironment = {
       SLACK_BOT_TOKEN: props.slackBotToken,
       SLACK_SIGNING_SECRET: props.slackSigningSecret,
-      SLACK_CLIENT_ID: process.env.SLACK_CLIENT_ID!,
-      SLACK_CLIENT_SECRET: process.env.SLACK_CLIENT_SECRET!,
-      SLACK_REDIRECT_URL: process.env.SLACK_REDIRECT_URL || '',
-      USER_TOKEN_PARAM_PREFIX: process.env.USER_TOKEN_PARAM_PREFIX || '/tldr/user_tokens/',
-      USER_TOKEN_NOTIFY_PREFIX: process.env.USER_TOKEN_NOTIFY_PREFIX || '/tldr/user_token_notified/',
       OPENAI_API_KEY: props.openaiApiKey,
       OPENAI_ORG_ID: props.openaiOrgId,
       PROCESSING_QUEUE_URL: processingQueue.queueUrl,
@@ -142,51 +130,6 @@ export class TldrStack extends cdk.Stack {
     // Grant the API function permission to send messages to the queue
     processingQueue.grantSendMessages(tldrApiFunction);
 
-    // SSM Parameter Store permissions for user token storage
-    const userTokenParamArn = cdk.Arn.format(
-      {
-        service: 'ssm',
-        resource: 'parameter',
-        resourceName: 'tldr/user_tokens/*',
-      },
-      this,
-    );
-
-    // SSM Parameter Store permissions for notification tracking
-    const userNotifyParamArn = cdk.Arn.format(
-      {
-        service: 'ssm',
-        resource: 'parameter',
-        resourceName: 'tldr/user_token_notified/*',
-      },
-      this,
-    );
-
-    // API Lambda needs to write user tokens
-    tldrApiFunction.addToRolePolicy(
-      new iam.PolicyStatement({ actions: ['ssm:PutParameter'], resources: [userTokenParamArn] }),
-    );
-
-    // Worker Lambda needs to read user tokens and read/write notification flags
-    tldrWorkerFunction.addToRolePolicy(
-      new iam.PolicyStatement({ actions: ['ssm:GetParameter'], resources: [userTokenParamArn] }),
-    );
-    tldrWorkerFunction.addToRolePolicy(
-      new iam.PolicyStatement({
-        actions: ['ssm:GetParameter', 'ssm:PutParameter'],
-        resources: [userNotifyParamArn]
-      }),
-    );
-
-    // Allow decrypting SecureString parameters that SSM serves (scoped via ViaService)
-    tldrWorkerFunction.addToRolePolicy(
-      new iam.PolicyStatement({
-        actions: ['kms:Decrypt'],
-        resources: ['*'],
-        conditions: { StringEquals: { 'kms:ViaService': `ssm.${this.region}.amazonaws.com` } },
-      }),
-    );
-
     // Create a Lambda integration for the API Gateway
     const tldrIntegration = new apigateway.LambdaIntegration(tldrApiFunction);
 
@@ -204,12 +147,6 @@ export class TldrStack extends cdk.Stack {
     // Add a resource and method for Slack Events API (url_verification, event_callback)
     const events = slack.addResource('events');
     events.addMethod('POST', tldrIntegration);
-
-    // OAuth routes for user-token flow
-    const auth = api.root.addResource('auth');
-    const slackAuth = auth.addResource('slack');
-    slackAuth.addResource('start').addMethod('GET', tldrIntegration);
-    slackAuth.addResource('callback').addMethod('GET', tldrIntegration);
 
     // Output the API endpoint URL
     new cdk.CfnOutput(this, 'ApiUrl', {

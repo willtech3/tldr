@@ -54,13 +54,14 @@ pub fn format_summary_message(
 ) -> String {
     if visible {
         // Format parameters to show in the announcement message when visible
-        let mut parameter_text = format!("<@{user_id}> ran `/tldr` in <#{source_channel_id}>");
+        let mut parameter_text =
+            format!("<@{user_id}> requested a summary of <#{source_channel_id}>");
 
         // Add additional parameters if specified
         if !text.is_empty() {
             // Sanitize backticks to prevent breaking Slack's code formatting
             let sanitized_text = text.replace('`', "'");
-            parameter_text = format!("{parameter_text} with parameters: `{sanitized_text}`");
+            parameter_text = format!("{parameter_text} with: `{sanitized_text}`");
         }
 
         // Format with parameter text and summary

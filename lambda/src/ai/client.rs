@@ -200,7 +200,7 @@ impl LlmClient {
 
         if max_output_tokens < 500 {
             // Return friendly message when input is too large
-            return Ok("The conversation is too long to summarize in full. Please use the `/tldr last N` command to summarize the most recent N messages instead.".to_string());
+            return Ok("The conversation is too long to summarize in full. Please type `summarize last N` in the assistant thread to summarize the most recent N messages instead.".to_string());
         }
 
         // Build input messages for Responses API format via helper
@@ -279,7 +279,7 @@ impl LlmClient {
                 );
 
                 if max_output_tokens < 500 {
-                    return Ok("The conversation is too long to summarize in full. Please use the `/tldr last N` command to summarize the most recent N messages instead.".to_string());
+                    return Ok("The conversation is too long to summarize in full. Please type `summarize last N` in the assistant thread to summarize the most recent N messages instead.".to_string());
                 }
 
                 let input_messages = build_responses_input_from_prompt(&text_only_prompt);
@@ -579,7 +579,7 @@ mod tests {
         let res = client.generate_summary(prompt).await.unwrap();
         assert_eq!(
             res,
-            "The conversation is too long to summarize in full. Please use the `/tldr last N` command to summarize the most recent N messages instead.".to_string()
+            "The conversation is too long to summarize in full. Please type `summarize last N` in the assistant thread to summarize the most recent N messages instead.".to_string()
         );
     }
 }
