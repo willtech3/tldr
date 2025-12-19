@@ -64,8 +64,8 @@ export function buildHelpBlocks(): KnownBlock[] {
         type: 'mrkdwn',
         text:
           '*Tips:*\n' +
-          "• The bot will ask you to select a channel if you don't mention one\n" +
-          '• Summaries are sent as DMs by default\n' +
+          '• Mention a channel like `summarize #general` to specify which channel\n' +
+          '• Summaries appear in this assistant thread\n' +
           '• Add custom style prompts for creative summaries (poems, haikus, etc.)',
       },
     },
@@ -108,31 +108,3 @@ export function buildConfigurePickerBlocks(): KnownBlock[] {
   ];
 }
 
-/**
- * Build channel picker blocks for summarize flow.
- *
- * @param blockId - Unique block ID for the picker
- * @param promptText - Text to display above the picker
- */
-export function buildChannelPickerBlocks(blockId: string, promptText: string): KnownBlock[] {
-  return [
-    {
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: promptText,
-      },
-    },
-    {
-      type: 'actions',
-      block_id: blockId,
-      elements: [
-        {
-          type: 'conversations_select',
-          action_id: 'tldr_pick_conv',
-          default_to_current_conversation: true,
-        },
-      ],
-    },
-  ];
-}

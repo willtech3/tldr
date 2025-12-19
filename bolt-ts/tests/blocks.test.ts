@@ -2,7 +2,7 @@
  * Tests for Block Kit builders.
  */
 
-import { buildWelcomeBlocks, buildHelpBlocks, buildConfigurePickerBlocks, buildChannelPickerBlocks } from '../src/blocks';
+import { buildWelcomeBlocks, buildHelpBlocks, buildConfigurePickerBlocks } from '../src/blocks';
 
 describe('Block Kit builders', () => {
   describe('buildWelcomeBlocks', () => {
@@ -48,24 +48,6 @@ describe('Block Kit builders', () => {
       const actionsBlock = blocks.find((b) => b.type === 'actions');
       expect(actionsBlock).toBeDefined();
       expect(actionsBlock?.block_id).toBe('tldr_pick_config');
-    });
-  });
-
-  describe('buildChannelPickerBlocks', () => {
-    it('should use the provided block ID', () => {
-      const blocks = buildChannelPickerBlocks('test_block_id', 'Select a channel:');
-      const actionsBlock = blocks.find((b) => b.type === 'actions');
-      expect(actionsBlock?.block_id).toBe('test_block_id');
-    });
-
-    it('should use the provided prompt text', () => {
-      const promptText = 'Pick a channel to summarize:';
-      const blocks = buildChannelPickerBlocks('block_id', promptText);
-      const section = blocks.find((b) => b.type === 'section');
-
-      // Type assertion to access text property
-      const sectionBlock = section as { type: 'section'; text: { type: string; text: string } };
-      expect(sectionBlock.text.text).toBe(promptText);
     });
   });
 });

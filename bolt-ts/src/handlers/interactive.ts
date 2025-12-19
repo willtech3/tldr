@@ -1,7 +1,9 @@
 /**
  * Interactive component handlers.
  *
- * Handles block actions and view submissions from interactive components.
+ * Handles block actions from interactive components.
+ * Note: Message/global shortcuts are intentionally NOT supported per the
+ * AI App rewrite spec - AI App UX should use assistant threads exclusively.
  */
 
 import { App, BlockAction, ConversationsSelectAction } from '@slack/bolt';
@@ -101,58 +103,6 @@ export function registerInteractiveHandlers(app: App, config: AppConfig): void {
         thread_ts: threadTs,
         text: "Sorry, I couldn't generate a summary at this time. Please try again later.",
       });
-    }
-  });
-
-  // Handle message shortcut (summarize_thread)
-  app.shortcut('summarize_thread', async ({ shortcut, ack, client, logger }) => {
-    await ack();
-
-    // Message shortcuts have type 'message_action'
-    if (shortcut.type !== 'message_action') {
-      return;
-    }
-
-    const userId = shortcut.user.id;
-    const channelId = shortcut.channel.id;
-    const messageTs = shortcut.message.ts;
-    const threadTs = shortcut.message.thread_ts || messageTs;
-
-    // Build processing task for thread summarization
-    const task: ProcessingTask = {
-      correlation_id: uuidv4(),
-      user_id: userId,
-      channel_id: channelId,
-      thread_ts: threadTs,
-      origin_channel_id: null, // No assistant thread for shortcuts
-      response_url: null,
-      text: '',
-      message_count: null,
-      target_channel_id: null,
-      custom_prompt: null,
-      visible: false,
-      destination: 'DM', // Shortcuts deliver to DM
-      dest_dm: true,
-      dest_public_post: false,
-    };
-
-    try {
-      await sendToSqs(task, config.processingQueueUrl);
-      logger.info(`Enqueued thread summarize task ${task.correlation_id}`);
-    } catch (error) {
-      logger.error('Failed to enqueue shortcut task:', error);
-      // Send error via DM since there's no thread context
-      try {
-        const dmChannel = await client.conversations.open({ users: userId });
-        if (dmChannel.channel?.id) {
-          await client.chat.postMessage({
-            channel: dmChannel.channel.id,
-            text: "Sorry, I couldn't generate a summary at this time. Please try again later.",
-          });
-        }
-      } catch (dmError) {
-        logger.error('Failed to send error DM:', dmError);
-      }
     }
   });
 }

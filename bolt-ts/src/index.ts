@@ -10,13 +10,17 @@ import { AwsCallback, AwsEvent, AwsResponse } from '@slack/bolt/dist/receivers/A
 import { loadConfig, AppConfig } from './config';
 import { createApp } from './app';
 
-// Lazy-initialized app and receiver (reused across Lambda invocations)
+// Lazy-initialized receiver (reused across Lambda invocations)
 let receiver: AwsLambdaReceiver | null = null;
 let config: AppConfig | null = null;
 
 /**
  * Initialize the app and receiver on first invocation.
  * This is done lazily to allow environment variables to be set.
+ *
+ * IMPORTANT: The receiver must be passed to the App constructor so that
+ * events are properly routed to registered handlers. Do NOT call app.start()
+ * in Lambda mode - the receiver's toHandler() method handles everything.
  */
 function initialize(): AwsLambdaReceiver {
   if (receiver) {
@@ -25,19 +29,14 @@ function initialize(): AwsLambdaReceiver {
 
   config = loadConfig();
 
-  // Create the AWS Lambda receiver
+  // Create the AWS Lambda receiver first
   receiver = new AwsLambdaReceiver({
     signingSecret: config.slackSigningSecret,
   });
 
-  // Create and attach the app
-  const app = createApp(config);
-
-  // Start the app with the receiver
-  // Note: We don't await this - it returns the receiver's handler
-  app.start().catch((err) => {
-    console.error('Failed to start app:', err);
-  });
+  // Create the app with the receiver - this wires up event routing
+  // Note: We don't call app.start() in Lambda mode
+  createApp(config, receiver);
 
   return receiver;
 }

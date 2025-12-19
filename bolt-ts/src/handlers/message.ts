@@ -2,12 +2,15 @@
  * Message event handlers.
  *
  * Handles message events in assistant threads (message.im).
+ *
+ * Note: Channel pickers are intentionally NOT used per the AI App rewrite spec.
+ * Context tracking via assistant_thread_context_changed is implemented in PR 3.
  */
 
 import { App } from '@slack/bolt';
 import { v4 as uuidv4 } from 'uuid';
 import { parseUserIntent } from '../intent';
-import { buildHelpBlocks, buildConfigurePickerBlocks, buildChannelPickerBlocks } from '../blocks';
+import { buildHelpBlocks, buildConfigurePickerBlocks } from '../blocks';
 import { sendToSqs } from '../sqs';
 import { ProcessingTask } from '../types';
 import { AppConfig } from '../config';
@@ -75,20 +78,13 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
         }
 
         case 'summarize': {
-          // If no channel specified, show channel picker
+          // If no channel specified, inform the user
+          // Note: PR 3 will implement context tracking via assistant_thread_context_changed
           if (!intent.targetChannel) {
-            const blockId = intent.count !== null ? `tldr_pick_lastn_${intent.count}` : 'tldr_pick_recent';
-
-            const promptText =
-              intent.count !== null
-                ? `Select a channel to summarize the last ${intent.count} messages:`
-                : 'Select a channel to summarize recent messages:';
-
             await client.chat.postMessage({
               channel: channelId,
               thread_ts: threadTs,
-              text: 'Choose channel',
-              blocks: buildChannelPickerBlocks(blockId, promptText),
+              text: 'Please specify a channel to summarize, e.g., "summarize #general" or "summarize last 50 #random".',
             });
             return;
           }

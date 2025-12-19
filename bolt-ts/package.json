@@ -6,7 +6,7 @@
   "type": "commonjs",
   "scripts": {
     "build": "tsc",
-    "bundle": "esbuild src/index.ts --bundle --platform=node --target=node20 --outfile=bundle/index.js --external:@aws-sdk/*",
+    "bundle": "esbuild src/index.ts --bundle --platform=node --target=node20 --outfile=bundle/index.js",
     "watch": "tsc -w",
     "test": "jest",
     "lint": "eslint 'src/**/*.ts' 'tests/**/*.ts'",
