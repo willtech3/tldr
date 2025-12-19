@@ -2,7 +2,7 @@
  * Tests for Block Kit builders.
  */
 
-import { buildWelcomeBlocks, buildHelpBlocks, buildConfigurePickerBlocks } from '../src/blocks';
+import { buildWelcomeBlocks, buildHelpBlocks } from '../src/blocks';
 
 describe('Block Kit builders', () => {
   describe('buildWelcomeBlocks', () => {
@@ -40,14 +40,6 @@ describe('Block Kit builders', () => {
     });
   });
 
-  describe('buildConfigurePickerBlocks', () => {
-    it('should return blocks with a conversations_select element', () => {
-      const blocks = buildConfigurePickerBlocks();
-      expect(Array.isArray(blocks)).toBe(true);
-
-      const actionsBlock = blocks.find((b) => b.type === 'actions');
-      expect(actionsBlock).toBeDefined();
-      expect(actionsBlock?.block_id).toBe('tldr_pick_config');
-    });
-  });
+  // Note: No channel picker blocks in AI App V1. Context is tracked via
+  // `assistant_thread_context_changed` and stored in message metadata.
 });

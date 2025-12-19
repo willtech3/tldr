@@ -3,22 +3,32 @@
  *
  * Handles message events in assistant threads (message.im).
  *
- * Note: Channel pickers are intentionally NOT used per the AI App rewrite spec.
- * Context tracking via assistant_thread_context_changed is implemented in PR 3.
+ * Context tracking comes from `assistant_thread_context_changed` and is persisted
+ * into Slack message metadata for this assistant thread.
  */
 
 import { App } from '@slack/bolt';
 import { v4 as uuidv4 } from 'uuid';
 import { parseUserIntent } from '../intent';
-import { buildHelpBlocks, buildConfigurePickerBlocks } from '../blocks';
+import { buildHelpBlocks, buildWelcomeBlocks } from '../blocks';
 import { sendToSqs } from '../sqs';
 import { ProcessingTask } from '../types';
 import { AppConfig } from '../config';
+import type { ThreadContext } from '../types';
+import {
+  buildThreadStateMetadata,
+  findThreadStateMessage,
+  getCachedThreadState,
+  makeThreadKey,
+  setCachedThreadState,
+  type SlackWebApiClient,
+} from '../thread_state';
 
 // Basic message event type for our use case
 interface MessageEvent {
   type: string;
   channel: string;
+  channel_type?: string;
   user?: string;
   text?: string;
   ts: string;
@@ -39,6 +49,11 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
     // Type guard for generic message events
     const msg = event as MessageEvent;
 
+    // We only support AI App assistant threads (IM).
+    if (msg.channel_type && msg.channel_type !== 'im') {
+      return;
+    }
+
     // Ignore bot messages and edited/system messages to avoid loops
     if (msg.bot_id || msg.subtype) {
       return;
@@ -54,6 +69,32 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
     }
 
     const intent = parseUserIntent(text);
+    const threadKey = makeThreadKey(channelId, threadTs);
+
+    const getThreadState = async (): Promise<{
+      state: ThreadContext;
+      stateMessageTs: string | null;
+    }> => {
+      const cached = getCachedThreadState(threadKey);
+      if (cached) {
+        return { state: cached.state, stateMessageTs: cached.state_message_ts };
+      }
+
+      try {
+        const found = await findThreadStateMessage({
+          client: client as unknown as SlackWebApiClient,
+          assistantChannelId: channelId,
+          assistantThreadTs: threadTs,
+        });
+        if (found) {
+          return { state: found.state, stateMessageTs: found.state_message_ts };
+        }
+      } catch (error) {
+        logger.warn('Failed to load thread state from Slack:', error);
+      }
+
+      return { state: { viewingChannelId: null, customStyle: null }, stateMessageTs: null };
+    };
 
     try {
       switch (intent.type) {
@@ -67,24 +108,76 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
           break;
         }
 
-        case 'customize': {
+        case 'style': {
+          const { state, stateMessageTs } = await getThreadState();
+          const nextState: ThreadContext = {
+            viewingChannelId: state.viewingChannelId,
+            customStyle: intent.instructions,
+          };
+
+          if (stateMessageTs) {
+            void client.chat
+              .update({
+                channel: channelId,
+                ts: stateMessageTs,
+                text: 'Welcome to TLDR',
+                blocks: buildWelcomeBlocks(),
+                metadata: buildThreadStateMetadata(nextState),
+              })
+              .then(() => {
+                setCachedThreadState({ threadKey, stateMessageTs, state: nextState });
+              })
+              .catch((err) => logger.error('Failed to persist style to thread state:', err));
+          } else {
+            // If no state message exists (unexpected), persist state on a new message.
+            try {
+              const resp = await client.chat.postMessage({
+                channel: channelId,
+                thread_ts: threadTs,
+                text: 'Style updated for this assistant thread.',
+                metadata: buildThreadStateMetadata(nextState),
+              });
+              if (resp.ts) {
+                setCachedThreadState({ threadKey, stateMessageTs: resp.ts, state: nextState });
+              }
+            } catch (error) {
+              logger.error('Failed to create thread state message for style:', error);
+              await client.chat.postMessage({
+                channel: channelId,
+                thread_ts: threadTs,
+                text: "Sorry, I couldn't generate a summary at this time. Please try again later.",
+              });
+              return;
+            }
+          }
+
           await client.chat.postMessage({
             channel: channelId,
             thread_ts: threadTs,
-            text: 'Pick conversation',
-            blocks: buildConfigurePickerBlocks(),
+            text: 'Style saved for this assistant thread.',
           });
           break;
         }
 
         case 'summarize': {
-          // If no channel specified, inform the user
-          // Note: PR 3 will implement context tracking via assistant_thread_context_changed
-          if (!intent.targetChannel) {
+          // Set status immediately to reflect that we're working.
+          client.assistant.threads
+            .setStatus({
+              channel_id: channelId,
+              thread_ts: threadTs,
+              status: 'Summarizing...',
+            })
+            .catch((err) => logger.error('Failed to set status:', err));
+
+          const { state } = await getThreadState();
+          const targetChannelId = intent.targetChannel ?? state.viewingChannelId;
+
+          if (!targetChannelId) {
             await client.chat.postMessage({
               channel: channelId,
               thread_ts: threadTs,
-              text: 'Please specify a channel to summarize, e.g., "summarize #general" or "summarize last 50 #random".',
+              text:
+                "I don't know which channel you're viewing yet. Switch to a channel in Slack, then try `summarize` again — or mention one like `summarize <#C123|general>`.",
             });
             return;
           }
@@ -93,15 +186,16 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
           const task: ProcessingTask = {
             correlation_id: uuidv4(),
             user_id: userId,
-            channel_id: intent.targetChannel,
+            channel_id: targetChannelId,
             thread_ts: threadTs,
             origin_channel_id: channelId,
             response_url: null,
             text: text.toLowerCase(),
             message_count: intent.count,
             target_channel_id: null,
-            custom_prompt: null,
-            visible: intent.postHere,
+            custom_prompt: state.customStyle,
+            // AI App UX: always reply in-thread (never post publicly from the worker).
+            visible: false,
             destination: 'Thread',
             dest_dm: false,
             dest_public_post: false,
@@ -109,15 +203,6 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
 
           try {
             await sendToSqs(task, config.processingQueueUrl);
-
-            // Set status to show we're processing
-            client.assistant.threads
-              .setStatus({
-                channel_id: channelId,
-                thread_ts: threadTs,
-                status: 'Summarizing...',
-              })
-              .catch((err) => logger.error('Failed to set status:', err));
 
             logger.info(`Enqueued summarize task ${task.correlation_id}`);
           } catch (sqsError) {

@@ -20,9 +20,17 @@ export function parseUserIntent(text: string): UserIntent {
     return { type: 'help' };
   }
 
-  // Customize/configure intent
-  if (textLower.includes('customize') || textLower.includes('configure')) {
-    return { type: 'customize' };
+  // Style intent (thread-scoped; persisted via Slack message metadata)
+  // Examples:
+  // - "style: write as a haiku"
+  // - "style : extremely concise"
+  const styleMatch = text.match(/^\s*style\s*:\s*(.+?)\s*$/i);
+  if (styleMatch) {
+    const instructions = styleMatch[1]?.trim() ?? '';
+    if (instructions.length > 0) {
+      return { type: 'style', instructions };
+    }
+    return { type: 'help' };
   }
 
   // Parse summarize intent
