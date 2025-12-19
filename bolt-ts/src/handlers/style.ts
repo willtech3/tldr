@@ -19,9 +19,11 @@ import {
 } from '../blocks';
 import {
   buildThreadStateMetadata,
+  findThreadStateMessage,
   getCachedThreadState,
   makeThreadKey,
   setCachedThreadState,
+  type SlackWebApiClient,
 } from '../thread_state';
 import type { ThreadContext } from '../types';
 
@@ -63,9 +65,23 @@ export function registerStyleHandlers(app: App): void {
       return;
     }
 
-    // Get current style from cache
+    // Get current style from cache, falling back to Slack metadata on cache miss
     const threadKey = makeThreadKey(channelId, threadTs);
-    const cached = getCachedThreadState(threadKey);
+    let cached = getCachedThreadState(threadKey);
+
+    // On cache miss (cold start), load state from Slack metadata
+    if (!cached) {
+      try {
+        cached = await findThreadStateMessage({
+          client: client as unknown as SlackWebApiClient,
+          assistantChannelId: channelId,
+          assistantThreadTs: threadTs,
+        });
+      } catch (error) {
+        logger.warn('Failed to load thread state from Slack:', error);
+      }
+    }
+
     const currentStyle = cached?.state.customStyle ?? null;
 
     const privateMetadata: StyleModalPrivateMetadata = {
@@ -105,14 +121,27 @@ export function registerStyleHandlers(app: App): void {
 
     const threadKey = makeThreadKey(assistantChannelId, assistantThreadTs);
 
-    // Get existing state to preserve viewing channel
-    const cached = getCachedThreadState(threadKey);
+    // Get existing state from cache, falling back to Slack metadata on cache miss
+    let cached = getCachedThreadState(threadKey);
+    if (!cached) {
+      try {
+        cached = await findThreadStateMessage({
+          client: client as unknown as SlackWebApiClient,
+          assistantChannelId,
+          assistantThreadTs,
+        });
+      } catch (error) {
+        logger.warn('Failed to load thread state from Slack:', error);
+      }
+    }
+
+    // Preserve viewingChannelId from the loaded state
     const nextState: ThreadContext = {
       viewingChannelId: cached?.state.viewingChannelId ?? null,
       customStyle: newStyle,
     };
 
-    // Update the thread state message with new style
+    // Update the canonical thread state message (or create if truly missing)
     const stateMessageTs = cached?.state_message_ts;
     if (stateMessageTs) {
       try {

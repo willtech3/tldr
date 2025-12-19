@@ -197,6 +197,7 @@ export function buildStyleModal(
           type: 'plain_text_input',
           action_id: INPUT_ACTION_STYLE,
           multiline: true,
+          max_length: 800,
           placeholder: {
             type: 'plain_text',
             text: 'e.g., "Write as a haiku" or "Be extremely concise and funny"',

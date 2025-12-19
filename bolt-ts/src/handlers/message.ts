@@ -17,9 +17,11 @@ import { AppConfig } from '../config';
 import type { ThreadContext } from '../types';
 import {
   buildThreadStateMetadata,
+  findThreadStateMessage,
   getCachedThreadState,
   makeThreadKey,
   setCachedThreadState,
+  type SlackWebApiClient,
 } from '../thread_state';
 
 const WELCOME_TEXT = 'Welcome to TLDR';
@@ -100,7 +102,25 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
         }
 
         case 'style': {
-          const { state, stateMessageTs } = getThreadStateFromCache();
+          let { state, stateMessageTs } = getThreadStateFromCache();
+
+          // On cache miss, load state from Slack metadata to avoid creating duplicates
+          if (!stateMessageTs) {
+            try {
+              const loaded = await findThreadStateMessage({
+                client: client as unknown as SlackWebApiClient,
+                assistantChannelId: channelId,
+                assistantThreadTs: threadTs,
+              });
+              if (loaded) {
+                state = loaded.state;
+                stateMessageTs = loaded.state_message_ts;
+              }
+            } catch (error) {
+              logger.warn('Failed to load thread state from Slack:', error);
+            }
+          }
+
           const nextState: ThreadContext = {
             viewingChannelId: state.viewingChannelId,
             customStyle: intent.instructions,
@@ -120,7 +140,7 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
               })
               .catch((err) => logger.error('Failed to persist style to thread state:', err));
           } else {
-            // If no state message exists (unexpected), persist state on a new message.
+            // If no state message exists (truly missing), persist state on a new message.
             try {
               const resp = await client.chat.postMessage({
                 channel: channelId,
@@ -153,7 +173,25 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
         }
 
         case 'clear_style': {
-          const { state, stateMessageTs } = getThreadStateFromCache();
+          let { state, stateMessageTs } = getThreadStateFromCache();
+
+          // On cache miss, load state from Slack metadata to avoid creating duplicates
+          if (!stateMessageTs) {
+            try {
+              const loaded = await findThreadStateMessage({
+                client: client as unknown as SlackWebApiClient,
+                assistantChannelId: channelId,
+                assistantThreadTs: threadTs,
+              });
+              if (loaded) {
+                state = loaded.state;
+                stateMessageTs = loaded.state_message_ts;
+              }
+            } catch (error) {
+              logger.warn('Failed to load thread state from Slack:', error);
+            }
+          }
+
           const nextState: ThreadContext = {
             viewingChannelId: state.viewingChannelId,
             customStyle: null,
@@ -173,7 +211,7 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
               })
               .catch((err) => logger.error('Failed to clear style in thread state:', err));
           } else {
-            // If no state message exists, create one with cleared style
+            // If no state message exists (truly missing), create one with cleared style
             try {
               const resp = await client.chat.postMessage({
                 channel: channelId,

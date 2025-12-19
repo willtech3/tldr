@@ -29,12 +29,13 @@ interface AssistantThread {
 
 /**
  * Default suggested prompts shown when assistant thread starts.
+ * Note: "Set style" is handled via the button in the welcome message, not as a
+ * suggested prompt, to avoid sending a message the bot can't respond to.
  */
 const DEFAULT_PROMPTS: Array<{ title: string; message: string }> = [
   { title: 'Summarize', message: 'summarize' },
   { title: 'Summarize last 50', message: 'summarize last 50' },
   { title: 'Summarize last 100', message: 'summarize last 100' },
-  { title: 'Set style', message: 'Click the button above to set a custom style' },
   { title: 'Help', message: 'help' },
 ];
 
