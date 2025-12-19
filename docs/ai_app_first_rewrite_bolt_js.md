@@ -152,13 +152,13 @@ This section is intentionally written as a **checklist** so coding agents can ex
 
 ### PR 2 — Add Bolt TypeScript "AI App API Lambda" scaffold (minimal viable)
 
-- [ ] Add a new directory (recommend `bolt-ts/`) containing:
-  - [ ] Bolt app (`@slack/bolt`) in TypeScript
-  - [ ] AWS Lambda receiver wiring (Bolt AWS Lambda receiver)
-  - [ ] `tsconfig.json`, linting, minimal tests
-- [ ] Add a new Lambda function in `cdk/lib/tldr-stack.ts` for the Bolt handler
-- [ ] Keep the Rust worker Lambda as-is (for now).
-- [ ] **Delete the Rust API Lambda binary** now that CDK routes Slack traffic to Bolt TS
+- [x] Add a new directory (recommend `bolt-ts/`) containing:
+  - [x] Bolt app (`@slack/bolt`) in TypeScript
+  - [x] AWS Lambda receiver wiring (Bolt AWS Lambda receiver)
+  - [x] `tsconfig.json`, linting, minimal tests
+- [x] Add a new Lambda function in `cdk/lib/tldr-stack.ts` for the Bolt handler
+- [x] Keep the Rust worker Lambda as-is (for now).
+- [x] **Delete the Rust API Lambda binary** now that CDK routes Slack traffic to Bolt TS
 
 ### PR 3 — Implement AI App UX (context + prompts + status) end-to-end
 

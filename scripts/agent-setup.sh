@@ -51,7 +51,7 @@ if ! has_cmd cargo-lambda; then
   cargo install cargo-lambda || true
 fi
 
-# 4) Node & npm dependencies for CDK
+# 4) Node & npm dependencies for CDK and Bolt TypeScript
 if has_cmd node && has_cmd npm; then
   echo "[agent-setup] Node: $(node -v)  npm: $(npm -v)"
   if [ -d "cdk" ]; then
@@ -65,8 +65,18 @@ if has_cmd node && has_cmd npm; then
     npm run --silent build || true
     popd >/dev/null
   fi
+  if [ -d "bolt-ts" ]; then
+    pushd bolt-ts >/dev/null
+    echo "[agent-setup] Installing Bolt TypeScript dependencies"
+    if [ -f package-lock.json ]; then
+      npm ci --silent || npm install --silent
+    else
+      npm install --silent
+    fi
+    popd >/dev/null
+  fi
 else
-  echo "[agent-setup] Node/npm not found. Install Node 18+ to enable CDK builds."
+  echo "[agent-setup] Node/npm not found. Install Node 18+ to enable CDK and Bolt builds."
 fi
 
 # 5) Warm Rust caches

@@ -75,40 +75,40 @@ export class TldrStack extends cdk.Stack {
       },
     });
 
-    // Common environment variables for both functions (excluding API URL to avoid cycles)
-    const commonEnvironment = {
+    // Environment for the Bolt API Lambda
+    const boltApiEnvironment = {
+      SLACK_BOT_TOKEN: props.slackBotToken,
+      SLACK_SIGNING_SECRET: props.slackSigningSecret,
+      PROCESSING_QUEUE_URL: processingQueue.queueUrl,
+      NODE_OPTIONS: '--enable-source-maps',
+    } as const;
+
+    // Environment for the Worker Lambda
+    const workerEnvironment = {
       SLACK_BOT_TOKEN: props.slackBotToken,
       SLACK_SIGNING_SECRET: props.slackSigningSecret,
       OPENAI_API_KEY: props.openaiApiKey,
       OPENAI_ORG_ID: props.openaiOrgId,
       PROCESSING_QUEUE_URL: processingQueue.queueUrl,
-    } as const;
-
-    // Environment for the API Lambda (no API_BASE_URL reference)
-    const apiEnvironment = {
-      ...commonEnvironment,
-    };
-
-    // Environment for the Worker Lambda (safe to reference the API, worker is not integrated by API Gateway)
-    const workerEnvironment = {
-      ...commonEnvironment,
       // ensure no trailing slash to avoid double slashes when composing paths
       API_BASE_URL: api.url.replace(/\/$/, ''),
     };
 
-    // Create the Lambda function for immediate responses to Slack commands
-    const tldrApiFunction = new lambda.Function(this, 'TldrApiFunction', {
-      runtime: lambda.Runtime.PROVIDED_AL2,
-      handler: 'bootstrap', // Fixed handler name for Rust Lambdas
-      code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/target/lambda/tldr-api/function.zip')),
-      environment: apiEnvironment,
-      functionName: 'tldr-api',
-      timeout: cdk.Duration.seconds(10), // Short timeout for immediate responses
+    // Create the Bolt TypeScript Lambda for Slack API handling
+    // This replaces the Rust API Lambda with a TypeScript implementation using Bolt
+    // The bundle directory contains esbuild-bundled code with all dependencies
+    const tldrBoltApiFunction = new lambda.Function(this, 'TldrBoltApiFunction', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../bolt-ts/bundle')),
+      environment: boltApiEnvironment,
+      functionName: 'tldr-bolt-api',
+      timeout: cdk.Duration.seconds(10), // Short timeout for fast ACK (Slack requires < 3s)
       memorySize: 256,
-      logRetention: logs.RetentionDays.ONE_WEEK, // Add CloudWatch logs retention
+      logRetention: logs.RetentionDays.ONE_WEEK,
     });
 
-    // Create the worker Lambda function for background processing
+    // Create the worker Lambda function for background processing (Rust)
     const tldrWorkerFunction = new lambda.Function(this, 'TldrWorkerFunction', {
       runtime: lambda.Runtime.PROVIDED_AL2,
       handler: 'bootstrap', // Fixed handler name for Rust Lambdas
@@ -117,7 +117,7 @@ export class TldrStack extends cdk.Stack {
       functionName: 'tldr-worker',
       timeout: cdk.Duration.seconds(900), // Max timeout for long-running summaries
       memorySize: 1024, // More memory for processing
-      logRetention: logs.RetentionDays.ONE_WEEK, // Add CloudWatch logs retention
+      logRetention: logs.RetentionDays.ONE_WEEK,
     });
 
     // Add SQS as an event source for the worker Lambda
@@ -127,26 +127,22 @@ export class TldrStack extends cdk.Stack {
       })
     );
 
-    // Grant the API function permission to send messages to the queue
-    processingQueue.grantSendMessages(tldrApiFunction);
+    // Grant the Bolt API function permission to send messages to the queue
+    processingQueue.grantSendMessages(tldrBoltApiFunction);
 
     // Create a Lambda integration for the API Gateway
-    const tldrIntegration = new apigateway.LambdaIntegration(tldrApiFunction);
+    const boltIntegration = new apigateway.LambdaIntegration(tldrBoltApiFunction);
 
-    // Add a resource and method for Slack slash commands
-    const commands = api.root.addResource('commands');
-    commands.addMethod('POST', tldrIntegration);
-
-    // Slack surface resources
+    // Slack surface resources - all routes go to the Bolt TypeScript Lambda
     const slack = api.root.addResource('slack');
 
     // Add a resource and method for Slack interactive payloads (shortcuts, view_submission)
     const interactive = slack.addResource('interactive');
-    interactive.addMethod('POST', tldrIntegration);
+    interactive.addMethod('POST', boltIntegration);
 
     // Add a resource and method for Slack Events API (url_verification, event_callback)
     const events = slack.addResource('events');
-    events.addMethod('POST', tldrIntegration);
+    events.addMethod('POST', boltIntegration);
 
     // Output the API endpoint URL
     new cdk.CfnOutput(this, 'ApiUrl', {
