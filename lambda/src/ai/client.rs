@@ -2,13 +2,16 @@
 //!
 //! Encapsulates all LLM API interactions for generating summaries.
 
+use futures::StreamExt;
 use openai_api_rs::v1::chat_completion::{ChatCompletionMessage, Content, ImageUrl, MessageRole};
 use reqwest::Client;
 use serde_json::{Value, json};
+use std::pin::Pin;
 use std::time::Duration;
 use tracing::info;
 
 use super::prompt_builder::sanitize_custom_internal;
+use super::sse::{ParseResult, SseParser, StreamEvent};
 use crate::errors::SlackError;
 
 const MAX_CONTEXT_TOKENS: usize = 400_000;
@@ -454,7 +457,271 @@ impl LlmClient {
         // Conservative cap to avoid excessive image inputs and API errors
         6
     }
+
+    /// Generates a summary using streaming, yielding text deltas as they arrive.
+    ///
+    /// Returns a `StreamingResponse` that can be iterated to receive events.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or there are issues with token limits.
+    #[allow(clippy::too_many_lines)]
+    pub async fn generate_summary_stream(
+        &self,
+        prompt: Vec<ChatCompletionMessage>,
+    ) -> Result<StreamingResponse, SlackError> {
+        #[cfg(feature = "debug-logs")]
+        info!("Using ChatGPT streaming prompt:\n{:?}", prompt);
+
+        #[cfg(not(feature = "debug-logs"))]
+        info!(
+            "Generating streaming summary with {} messages in prompt",
+            prompt.len()
+        );
+
+        let estimated_input_tokens = prompt
+            .iter()
+            .map(|msg| estimate_tokens(&format!("{:?}", msg.content)))
+            .sum::<usize>();
+
+        info!(
+            "Estimated input tokens (streaming): {}",
+            estimated_input_tokens
+        );
+
+        // Use saturating math to avoid underflow when input exceeds context
+        let max_output_tokens = MAX_CONTEXT_TOKENS
+            .saturating_sub(estimated_input_tokens)
+            .saturating_sub(TOKEN_BUFFER)
+            .min(MAX_OUTPUT_TOKENS);
+
+        info!(
+            "Calculated max output tokens (streaming): {}",
+            max_output_tokens
+        );
+
+        if max_output_tokens < 500 {
+            // Return early response for too-large input
+            return Ok(StreamingResponse::TooLarge);
+        }
+
+        // Build input messages for Responses API format
+        let input_messages = build_responses_input_from_prompt(&prompt);
+
+        let request_body = json!({
+            "model": self.model_name,
+            "input": input_messages,
+            "max_output_tokens": max_output_tokens,
+            "stream": true
+        });
+
+        let client = Client::builder()
+            .timeout(Duration::from_secs(810))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        let auth_value = format!("Bearer {}", self.api_key)
+            .parse()
+            .map_err(|e| SlackError::HttpError(format!("Invalid Authorization header: {e}")))?;
+        headers.insert("Authorization", auth_value);
+
+        let content_type_value = "application/json"
+            .parse()
+            .map_err(|e| SlackError::HttpError(format!("Invalid Content-Type header: {e}")))?;
+        headers.insert("Content-Type", content_type_value);
+
+        // Accept SSE content type
+        let accept_value = "text/event-stream"
+            .parse()
+            .map_err(|e| SlackError::HttpError(format!("Invalid Accept header: {e}")))?;
+        headers.insert("Accept", accept_value);
+
+        if let Some(org) = &self.org_id {
+            let org_value = org.parse().map_err(|e| {
+                SlackError::HttpError(format!("Invalid OpenAI-Organization header: {e}"))
+            })?;
+            headers.insert("OpenAI-Organization", org_value);
+        }
+
+        let response = client
+            .post("https://api.openai.com/v1/responses")
+            .headers(headers)
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| SlackError::HttpError(format!("OpenAI streaming request failed: {e}")))?;
+
+        if !response.status().is_success() {
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(SlackError::OpenAIError(format!(
+                "OpenAI streaming API error: {error_text}"
+            )));
+        }
+
+        Ok(StreamingResponse::Active(ActiveStreamingResponse {
+            byte_stream: Box::pin(response.bytes_stream()),
+            parser: SseParser::new(),
+            completed: false,
+        }))
+    }
 }
+
+/// Response from `generate_summary_stream`.
+#[derive(Debug)]
+pub enum StreamingResponse {
+    /// The input was too large to process.
+    TooLarge,
+    /// Active streaming response.
+    Active(ActiveStreamingResponse),
+}
+
+impl StreamingResponse {
+    /// Returns `true` if the input was too large to process.
+    #[must_use]
+    pub const fn is_too_large(&self) -> bool {
+        matches!(self, Self::TooLarge)
+    }
+
+    /// Returns the too-large message for display to users.
+    #[must_use]
+    pub fn too_large_message() -> &'static str {
+        "The conversation is too long to summarize in full. Please type `summarize last N` in the assistant thread to summarize the most recent N messages instead."
+    }
+}
+
+/// Type alias for the boxed byte stream.
+type ByteStream = Pin<Box<dyn futures::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send>>;
+
+/// An active streaming response from `OpenAI`.
+pub struct ActiveStreamingResponse {
+    byte_stream: ByteStream,
+    parser: SseParser,
+    completed: bool,
+}
+
+impl std::fmt::Debug for ActiveStreamingResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ActiveStreamingResponse")
+            .field("completed", &self.completed)
+            .field("parser_buffer_len", &self.parser.remaining_buffer().len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl ActiveStreamingResponse {
+    /// Returns the next stream event.
+    ///
+    /// This method handles:
+    /// - Reading bytes from the HTTP response
+    /// - Parsing SSE frames
+    /// - Emitting strongly-typed events
+    ///
+    /// Returns `None` when the stream is complete.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if there's an HTTP or parsing issue.
+    pub async fn next_event(&mut self) -> Result<Option<StreamEvent>, SlackError> {
+        if self.completed {
+            return Ok(None);
+        }
+
+        loop {
+            // Try to get the next chunk from the byte stream
+            match self.byte_stream.next().await {
+                Some(Ok(bytes)) => {
+                    // Convert bytes to string
+                    let chunk = String::from_utf8_lossy(&bytes);
+
+                    // Feed to SSE parser
+                    let results = self.parser.feed(&chunk);
+
+                    // Process parse results
+                    for result in results {
+                        match result {
+                            ParseResult::Event(event) => {
+                                // Check if this is a terminal event
+                                if matches!(
+                                    event,
+                                    StreamEvent::Completed
+                                        | StreamEvent::Failed(_)
+                                        | StreamEvent::Error(_)
+                                ) {
+                                    self.completed = true;
+                                }
+                                return Ok(Some(event));
+                            }
+                            ParseResult::Done => {
+                                self.completed = true;
+                                return Ok(None);
+                            }
+                            ParseResult::UnknownEvent(_) | ParseResult::Incomplete => {
+                                // Continue processing
+                            }
+                        }
+                    }
+                }
+                Some(Err(e)) => {
+                    self.completed = true;
+                    return Err(SlackError::HttpError(format!(
+                        "Error reading streaming response: {e}"
+                    )));
+                }
+                None => {
+                    // Stream ended without explicit completion
+                    self.completed = true;
+                    return Ok(None);
+                }
+            }
+        }
+    }
+
+    /// Returns `true` if the stream has completed.
+    #[must_use]
+    pub const fn is_completed(&self) -> bool {
+        self.completed
+    }
+
+    /// Collects all remaining text deltas into a single string.
+    ///
+    /// This is a convenience method for cases where you want to consume
+    /// the entire stream at once.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the stream fails.
+    pub async fn collect_text(&mut self) -> Result<String, SlackError> {
+        let mut collected = String::new();
+
+        while let Some(event) = self.next_event().await? {
+            match event {
+                StreamEvent::TextDelta(delta) => {
+                    collected.push_str(&delta);
+                }
+                StreamEvent::Completed => {
+                    break;
+                }
+                StreamEvent::Failed(msg) => {
+                    return Err(SlackError::OpenAIError(format!(
+                        "OpenAI streaming failed: {msg}"
+                    )));
+                }
+                StreamEvent::Error(msg) => {
+                    return Err(SlackError::OpenAIError(format!(
+                        "OpenAI streaming error: {msg}"
+                    )));
+                }
+            }
+        }
+
+        Ok(collected)
+    }
+}
+
 /// Build Responses API input payload from a chat-style prompt.
 /// - Filters out assistant messages (Responses treats assistant content as output)
 /// - Emits typed parts: { type: "`input_text`", text } and { type: "`input_image`", `image_url` }
@@ -589,5 +856,27 @@ mod tests {
             res,
             "The conversation is too long to summarize in full. Please type `summarize last N` in the assistant thread to summarize the most recent N messages instead.".to_string()
         );
+    }
+
+    #[tokio::test]
+    async fn test_generate_summary_stream_fallback_on_large_input() {
+        // Create a very large user message to exceed token budget
+        let big_text = "a".repeat(1_600_000);
+        let client = LlmClient::new("test_key".to_string(), None, "gpt-5".to_string());
+        let prompt = client.build_prompt(&big_text, None);
+
+        // Should return TooLarge without performing a network call
+        let res = client.generate_summary_stream(prompt).await.unwrap();
+        assert!(res.is_too_large());
+        assert_eq!(
+            StreamingResponse::too_large_message(),
+            "The conversation is too long to summarize in full. Please type `summarize last N` in the assistant thread to summarize the most recent N messages instead."
+        );
+    }
+
+    #[test]
+    fn test_streaming_response_is_too_large() {
+        let too_large = StreamingResponse::TooLarge;
+        assert!(too_large.is_too_large());
     }
 }
