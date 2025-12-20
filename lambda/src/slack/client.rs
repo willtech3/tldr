@@ -46,6 +46,27 @@ struct PermalinkResponse {
     error: Option<String>,
 }
 
+/// Response from Slack streaming API methods (`chat.startStream`, `chat.appendStream`, `chat.stopStream`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct StreamResponse {
+    /// Whether the API call succeeded.
+    pub ok: bool,
+    /// Channel ID where the streaming message exists.
+    pub channel: Option<String>,
+    /// Timestamp of the streaming message.
+    pub ts: Option<String>,
+    /// Error code if `ok` is false.
+    pub error: Option<String>,
+}
+
+/// Error indicating the streaming message is no longer in a streaming state.
+/// This is a special case that callers may want to handle differently (e.g., stop appending).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MessageNotInStreamingState;
+
+/// Maximum character limit for `markdown_text` in streaming API calls.
+pub const STREAM_MARKDOWN_TEXT_LIMIT: usize = 12_000;
+
 /// Slack API client with retry logic and error handling
 pub struct SlackClient {
     token: SlackApiToken,
@@ -694,5 +715,453 @@ impl SlackClient {
         };
 
         Ok(permalink)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Streaming API methods (chat.startStream, chat.appendStream, chat.stopStream)
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// Start a streaming message in a thread.
+    ///
+    /// Wraps Slack's `chat.startStream` API. The streaming message is always a reply
+    /// to the specified `thread_ts`.
+    ///
+    /// # Arguments
+    ///
+    /// * `channel` - Channel ID (the assistant DM channel, e.g., `D...`).
+    /// * `thread_ts` - Parent thread timestamp to reply to.
+    /// * `markdown_text` - Optional initial markdown text (max 12,000 chars).
+    ///
+    /// # Returns
+    ///
+    /// The streaming message timestamp (`ts`) on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails, Slack returns `ok: false`,
+    /// or rate limiting cannot be resolved.
+    pub async fn start_stream(
+        &self,
+        channel: &str,
+        thread_ts: &str,
+        markdown_text: Option<&str>,
+    ) -> Result<String, SlackError> {
+        let mut payload = json!({
+            "channel": channel,
+            "thread_ts": thread_ts,
+        });
+
+        if let Some(text) = markdown_text {
+            payload["markdown_text"] = Value::String(text.to_string());
+        }
+
+        let resp = self
+            .call_slack_streaming_api("https://slack.com/api/chat.startStream", &payload)
+            .await?;
+
+        resp.ts
+            .ok_or_else(|| SlackError::ApiError("chat.startStream: no ts in response".to_string()))
+    }
+
+    /// Append markdown text to an existing streaming message.
+    ///
+    /// Wraps Slack's `chat.appendStream` API.
+    ///
+    /// # Arguments
+    ///
+    /// * `channel` - Channel ID where the streaming message exists.
+    /// * `ts` - Timestamp of the streaming message (from `start_stream`).
+    /// * `markdown_text` - Markdown text to append (max 12,000 chars, required).
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(Ok(()))` on success.
+    /// - `Ok(Err(MessageNotInStreamingState))` if the message is no longer streaming.
+    /// - `Err(SlackError)` on other failures.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails, Slack returns an error other than
+    /// `message_not_in_streaming_state`, or rate limiting cannot be resolved.
+    pub async fn append_stream(
+        &self,
+        channel: &str,
+        ts: &str,
+        markdown_text: &str,
+    ) -> Result<Result<(), MessageNotInStreamingState>, SlackError> {
+        let payload = json!({
+            "channel": channel,
+            "ts": ts,
+            "markdown_text": markdown_text,
+        });
+
+        match self
+            .call_slack_streaming_api("https://slack.com/api/chat.appendStream", &payload)
+            .await
+        {
+            Ok(_) => Ok(Ok(())),
+            Err(SlackError::ApiError(ref msg))
+                if msg.contains("message_not_in_streaming_state") =>
+            {
+                Ok(Err(MessageNotInStreamingState))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Stop a streaming message, optionally appending final text, blocks, and metadata.
+    ///
+    /// Wraps Slack's `chat.stopStream` API.
+    ///
+    /// # Arguments
+    ///
+    /// * `channel` - Channel ID where the streaming message exists.
+    /// * `ts` - Timestamp of the streaming message (from `start_stream`).
+    /// * `markdown_text` - Optional final markdown text to append (max 12,000 chars).
+    /// * `blocks` - Optional Block Kit blocks to attach at the bottom of the message.
+    /// * `metadata` - Optional message metadata (e.g., for deduplication).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails, Slack returns `ok: false`,
+    /// or rate limiting cannot be resolved.
+    pub async fn stop_stream(
+        &self,
+        channel: &str,
+        ts: &str,
+        markdown_text: Option<&str>,
+        blocks: Option<&Value>,
+        metadata: Option<&Value>,
+    ) -> Result<(), SlackError> {
+        let mut payload = json!({
+            "channel": channel,
+            "ts": ts,
+        });
+
+        if let Some(text) = markdown_text {
+            payload["markdown_text"] = Value::String(text.to_string());
+        }
+
+        if let Some(b) = blocks {
+            payload["blocks"] = b.clone();
+        }
+
+        if let Some(m) = metadata {
+            payload["metadata"] = m.clone();
+        }
+
+        self.call_slack_streaming_api("https://slack.com/api/chat.stopStream", &payload)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Internal helper for calling Slack streaming APIs with rate limit handling.
+    ///
+    /// Handles:
+    /// - Bearer token authentication
+    /// - JSON request body
+    /// - HTTP 429 rate limiting with `Retry-After` header
+    /// - Response parsing and error surfacing
+    async fn call_slack_streaming_api(
+        &self,
+        url: &str,
+        payload: &Value,
+    ) -> Result<StreamResponse, SlackError> {
+        const MAX_RETRIES: u32 = 5;
+        let mut attempts = 0;
+
+        loop {
+            attempts += 1;
+
+            let resp = HTTP_CLIENT
+                .post(url)
+                .bearer_auth(&self.token.token_value.0)
+                .json(payload)
+                .send()
+                .await
+                .map_err(|e| SlackError::HttpError(format!("Streaming API request failed: {e}")))?;
+
+            // Handle HTTP 429 rate limiting
+            if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                if attempts >= MAX_RETRIES {
+                    return Err(SlackError::ApiError(format!(
+                        "Rate limited after {MAX_RETRIES} retries"
+                    )));
+                }
+
+                let retry_after = Self::parse_retry_after(&resp);
+                warn!(
+                    "Slack rate limited (429), waiting {}s before retry (attempt {}/{})",
+                    retry_after.as_secs(),
+                    attempts,
+                    MAX_RETRIES
+                );
+                tokio::time::sleep(retry_after).await;
+                continue;
+            }
+
+            // Check for other HTTP errors
+            if !resp.status().is_success() {
+                return Err(SlackError::ApiError(format!(
+                    "Streaming API HTTP error: {}",
+                    resp.status()
+                )));
+            }
+
+            // Parse response body
+            let stream_resp: StreamResponse = resp.json().await.map_err(|e| {
+                SlackError::GeneralError(format!("Streaming API JSON parse error: {e}"))
+            })?;
+
+            // Check Slack's ok field
+            if !stream_resp.ok {
+                let error_code = stream_resp.error.as_deref().unwrap_or("unknown");
+
+                // Handle rate_limited/ratelimited errors from response body
+                if error_code == "rate_limited" || error_code == "ratelimited" {
+                    if attempts >= MAX_RETRIES {
+                        return Err(SlackError::ApiError(format!(
+                            "Rate limited (response body) after {MAX_RETRIES} retries"
+                        )));
+                    }
+                    warn!(
+                        "Slack rate limited (response), waiting 1s before retry (attempt {}/{})",
+                        attempts, MAX_RETRIES
+                    );
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+
+                return Err(SlackError::ApiError(format!(
+                    "Streaming API error: {error_code}"
+                )));
+            }
+
+            return Ok(stream_resp);
+        }
+    }
+
+    /// Parse the `Retry-After` header from an HTTP 429 response.
+    ///
+    /// Falls back to a default of 1 second if the header is missing or invalid.
+    fn parse_retry_after(resp: &reqwest::Response) -> Duration {
+        resp.headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+            .map_or(Duration::from_secs(1), Duration::from_secs)
+    }
+}
+
+#[cfg(test)]
+mod streaming_tests {
+    use super::*;
+    use serde_json::json;
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // StreamResponse parsing tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_stream_response_success_parsing() {
+        let json_str = r#"{"ok": true, "channel": "C123ABC456", "ts": "1503435956.000247"}"#;
+        let resp: StreamResponse = serde_json::from_str(json_str).unwrap();
+
+        assert!(resp.ok);
+        assert_eq!(resp.channel, Some("C123ABC456".to_string()));
+        assert_eq!(resp.ts, Some("1503435956.000247".to_string()));
+        assert!(resp.error.is_none());
+    }
+
+    #[test]
+    fn test_stream_response_error_parsing() {
+        let json_str = r#"{"ok": false, "error": "invalid_auth"}"#;
+        let resp: StreamResponse = serde_json::from_str(json_str).unwrap();
+
+        assert!(!resp.ok);
+        assert!(resp.channel.is_none());
+        assert!(resp.ts.is_none());
+        assert_eq!(resp.error, Some("invalid_auth".to_string()));
+    }
+
+    #[test]
+    fn test_stream_response_message_not_in_streaming_state() {
+        let json_str = r#"{"ok": false, "error": "message_not_in_streaming_state"}"#;
+        let resp: StreamResponse = serde_json::from_str(json_str).unwrap();
+
+        assert!(!resp.ok);
+        assert_eq!(
+            resp.error,
+            Some("message_not_in_streaming_state".to_string())
+        );
+    }
+
+    #[test]
+    fn test_stream_response_rate_limited() {
+        let json_str = r#"{"ok": false, "error": "ratelimited"}"#;
+        let resp: StreamResponse = serde_json::from_str(json_str).unwrap();
+
+        assert!(!resp.ok);
+        assert_eq!(resp.error, Some("ratelimited".to_string()));
+    }
+
+    #[test]
+    fn test_stream_response_partial_fields() {
+        // Response with only ok and ts (channel missing)
+        let json_str = r#"{"ok": true, "ts": "1234567890.123456"}"#;
+        let resp: StreamResponse = serde_json::from_str(json_str).unwrap();
+
+        assert!(resp.ok);
+        assert!(resp.channel.is_none());
+        assert_eq!(resp.ts, Some("1234567890.123456".to_string()));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Request payload construction tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_start_stream_payload_minimal() {
+        let channel = "D1234567890";
+        let thread_ts = "1721609600.000000";
+
+        let payload = json!({
+            "channel": channel,
+            "thread_ts": thread_ts,
+        });
+
+        assert_eq!(payload["channel"], "D1234567890");
+        assert_eq!(payload["thread_ts"], "1721609600.000000");
+        assert!(payload.get("markdown_text").is_none());
+    }
+
+    #[test]
+    fn test_start_stream_payload_with_markdown() {
+        let channel = "D1234567890";
+        let thread_ts = "1721609600.000000";
+        let markdown_text = "**Hello** world";
+
+        let mut payload = json!({
+            "channel": channel,
+            "thread_ts": thread_ts,
+        });
+        payload["markdown_text"] = Value::String(markdown_text.to_string());
+
+        assert_eq!(payload["channel"], "D1234567890");
+        assert_eq!(payload["thread_ts"], "1721609600.000000");
+        assert_eq!(payload["markdown_text"], "**Hello** world");
+    }
+
+    #[test]
+    fn test_append_stream_payload() {
+        let channel = "C123ABC456";
+        let ts = "1503435956.000247";
+        let markdown_text = "More text to append";
+
+        let payload = json!({
+            "channel": channel,
+            "ts": ts,
+            "markdown_text": markdown_text,
+        });
+
+        assert_eq!(payload["channel"], "C123ABC456");
+        assert_eq!(payload["ts"], "1503435956.000247");
+        assert_eq!(payload["markdown_text"], "More text to append");
+    }
+
+    #[test]
+    fn test_stop_stream_payload_minimal() {
+        let channel = "C123ABC456";
+        let ts = "1503435956.000247";
+
+        let payload = json!({
+            "channel": channel,
+            "ts": ts,
+        });
+
+        assert_eq!(payload["channel"], "C123ABC456");
+        assert_eq!(payload["ts"], "1503435956.000247");
+        assert!(payload.get("markdown_text").is_none());
+        assert!(payload.get("blocks").is_none());
+        assert!(payload.get("metadata").is_none());
+    }
+
+    #[test]
+    fn test_stop_stream_payload_with_blocks_and_metadata() {
+        let channel = "C123ABC456";
+        let ts = "1503435956.000247";
+        let markdown_text = "Final text";
+        let blocks = json!([{
+            "type": "context_actions",
+            "elements": [{
+                "type": "feedback_buttons",
+                "action_id": "tldr_feedback",
+                "positive_button": {
+                    "text": { "type": "plain_text", "text": "Good Response" },
+                    "value": "{\"rating\":\"good\"}"
+                },
+                "negative_button": {
+                    "text": { "type": "plain_text", "text": "Bad Response" },
+                    "value": "{\"rating\":\"bad\"}"
+                }
+            }]
+        }]);
+        let metadata = json!({
+            "event_type": "tldr_summary",
+            "event_payload": {
+                "v": 1,
+                "correlation_id": "abc123",
+                "streamed": true
+            }
+        });
+
+        let mut payload = json!({
+            "channel": channel,
+            "ts": ts,
+        });
+        payload["markdown_text"] = Value::String(markdown_text.to_string());
+        payload["blocks"] = blocks.clone();
+        payload["metadata"] = metadata.clone();
+
+        assert_eq!(payload["channel"], "C123ABC456");
+        assert_eq!(payload["ts"], "1503435956.000247");
+        assert_eq!(payload["markdown_text"], "Final text");
+        assert_eq!(payload["blocks"][0]["type"], "context_actions");
+        assert_eq!(payload["metadata"]["event_type"], "tldr_summary");
+        assert_eq!(payload["metadata"]["event_payload"]["v"], 1);
+        assert!(
+            payload["metadata"]["event_payload"]["streamed"]
+                .as_bool()
+                .unwrap()
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Constants tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_stream_markdown_text_limit() {
+        // Verify the constant matches Slack's documented 12,000 char limit
+        assert_eq!(STREAM_MARKDOWN_TEXT_LIMIT, 12_000);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // MessageNotInStreamingState tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_message_not_in_streaming_state_equality() {
+        let a = MessageNotInStreamingState;
+        let b = MessageNotInStreamingState;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_message_not_in_streaming_state_debug() {
+        let err = MessageNotInStreamingState;
+        let debug_str = format!("{err:?}");
+        assert!(debug_str.contains("MessageNotInStreamingState"));
     }
 }

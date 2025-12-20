@@ -370,10 +370,10 @@ Each section below is written as an **execution checklist**. Each PR should keep
 
 ### PR 2 — Rust: Slack streaming API wrapper (`chat.*Stream`)
 
-- ☐ Add `SlackClient::start_stream`, `SlackClient::append_stream`, and `SlackClient::stop_stream` (recommended location: `lambda/src/slack/client.rs`).
-- ☐ Implement strict response parsing: treat `ok: false` as error, surface `error` string.
-- ☐ Handle HTTP 429 by respecting `Retry-After` (sleep + retry) while buffering pending text.
-- ☐ Add unit tests for request payload construction and response parsing (no network).
+- ✅ Add `SlackClient::start_stream`, `SlackClient::append_stream`, and `SlackClient::stop_stream` (recommended location: `lambda/src/slack/client.rs`).
+- ✅ Implement strict response parsing: treat `ok: false` as error, surface `error` string.
+- ✅ Handle HTTP 429 by respecting `Retry-After` (sleep + retry) while buffering pending text.
+- ✅ Add unit tests for request payload construction and response parsing (no network).
 
 ### PR 3 — Rust: OpenAI Responses streaming (SSE)
 
