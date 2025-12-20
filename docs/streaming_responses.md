@@ -377,13 +377,13 @@ Each section below is written as an **execution checklist**. Each PR should keep
 
 ### PR 3 — Rust: OpenAI Responses streaming (SSE)
 
-- ☐ Add a streaming method in `lambda/src/ai/client.rs` that calls `/v1/responses` with `stream: true`.
-- ☐ Implement an SSE parser that can handle:
+- ✅ Add a streaming method in `lambda/src/ai/client.rs` that calls `/v1/responses` with `stream: true`.
+- ✅ Implement an SSE parser that can handle:
   - frames split across TCP chunks
   - multiple frames in one read
   - unknown event types
-- ☐ Emit deltas for `response.output_text.delta` by extracting the `delta` string.
-- ☐ Add unit tests for the parser using recorded SSE fixtures.
+- ✅ Emit deltas for `response.output_text.delta` by extracting the `delta` string.
+- ✅ Add unit tests for the parser using recorded SSE fixtures.
 
 ### PR 4 — Rust worker: end-to-end streaming delivery (thread destination only)
 

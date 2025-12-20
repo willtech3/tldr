@@ -21,7 +21,8 @@ aws-sdk-sqs = "1.81.0"
 aws-sdk-ssm = "1.81.0"
 slack-morphism = { version = "2.14.0", features = ["hyper"] }
 html2text = "0.15.3"
-reqwest = { version = "0.12.23", features = ["json"] }
+reqwest = { version = "0.12.23", features = ["json", "stream"] }
+bytes = "1"
 thiserror = "2.0.15"
 
 # Keep these as-is (already up-to-date or compatible)
