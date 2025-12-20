@@ -36,6 +36,9 @@
 ///         openai_api_key: "dummy_openai_key".to_string(),
 ///         openai_org_id: None,
 ///         openai_model: None,
+///         enable_streaming: false,
+///         stream_max_chunk_chars: 4000,
+///         stream_min_append_interval_ms: 1000,
 ///     };
 ///
 ///     // Initialize the Slack bot

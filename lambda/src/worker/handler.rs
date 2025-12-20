@@ -5,8 +5,9 @@ use serde_json::Value;
 use tracing::{error, info};
 
 use super::summarize::SummarizeResult;
-use super::{deliver, summarize};
+use super::{deliver, streaming, summarize};
 use crate::core::config::AppConfig;
+use crate::core::models::Destination;
 use crate::core::models::ProcessingTask;
 use crate::slack::SlackBot;
 
@@ -48,6 +49,22 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
         .map_err(|e| Error::from(format!("Failed to initialize bot: {e}")))?;
     let http_client = HttpClient::new();
 
+    // Stream end-to-end into assistant threads when enabled. This path is thread-only.
+    if config.enable_streaming
+        && matches!(task.destination, Destination::Thread)
+        && task.thread_ts.is_some()
+    {
+        if let Err(e) =
+            streaming::stream_summary_to_assistant_thread(&mut slack_bot, &config, &task).await
+        {
+            error!(
+                "Streaming delivery failed (corr_id={}): {}",
+                task.correlation_id, e
+            );
+        }
+        return Ok(());
+    }
+
     match summarize::summarize_task(&mut slack_bot, &config, &task).await {
         Ok(SummarizeResult::Summary { text }) => {
             deliver::deliver_summary(&slack_bot, &http_client, &task, &task.channel_id, &text)
@@ -65,7 +82,7 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
                 "Sorry, I couldn't generate a summary at this time. Please try again later.";
 
             // Primary: deliver error to assistant thread if destination is Thread
-            if matches!(task.destination, crate::core::models::Destination::Thread) {
+            if matches!(task.destination, Destination::Thread) {
                 if let Some(thread_ts) = &task.thread_ts {
                     let reply_channel = task
                         .origin_channel_id
