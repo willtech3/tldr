@@ -8,4 +8,6 @@ pub mod response_builder;
 
 // Re-export main types for convenience
 pub use bot::SlackBot;
-pub use client::SlackClient;
+pub use client::{
+    MessageNotInStreamingState, STREAM_MARKDOWN_TEXT_LIMIT, SlackClient, StreamResponse,
+};
