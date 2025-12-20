@@ -76,7 +76,7 @@ const ERROR_MESSAGE_NOT_IN_STREAMING_STATE: &str = "message_not_in_streaming_sta
 
 /// Build the JSON payload for `chat.startStream`.
 #[must_use]
-pub fn build_start_stream_payload(
+fn build_start_stream_payload(
     channel: &str,
     thread_ts: &str,
     markdown_text: Option<&str>,
@@ -95,7 +95,7 @@ pub fn build_start_stream_payload(
 
 /// Build the JSON payload for `chat.appendStream`.
 #[must_use]
-pub fn build_append_stream_payload(channel: &str, ts: &str, markdown_text: &str) -> Value {
+fn build_append_stream_payload(channel: &str, ts: &str, markdown_text: &str) -> Value {
     json!({
         "channel": channel,
         "ts": ts,
@@ -105,7 +105,7 @@ pub fn build_append_stream_payload(channel: &str, ts: &str, markdown_text: &str)
 
 /// Build the JSON payload for `chat.stopStream`.
 #[must_use]
-pub fn build_stop_stream_payload(
+fn build_stop_stream_payload(
     channel: &str,
     ts: &str,
     markdown_text: Option<&str>,
@@ -1163,19 +1163,6 @@ mod streaming_tests {
         assert_eq!(payload["markdown_text"], "Final text only");
         assert!(payload.get("blocks").is_none());
         assert!(payload.get("metadata").is_none());
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    // Error constant tests
-    // ─────────────────────────────────────────────────────────────────────────────
-
-    #[test]
-    fn test_error_constant_matches_slack_error() {
-        // Ensure the constant matches what Slack actually returns
-        assert_eq!(
-            ERROR_MESSAGE_NOT_IN_STREAMING_STATE,
-            "message_not_in_streaming_state"
-        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
