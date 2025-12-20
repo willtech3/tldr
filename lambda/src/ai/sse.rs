@@ -7,7 +7,6 @@
 //!
 //! It emits strongly-typed events for `OpenAI`'s Responses API streaming format.
 
-use serde::Deserialize;
 use serde_json::Value;
 use tracing::warn;
 
@@ -57,6 +56,7 @@ impl SseParser {
     /// - Partial frames (buffered for next chunk)
     /// - Multiple frames in one chunk
     /// - Empty lines between events
+    #[must_use]
     pub fn feed(&mut self, chunk: &str) -> Vec<ParseResult> {
         self.buffer.push_str(chunk);
         let mut results = Vec::new();
@@ -139,7 +139,9 @@ impl SseParser {
                     data_preview = %preview,
                     "Failed to parse OpenAI SSE JSON payload"
                 );
-                return None;
+                return Some(ParseResult::Event(StreamEvent::Error(format!(
+                    "Failed to parse OpenAI SSE JSON payload: {e}"
+                ))));
             }
         };
 
@@ -147,7 +149,24 @@ impl SseParser {
 
         match event_type {
             "response.output_text.delta" => {
-                let delta = json.get("delta").and_then(Value::as_str).unwrap_or("");
+                let delta_val = json.get("delta");
+                let delta_opt = delta_val.and_then(Value::as_str);
+                if delta_opt.is_none() {
+                    let delta_type = match delta_val {
+                        None => "missing",
+                        Some(Value::Null) => "null",
+                        Some(Value::Bool(_)) => "bool",
+                        Some(Value::Number(_)) => "number",
+                        Some(Value::String(_)) => "string",
+                        Some(Value::Array(_)) => "array",
+                        Some(Value::Object(_)) => "object",
+                    };
+                    warn!(
+                        delta_type = delta_type,
+                        "OpenAI SSE delta event missing/invalid delta field"
+                    );
+                }
+                let delta = delta_opt.unwrap_or("");
                 Some(ParseResult::Event(StreamEvent::TextDelta(
                     delta.to_string(),
                 )))
@@ -209,15 +228,6 @@ fn extract_error_message(json: &Value) -> String {
     }
 
     "Unknown error".to_string()
-}
-
-/// Struct for deserializing text delta events (for reference/documentation).
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct TextDeltaEvent {
-    #[serde(rename = "type")]
-    event_type: String,
-    delta: String,
 }
 
 #[cfg(test)]
@@ -455,7 +465,8 @@ mod tests {
         let mut parser = SseParser::new();
 
         // Feed partial data
-        parser.feed("data: {\"type\":\"partial");
+        let results = parser.feed("data: {\"type\":\"partial");
+        assert!(results.is_empty());
 
         assert!(!parser.remaining_buffer().is_empty());
         assert!(parser.remaining_buffer().contains("partial"));
@@ -465,7 +476,8 @@ mod tests {
     fn test_clear_buffer() {
         let mut parser = SseParser::new();
 
-        parser.feed("data: {\"type\":\"partial");
+        let results = parser.feed("data: {\"type\":\"partial");
+        assert!(results.is_empty());
         assert!(!parser.remaining_buffer().is_empty());
 
         parser.clear();

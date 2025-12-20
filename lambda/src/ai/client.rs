@@ -6,7 +6,7 @@ use futures::StreamExt;
 use openai_api_rs::v1::chat_completion::{ChatCompletionMessage, Content, ImageUrl, MessageRole};
 use reqwest::Client;
 use serde_json::{Value, json};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::pin::Pin;
 use std::time::Duration;
 use tracing::{debug, info, warn};
@@ -22,6 +22,16 @@ const INLINE_IMAGE_MAX_BYTES: usize = 64 * 1024;
 const URL_IMAGE_MAX_BYTES: usize = 20 * 1024 * 1024;
 
 const ALLOWED_IMAGE_MIME: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
+
+const EXPECTED_IGNORED_SSE_EVENT_TYPES: &[&str] = &[
+    "response.created",
+    "response.in_progress",
+    "response.output_item.added",
+    "response.content_part.added",
+    "response.output_text.done",
+    "response.content_part.done",
+    "response.output_item.done",
+];
 
 #[must_use]
 pub fn canonicalize_mime(mime: &str) -> String {
@@ -581,6 +591,7 @@ impl LlmClient {
             parser: SseParser::new(),
             pending_results: VecDeque::new(),
             utf8_buffer: Vec::new(),
+            unexpected_event_types: HashSet::new(),
             saw_completed_event: false,
             completed: false,
         }))
@@ -619,6 +630,7 @@ pub struct ActiveStreamingResponse {
     parser: SseParser,
     pending_results: VecDeque<ParseResult>,
     utf8_buffer: Vec<u8>,
+    unexpected_event_types: HashSet<String>,
     saw_completed_event: bool,
     completed: bool,
 }
@@ -630,6 +642,10 @@ impl std::fmt::Debug for ActiveStreamingResponse {
             .field("saw_completed_event", &self.saw_completed_event)
             .field("pending_results_len", &self.pending_results.len())
             .field("utf8_buffer_len", &self.utf8_buffer.len())
+            .field(
+                "unexpected_event_types_len",
+                &self.unexpected_event_types.len(),
+            )
             .field("parser_buffer_len", &self.parser.remaining_buffer().len())
             .finish_non_exhaustive()
     }
@@ -682,7 +698,13 @@ impl ActiveStreamingResponse {
                         ));
                     }
                     ParseResult::UnknownEvent(event_type) => {
-                        debug!(event_type = %event_type, "Ignoring unknown OpenAI SSE event");
+                        if EXPECTED_IGNORED_SSE_EVENT_TYPES.contains(&event_type.as_str()) {
+                            debug!(event_type = %event_type, "Ignoring expected OpenAI SSE event");
+                        } else if self.unexpected_event_types.insert(event_type.clone()) {
+                            warn!(event_type = %event_type, "Unexpected OpenAI SSE event type");
+                        } else {
+                            debug!(event_type = %event_type, "Ignoring repeated unexpected OpenAI SSE event type");
+                        }
                     }
                 }
             }
@@ -704,10 +726,17 @@ impl ActiveStreamingResponse {
                         Err(e) => {
                             let valid_up_to = e.valid_up_to();
                             if valid_up_to > 0 {
-                                // SAFETY: `valid_up_to` is guaranteed to be on a UTF-8 boundary.
-                                let valid_prefix =
-                                    std::str::from_utf8(&self.utf8_buffer[..valid_up_to])
-                                        .unwrap_or("");
+                                let valid_prefix = match std::str::from_utf8(
+                                    &self.utf8_buffer[..valid_up_to],
+                                ) {
+                                    Ok(s) => s,
+                                    Err(e) => {
+                                        self.completed = true;
+                                        return Err(SlackError::OpenAIError(format!(
+                                            "Invalid UTF-8 in OpenAI streaming response prefix: {e}"
+                                        )));
+                                    }
+                                };
                                 self.pending_results.extend(self.parser.feed(valid_prefix));
                                 self.utf8_buffer.drain(..valid_up_to);
                             }
@@ -958,6 +987,7 @@ mod tests {
             parser: SseParser::new(),
             pending_results: VecDeque::new(),
             utf8_buffer: Vec::new(),
+            unexpected_event_types: HashSet::new(),
             saw_completed_event: false,
             completed: false,
         };
@@ -998,6 +1028,7 @@ mod tests {
             parser: SseParser::new(),
             pending_results: VecDeque::new(),
             utf8_buffer: Vec::new(),
+            unexpected_event_types: HashSet::new(),
             saw_completed_event: false,
             completed: false,
         };
@@ -1022,6 +1053,7 @@ mod tests {
             parser: SseParser::new(),
             pending_results: VecDeque::new(),
             utf8_buffer: Vec::new(),
+            unexpected_event_types: HashSet::new(),
             saw_completed_event: false,
             completed: false,
         };
@@ -1042,6 +1074,7 @@ mod tests {
             parser: SseParser::new(),
             pending_results: VecDeque::new(),
             utf8_buffer: Vec::new(),
+            unexpected_event_types: HashSet::new(),
             saw_completed_event: false,
             completed: false,
         };
@@ -1061,6 +1094,7 @@ mod tests {
             parser: SseParser::new(),
             pending_results: VecDeque::new(),
             utf8_buffer: Vec::new(),
+            unexpected_event_types: HashSet::new(),
             saw_completed_event: false,
             completed: false,
         };
@@ -1080,11 +1114,115 @@ mod tests {
             parser: SseParser::new(),
             pending_results: VecDeque::new(),
             utf8_buffer: Vec::new(),
+            unexpected_event_types: HashSet::new(),
             saw_completed_event: false,
             completed: false,
         };
 
         let err = resp.next_event().await.unwrap_err();
         assert!(err.to_string().contains("Error reading streaming response"));
+    }
+
+    #[tokio::test]
+    async fn test_next_event_yields_failed_event() {
+        let sse = "data: {\"type\":\"response.failed\",\"error\":{\"message\":\"nope\"}}\n\n";
+        let stream = futures::stream::iter(vec![Ok(bytes::Bytes::from(sse))]);
+
+        let mut resp = ActiveStreamingResponse {
+            byte_stream: Box::pin(stream),
+            parser: SseParser::new(),
+            pending_results: VecDeque::new(),
+            utf8_buffer: Vec::new(),
+            unexpected_event_types: HashSet::new(),
+            saw_completed_event: false,
+            completed: false,
+        };
+
+        assert_eq!(
+            resp.next_event().await.unwrap(),
+            Some(StreamEvent::Failed("nope".to_string()))
+        );
+        assert_eq!(resp.next_event().await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn test_next_event_errors_on_done_before_completed() {
+        let sse = "data: [DONE]\n\n";
+        let stream = futures::stream::iter(vec![Ok(bytes::Bytes::from(sse))]);
+
+        let mut resp = ActiveStreamingResponse {
+            byte_stream: Box::pin(stream),
+            parser: SseParser::new(),
+            pending_results: VecDeque::new(),
+            utf8_buffer: Vec::new(),
+            unexpected_event_types: HashSet::new(),
+            saw_completed_event: false,
+            completed: false,
+        };
+
+        let err = resp.next_event().await.unwrap_err();
+        assert!(err.to_string().contains("ended before response.completed"));
+    }
+
+    #[tokio::test]
+    async fn test_next_event_errors_on_invalid_utf8() {
+        let stream = futures::stream::iter(vec![Ok(bytes::Bytes::from(vec![0xFF]))]);
+
+        let mut resp = ActiveStreamingResponse {
+            byte_stream: Box::pin(stream),
+            parser: SseParser::new(),
+            pending_results: VecDeque::new(),
+            utf8_buffer: Vec::new(),
+            unexpected_event_types: HashSet::new(),
+            saw_completed_event: false,
+            completed: false,
+        };
+
+        let err = resp.next_event().await.unwrap_err();
+        assert!(err.to_string().contains("Invalid UTF-8"));
+    }
+
+    #[tokio::test]
+    async fn test_next_event_surfaces_malformed_json_as_error_event() {
+        let sse = "data: {\"type\":\"response.output_text.delta\",\"delta\":}\n\n";
+        let stream = futures::stream::iter(vec![Ok(bytes::Bytes::from(sse))]);
+
+        let mut resp = ActiveStreamingResponse {
+            byte_stream: Box::pin(stream),
+            parser: SseParser::new(),
+            pending_results: VecDeque::new(),
+            utf8_buffer: Vec::new(),
+            unexpected_event_types: HashSet::new(),
+            saw_completed_event: false,
+            completed: false,
+        };
+
+        let event = resp.next_event().await.unwrap();
+        match event {
+            Some(StreamEvent::Error(msg)) => {
+                assert!(msg.contains("Failed to parse OpenAI SSE JSON payload"));
+            }
+            other => panic!("expected StreamEvent::Error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_collect_text_errors_on_failed_event() {
+        let sse = "data: {\"type\":\"response.failed\",\"error\":{\"message\":\"nope\"}}\n\n";
+        let stream = futures::stream::iter(vec![Ok(bytes::Bytes::from(sse))]);
+
+        let mut resp = ActiveStreamingResponse {
+            byte_stream: Box::pin(stream),
+            parser: SseParser::new(),
+            pending_results: VecDeque::new(),
+            utf8_buffer: Vec::new(),
+            unexpected_event_types: HashSet::new(),
+            saw_completed_event: false,
+            completed: false,
+        };
+
+        let err = resp.collect_text().await.unwrap_err();
+        assert!(err.to_string().contains("OpenAI streaming failed"));
+        assert!(err.to_string().contains("nope"));
     }
 }
