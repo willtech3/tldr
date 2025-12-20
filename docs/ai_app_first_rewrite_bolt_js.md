@@ -137,50 +137,50 @@ This section is intentionally written as a **checklist** so coding agents can ex
 
 ### PR 0 — Repo hygiene + issue hygiene (no functionality yet)
 
-- [x] Update `docs/ai_app_first_rewrite_bolt_js.md` (this doc) to match the final plan (AI App only; Canvas + `/tldr` deleted).
-- [x] Update `docs/user_workflows.md` to remove Canvas + slash workflows and declare AI App split-view the only supported UX.
-- [x] Update `README.md` to remove `/tldr` usage and add "AI App only" quickstart.
-- [x] Ensure `.gitignore` covers all local artifacts (already mostly done).
+- ✅ Update `docs/ai_app_first_rewrite_bolt_js.md` (this doc) to match the final plan (AI App only; Canvas + `/tldr` deleted).
+- ✅ Update `docs/user_workflows.md` to remove Canvas + slash workflows and declare AI App split-view the only supported UX.
+- ✅ Update `README.md` to remove `/tldr` usage and add "AI App only" quickstart.
+- ✅ Ensure `.gitignore` covers all local artifacts (already mostly done).
 
 ### PR 1 — Delete legacy code (Canvas + slash command) BEFORE writing new Bolt logic
 
-- [x] Delete Canvas code (see "Canvas (delete completely)" checklist below).
-- [x] Delete slash command code (see "Slash command `/tldr` (delete completely)" checklist below).
-- [x] Delete OAuth unread code (recommended) or explicitly defer it to a future branch (but don't keep partially-used code).
-- [x] Remove dead dependencies from `lambda/Cargo.toml` (only after code deletion proves they're unused).
-- [x] Run `just qa` locally and ensure CI passes.
+- ✅ Delete Canvas code (see "Canvas (delete completely)" checklist below).
+- ✅ Delete slash command code (see "Slash command `/tldr` (delete completely)" checklist below).
+- ✅ Delete OAuth unread code (recommended) or explicitly defer it to a future branch (but don't keep partially-used code).
+- ✅ Remove dead dependencies from `lambda/Cargo.toml` (only after code deletion proves they're unused).
+- ✅ Run `just qa` locally and ensure CI passes.
 
 ### PR 2 — Add Bolt TypeScript "AI App API Lambda" scaffold (minimal viable)
 
-- [x] Add a new directory (recommend `bolt-ts/`) containing:
-  - [x] Bolt app (`@slack/bolt`) in TypeScript
-  - [x] AWS Lambda receiver wiring (Bolt AWS Lambda receiver)
-  - [x] `tsconfig.json`, linting, minimal tests
-- [x] Add a new Lambda function in `cdk/lib/tldr-stack.ts` for the Bolt handler
-- [x] Keep the Rust worker Lambda as-is (for now).
-- [x] **Delete the Rust API Lambda binary** now that CDK routes Slack traffic to Bolt TS
+- ✅ Add a new directory (recommend `bolt-ts/`) containing:
+  - ✅ Bolt app (`@slack/bolt`) in TypeScript
+  - ✅ AWS Lambda receiver wiring (Bolt AWS Lambda receiver)
+  - ✅ `tsconfig.json`, linting, minimal tests
+- ✅ Add a new Lambda function in `cdk/lib/tldr-stack.ts` for the Bolt handler
+- ✅ Keep the Rust worker Lambda as-is (for now).
+- ✅ **Delete the Rust API Lambda binary** now that CDK routes Slack traffic to Bolt TS
 
 ### PR 3 — Implement AI App UX (context + prompts + status) end-to-end
 
-- [ ] Handle Events:
-  - [ ] `assistant_thread_started` → welcome message + `assistant.threads.setSuggestedPrompts`
-  - [ ] `assistant_thread_context_changed` → persist context **in Slack thread state message metadata**
-  - [ ] `message.im` → parse intent (summarize / style / help)
-- [ ] Call `assistant.threads.setStatus` immediately on summarize.
-- [ ] Enqueue SQS job and post summary into the assistant thread.
+- ✅ Handle Events:
+  - ✅ `assistant_thread_started` → welcome message + `assistant.threads.setSuggestedPrompts`
+  - ✅ `assistant_thread_context_changed` → persist context **in Slack thread state message metadata**
+  - ✅ `message.im` → parse intent (summarize / style / help)
+- ✅ Call `assistant.threads.setStatus` immediately on summarize.
+- ✅ Enqueue SQS job and post summary into the assistant thread.
 
 ### PR 4 — Style UX (the "funny summaries" feature)
 
-- [x] Add a "Set style" modal (custom prompt only)
-- [x] Persist style state **only inside Slack** (thread state message metadata). No per-user defaults.
-- [x] Make the assistant thread clearly show the active style.
+- ✅ Add a "Set style" modal (custom prompt only)
+- ✅ Persist style state **only inside Slack** (thread state message metadata). No per-user defaults.
+- ✅ Make the assistant thread clearly show the active style.
 
 ### PR 5 — Images + links depth (V1 quality bar)
 
-- [ ] Extract links (URLs + unfurls) and include "Links shared".
-- [ ] Handle Slack files (images) using authenticated download (bot token) and feed to Responses API as images.
-- [ ] Add "Image highlights" section.
-- [ ] Add receipts (permalinks) for trust.
+- ☐ Extract links (URLs + unfurls) and include "Links shared".
+- ✅ Handle Slack files (images) using authenticated download (bot token) and feed to Responses API as images.
+- ☐ Add "Image highlights" section.
+- ☐ Add receipts (permalinks) for trust.
 
 ---
 
@@ -189,26 +189,26 @@ This section is intentionally written as a **checklist** so coding agents can ex
 ### Delete legacy features (behavior-changing; desired)
 
 #### Canvas (delete completely)
-- [x] Delete `lambda/src/slack/canvas_helper.rs`
-- [x] Remove all Canvas API code from `lambda/src/slack/client.rs` (Canvas endpoints + helpers).
-- [x] Remove Canvas delivery path from `lambda/src/worker/deliver.rs`
-- [x] Remove any "dest_canvas" flags and related branching in `lambda/src/core/models.rs`
-- [x] Remove docs that describe Canvas as a feature
+- ✅ Delete `lambda/src/slack/canvas_helper.rs`
+- ✅ Remove all Canvas API code from `lambda/src/slack/client.rs` (Canvas endpoints + helpers).
+- ✅ Remove Canvas delivery path from `lambda/src/worker/deliver.rs`
+- ✅ Remove any "dest_canvas" flags and related branching in `lambda/src/core/models.rs`
+- ✅ Remove docs that describe Canvas as a feature
 
 #### Slash command `/tldr` (delete completely)
-- [x] Delete slash parsing + handler code in the Rust API surface:
-  - [x] `lambda/src/api/slash_handler.rs`
-  - [x] `lambda/src/slack/command_parser.rs` (if only used by slash commands)
-  - [x] Remove slash routing from `lambda/src/api/handler.rs`
-- [x] Remove `/tldr` from `slack-app-manifest.yaml.template`.
+- ✅ Delete slash parsing + handler code in the Rust API surface:
+  - ✅ `lambda/src/api/slash_handler.rs`
+  - ✅ `lambda/src/slack/command_parser.rs` (if only used by slash commands)
+  - ✅ Remove slash routing from `lambda/src/api/handler.rs`
+- ✅ Remove `/tldr` from `slack-app-manifest.yaml.template`.
 
 #### Recommended extra deletions (to keep the repo tiny)
-- [x] Delete OAuth "unread" user-token flow:
-  - [x] `lambda/src/api/oauth.rs`
-  - [x] `lambda/src/core/user_tokens.rs`
-- [x] Delete "Share" UX:
-  - [x] Remove share button posting in `lambda/src/worker/deliver.rs`
-  - [x] Delete share modal builder/interactive handling if it becomes unused
+- ✅ Delete OAuth "unread" user-token flow:
+  - ✅ `lambda/src/api/oauth.rs`
+  - ✅ `lambda/src/core/user_tokens.rs`
+- ✅ Delete "Share" UX:
+  - ✅ Remove share button posting in `lambda/src/worker/deliver.rs`
+  - ✅ Delete share modal builder/interactive handling if it becomes unused
 
 ---
 

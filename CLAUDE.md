@@ -163,4 +163,12 @@ Commits should only be made after this succeeds locally.
 - Follow least-privilege IAM principles
 - Never write persistent scripts unless specifically directed
 - Only deploy using CI
-- If working off of a checklist in a markdown file then make sure tasks are checked after they are completed
+
+## Documentation Standards
+
+### Checklist Formatting
+When working with checklists in project documentation files (markdown), use the following emoji conventions:
+- ✅ — Completed item (green checkmark)
+- ☐ — Incomplete/pending item (empty white box)
+
+When completing tasks from a checklist, update the checkbox emoji from ☐ to ✅ to reflect progress. This provides clear visual distinction between completed and pending work.
