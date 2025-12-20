@@ -15,6 +15,7 @@ import { sendToSqs } from '../sqs';
 import { ProcessingTask } from '../types';
 import { AppConfig } from '../config';
 import type { ThreadContext } from '../types';
+import { buildSummarizeLoadingMessages } from '../loading_messages';
 import {
   buildThreadStateMetadata,
   findThreadStateMessage,
@@ -255,11 +256,15 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
           const effectiveStyle = intent.styleOverride ?? state.customStyle;
 
           // Set status after validation so we don't show "Summarizing..." for an immediate error.
-          client.assistant.threads
+          void client.assistant.threads
             .setStatus({
               channel_id: channelId,
               thread_ts: threadTs,
               status: 'Summarizing...',
+              loading_messages: buildSummarizeLoadingMessages({
+                messageCount: intent.count ?? 50,
+                hasCustomStyle: effectiveStyle !== null && effectiveStyle.trim().length > 0,
+              }),
             })
             .catch((err) => logger.error('Failed to set status:', err));
 
