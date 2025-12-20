@@ -1,8 +1,9 @@
 use regex::Regex;
 use serde_json::Value;
 use slack_morphism::SlackHistoryMessage;
-use std::collections::HashSet;
 use url::Url;
+
+use std::collections::HashSet;
 
 /// Extract HTTP(S) links from Slack messages in a best-effort way.
 ///
@@ -54,7 +55,7 @@ pub fn extract_links_from_text(text: &str) -> Vec<String> {
     // - <http://www.example.com|This message *is* a link>
     // Source: https://docs.slack.dev/messaging/formatting-message-text/#linking-urls
     static SLACK_LINK_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-        Regex::new(r"<(https?://[^>|\\s>]+)(?:\\|[^>]+)?>").unwrap_or_else(|_| {
+        Regex::new(r"<(https?://[^>|\s>]+)(?:\|[^>]+)?>").unwrap_or_else(|_| {
             // Extremely defensive: in practice this cannot fail.
             Regex::new(r"$^").expect("fallback regex compiles")
         })
