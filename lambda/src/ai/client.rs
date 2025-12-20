@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::time::Duration;
-use tracing::info;
+use tracing::{debug, info, warn};
 
 use super::prompt_builder::sanitize_custom_internal;
 use super::sse::{ParseResult, SseParser, StreamEvent};
@@ -227,7 +227,9 @@ impl LlmClient {
         let client = Client::builder()
             .timeout(Duration::from_secs(810))
             .build()
-            .unwrap_or_else(|_| Client::new());
+            .map_err(|e| {
+                SlackError::HttpError(format!("Failed to build OpenAI HTTP client: {e}"))
+            })?;
 
         let mut headers = reqwest::header::HeaderMap::new();
         let auth_value = format!("Bearer {}", self.api_key)
@@ -255,11 +257,11 @@ impl LlmClient {
             .await
             .map_err(|e| SlackError::HttpError(format!("OpenAI API request failed: {e}")))?;
 
-        if !response.status().is_success() {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_else(|e| {
+                format!("Failed to read error response body (status {status}): {e}")
+            });
             // Fallback: if the error is about invalid image data, retry without images
             let lowered = error_text.to_ascii_lowercase();
             let looks_like_invalid_image = lowered.contains("invalid_request_error")
@@ -304,7 +306,11 @@ impl LlmClient {
                 let client = Client::builder()
                     .timeout(Duration::from_secs(810))
                     .build()
-                    .unwrap_or_else(|_| Client::new());
+                    .map_err(|e| {
+                        SlackError::HttpError(format!(
+                            "Failed to build OpenAI HTTP client (fallback): {e}"
+                        ))
+                    })?;
 
                 let mut headers = reqwest::header::HeaderMap::new();
                 let auth_value = format!("Bearer {}", self.api_key).parse().map_err(|e| {
@@ -331,13 +337,13 @@ impl LlmClient {
                     .map_err(|e| {
                         SlackError::HttpError(format!("OpenAI API request failed (fallback): {e}"))
                     })?;
-                if !response2.status().is_success() {
-                    let error_text2 = response2
-                        .text()
-                        .await
-                        .unwrap_or_else(|_| "Unknown error".to_string());
+                let status2 = response2.status();
+                if !status2.is_success() {
+                    let error_text2 = response2.text().await.unwrap_or_else(|e| {
+                        format!("Failed to read error response body (status {status2}): {e}")
+                    });
                     return Err(SlackError::OpenAIError(format!(
-                        "OpenAI API error (fallback): {error_text2}"
+                        "OpenAI API error (fallback, status {status2}): {error_text2}"
                     )));
                 }
                 let response_json: Value = response2.json().await.map_err(|e| {
@@ -389,7 +395,7 @@ impl LlmClient {
             }
 
             return Err(SlackError::OpenAIError(format!(
-                "OpenAI API error: {error_text}"
+                "OpenAI API error (status {status}): {error_text}"
             )));
         }
 
@@ -465,7 +471,10 @@ impl LlmClient {
     ///
     /// # Errors
     ///
-    /// Returns an error if the HTTP request fails or there are issues with token limits.
+    /// Returns an error if the HTTP request fails.
+    ///
+    /// If the prompt is too large to fit within the model context window, returns
+    /// `Ok(StreamingResponse::TooLarge)` so callers can display a friendly message.
     #[allow(clippy::too_many_lines)]
     pub async fn generate_summary_stream(
         &self,
@@ -519,7 +528,11 @@ impl LlmClient {
         let client = Client::builder()
             .timeout(Duration::from_secs(810))
             .build()
-            .unwrap_or_else(|_| Client::new());
+            .map_err(|e| {
+                SlackError::HttpError(format!(
+                    "Failed to build OpenAI HTTP client (streaming): {e}"
+                ))
+            })?;
 
         let mut headers = reqwest::header::HeaderMap::new();
         let auth_value = format!("Bearer {}", self.api_key)
@@ -553,13 +566,13 @@ impl LlmClient {
             .await
             .map_err(|e| SlackError::HttpError(format!("OpenAI streaming request failed: {e}")))?;
 
-        if !response.status().is_success() {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_else(|e| {
+                format!("Failed to read error response body (status {status}): {e}")
+            });
             return Err(SlackError::OpenAIError(format!(
-                "OpenAI streaming API error: {error_text}"
+                "OpenAI streaming API error (status {status}): {error_text}"
             )));
         }
 
@@ -568,6 +581,7 @@ impl LlmClient {
             parser: SseParser::new(),
             pending_results: VecDeque::new(),
             utf8_buffer: Vec::new(),
+            saw_completed_event: false,
             completed: false,
         }))
     }
@@ -605,6 +619,7 @@ pub struct ActiveStreamingResponse {
     parser: SseParser,
     pending_results: VecDeque<ParseResult>,
     utf8_buffer: Vec<u8>,
+    saw_completed_event: bool,
     completed: bool,
 }
 
@@ -612,6 +627,7 @@ impl std::fmt::Debug for ActiveStreamingResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ActiveStreamingResponse")
             .field("completed", &self.completed)
+            .field("saw_completed_event", &self.saw_completed_event)
             .field("pending_results_len", &self.pending_results.len())
             .field("utf8_buffer_len", &self.utf8_buffer.len())
             .field("parser_buffer_len", &self.parser.remaining_buffer().len())
@@ -643,21 +659,30 @@ impl ActiveStreamingResponse {
             // multiple frames arrive in a single HTTP chunk.
             while let Some(result) = self.pending_results.pop_front() {
                 match result {
-                    ParseResult::Event(event) => {
-                        if matches!(
-                            event,
-                            StreamEvent::Completed | StreamEvent::Failed(_) | StreamEvent::Error(_)
-                        ) {
+                    ParseResult::Event(event) => match event {
+                        StreamEvent::Completed => {
+                            self.saw_completed_event = true;
                             self.completed = true;
+                            return Ok(Some(StreamEvent::Completed));
                         }
-                        return Ok(Some(event));
-                    }
+                        StreamEvent::Failed(_) | StreamEvent::Error(_) => {
+                            self.completed = true;
+                            return Ok(Some(event));
+                        }
+                        StreamEvent::TextDelta(_) => return Ok(Some(event)),
+                    },
                     ParseResult::Done => {
                         self.completed = true;
-                        return Ok(None);
+                        if self.saw_completed_event {
+                            return Ok(None);
+                        }
+                        warn!("OpenAI stream ended with [DONE] before response.completed");
+                        return Err(SlackError::OpenAIError(
+                            "OpenAI stream ended before response.completed".to_string(),
+                        ));
                     }
-                    ParseResult::UnknownEvent(_) | ParseResult::Incomplete => {
-                        // Ignore and keep draining.
+                    ParseResult::UnknownEvent(event_type) => {
+                        debug!(event_type = %event_type, "Ignoring unknown OpenAI SSE event");
                     }
                 }
             }
@@ -705,9 +730,14 @@ impl ActiveStreamingResponse {
                     )));
                 }
                 None => {
-                    // Stream ended without explicit completion
                     self.completed = true;
-                    return Ok(None);
+                    if self.saw_completed_event {
+                        return Ok(None);
+                    }
+                    warn!("OpenAI stream ended without response.completed");
+                    return Err(SlackError::OpenAIError(
+                        "OpenAI stream ended without response.completed".to_string(),
+                    ));
                 }
             }
         }
@@ -928,6 +958,7 @@ mod tests {
             parser: SseParser::new(),
             pending_results: VecDeque::new(),
             utf8_buffer: Vec::new(),
+            saw_completed_event: false,
             completed: false,
         };
 
@@ -967,6 +998,7 @@ mod tests {
             parser: SseParser::new(),
             pending_results: VecDeque::new(),
             utf8_buffer: Vec::new(),
+            saw_completed_event: false,
             completed: false,
         };
 
@@ -974,5 +1006,85 @@ mod tests {
             resp.next_event().await.unwrap(),
             Some(StreamEvent::TextDelta("Hello 世界".to_string()))
         );
+    }
+
+    #[tokio::test]
+    async fn test_collect_text_happy_path() {
+        let sse = concat!(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\" World\"}\n\n",
+            "data: {\"type\":\"response.completed\"}\n\n"
+        );
+        let stream = futures::stream::iter(vec![Ok(bytes::Bytes::from(sse))]);
+
+        let mut resp = ActiveStreamingResponse {
+            byte_stream: Box::pin(stream),
+            parser: SseParser::new(),
+            pending_results: VecDeque::new(),
+            utf8_buffer: Vec::new(),
+            saw_completed_event: false,
+            completed: false,
+        };
+
+        assert_eq!(
+            resp.collect_text().await.unwrap(),
+            "Hello World".to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_collect_text_errors_on_error_event() {
+        let sse = "data: {\"type\":\"error\",\"error\":{\"message\":\"boom\"}}\n\n";
+        let stream = futures::stream::iter(vec![Ok(bytes::Bytes::from(sse))]);
+
+        let mut resp = ActiveStreamingResponse {
+            byte_stream: Box::pin(stream),
+            parser: SseParser::new(),
+            pending_results: VecDeque::new(),
+            utf8_buffer: Vec::new(),
+            saw_completed_event: false,
+            completed: false,
+        };
+
+        let err = resp.collect_text().await.unwrap_err();
+        assert!(err.to_string().contains("OpenAI streaming error"));
+        assert!(err.to_string().contains("boom"));
+    }
+
+    #[tokio::test]
+    async fn test_collect_text_errors_on_premature_end() {
+        let sse = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n";
+        let stream = futures::stream::iter(vec![Ok(bytes::Bytes::from(sse))]);
+
+        let mut resp = ActiveStreamingResponse {
+            byte_stream: Box::pin(stream),
+            parser: SseParser::new(),
+            pending_results: VecDeque::new(),
+            utf8_buffer: Vec::new(),
+            saw_completed_event: false,
+            completed: false,
+        };
+
+        let err = resp.collect_text().await.unwrap_err();
+        assert!(err.to_string().contains("ended without response.completed"));
+    }
+
+    #[tokio::test]
+    async fn test_next_event_errors_on_network_error() {
+        // Build a reqwest::Error without doing any network I/O.
+        let req_err = reqwest::Client::new().get("not a url").build().unwrap_err();
+        let stream = futures::stream::iter(vec![Err(req_err)]);
+
+        let mut resp = ActiveStreamingResponse {
+            byte_stream: Box::pin(stream),
+            parser: SseParser::new(),
+            pending_results: VecDeque::new(),
+            utf8_buffer: Vec::new(),
+            saw_completed_event: false,
+            completed: false,
+        };
+
+        let err = resp.next_event().await.unwrap_err();
+        assert!(err.to_string().contains("Error reading streaming response"));
     }
 }

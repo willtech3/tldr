@@ -9,6 +9,7 @@
 
 use serde::Deserialize;
 use serde_json::Value;
+use tracing::warn;
 
 /// Events emitted by the `OpenAI` Responses API streaming endpoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,8 +31,6 @@ pub enum ParseResult {
     Event(StreamEvent),
     /// The frame was parsed but contained an unknown/unhandled event type.
     UnknownEvent(String),
-    /// No complete event available yet (need more data).
-    Incomplete,
     /// End of stream signal (`[DONE]`).
     Done,
 }
@@ -132,7 +131,16 @@ impl SseParser {
     fn parse_json_event(data: &str) -> Option<ParseResult> {
         let json: Value = match serde_json::from_str(data) {
             Ok(v) => v,
-            Err(_) => return None,
+            Err(e) => {
+                let preview: String = data.chars().take(200).collect();
+                warn!(
+                    error = %e,
+                    data_len = data.len(),
+                    data_preview = %preview,
+                    "Failed to parse OpenAI SSE JSON payload"
+                );
+                return None;
+            }
         };
 
         let event_type = json.get("type").and_then(Value::as_str).unwrap_or("");
