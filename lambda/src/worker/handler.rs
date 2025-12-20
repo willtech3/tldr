@@ -63,7 +63,20 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
             error!("Failed to generate summary: {}", e);
             let error_message =
                 "Sorry, I couldn't generate a summary at this time. Please try again later.";
-            if task.dest_dm {
+
+            // Primary: deliver error to assistant thread if destination is Thread
+            if matches!(task.destination, crate::core::models::Destination::Thread) {
+                if let Some(thread_ts) = &task.thread_ts {
+                    let reply_channel = task
+                        .origin_channel_id
+                        .as_deref()
+                        .unwrap_or(&task.channel_id);
+                    let _ = slack_bot
+                        .slack_client()
+                        .post_message_in_thread(reply_channel, thread_ts, error_message)
+                        .await;
+                }
+            } else if task.dest_dm {
                 let _ = slack_bot
                     .slack_client()
                     .send_dm(&task.user_id, error_message)
