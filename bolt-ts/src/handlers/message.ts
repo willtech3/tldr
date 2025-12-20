@@ -10,17 +10,21 @@
 import { App } from '@slack/bolt';
 import { v4 as uuidv4 } from 'uuid';
 import { parseUserIntent } from '../intent';
-import { buildHelpBlocks, buildWelcomeBlocks } from '../blocks';
+import { buildHelpBlocks, buildWelcomeBlocks, buildStyleConfirmationBlocks } from '../blocks';
 import { sendToSqs } from '../sqs';
 import { ProcessingTask } from '../types';
 import { AppConfig } from '../config';
 import type { ThreadContext } from '../types';
 import {
   buildThreadStateMetadata,
+  findThreadStateMessage,
   getCachedThreadState,
   makeThreadKey,
   setCachedThreadState,
+  type SlackWebApiClient,
 } from '../thread_state';
+
+const WELCOME_TEXT = 'Welcome to TLDR';
 
 // Basic message event type for our use case
 interface MessageEvent {
@@ -98,7 +102,25 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
         }
 
         case 'style': {
-          const { state, stateMessageTs } = getThreadStateFromCache();
+          let { state, stateMessageTs } = getThreadStateFromCache();
+
+          // On cache miss, load state from Slack metadata to avoid creating duplicates
+          if (!stateMessageTs) {
+            try {
+              const loaded = await findThreadStateMessage({
+                client: client as unknown as SlackWebApiClient,
+                assistantChannelId: channelId,
+                assistantThreadTs: threadTs,
+              });
+              if (loaded) {
+                state = loaded.state;
+                stateMessageTs = loaded.state_message_ts;
+              }
+            } catch (error) {
+              logger.warn('Failed to load thread state from Slack:', error);
+            }
+          }
+
           const nextState: ThreadContext = {
             viewingChannelId: state.viewingChannelId,
             customStyle: intent.instructions,
@@ -109,8 +131,8 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
               .update({
                 channel: channelId,
                 ts: stateMessageTs,
-                text: 'Welcome to TLDR',
-                blocks: buildWelcomeBlocks(),
+                text: WELCOME_TEXT,
+                blocks: buildWelcomeBlocks(nextState.customStyle),
                 metadata: buildThreadStateMetadata(nextState),
               })
               .then(() => {
@@ -118,13 +140,13 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
               })
               .catch((err) => logger.error('Failed to persist style to thread state:', err));
           } else {
-            // If no state message exists (unexpected), persist state on a new message.
+            // If no state message exists (truly missing), persist state on a new message.
             try {
               const resp = await client.chat.postMessage({
                 channel: channelId,
                 thread_ts: threadTs,
-                text: 'Welcome to TLDR',
-                blocks: buildWelcomeBlocks(),
+                text: WELCOME_TEXT,
+                blocks: buildWelcomeBlocks(nextState.customStyle),
                 metadata: buildThreadStateMetadata(nextState),
               });
               if (resp.ts) {
@@ -144,7 +166,73 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
           await client.chat.postMessage({
             channel: channelId,
             thread_ts: threadTs,
-            text: 'Style saved for this assistant thread.',
+            text: 'Style saved for this thread.',
+            blocks: buildStyleConfirmationBlocks(intent.instructions),
+          });
+          break;
+        }
+
+        case 'clear_style': {
+          let { state, stateMessageTs } = getThreadStateFromCache();
+
+          // On cache miss, load state from Slack metadata to avoid creating duplicates
+          if (!stateMessageTs) {
+            try {
+              const loaded = await findThreadStateMessage({
+                client: client as unknown as SlackWebApiClient,
+                assistantChannelId: channelId,
+                assistantThreadTs: threadTs,
+              });
+              if (loaded) {
+                state = loaded.state;
+                stateMessageTs = loaded.state_message_ts;
+              }
+            } catch (error) {
+              logger.warn('Failed to load thread state from Slack:', error);
+            }
+          }
+
+          const nextState: ThreadContext = {
+            viewingChannelId: state.viewingChannelId,
+            customStyle: null,
+          };
+
+          if (stateMessageTs) {
+            void client.chat
+              .update({
+                channel: channelId,
+                ts: stateMessageTs,
+                text: WELCOME_TEXT,
+                blocks: buildWelcomeBlocks(null),
+                metadata: buildThreadStateMetadata(nextState),
+              })
+              .then(() => {
+                setCachedThreadState({ threadKey, stateMessageTs, state: nextState });
+              })
+              .catch((err) => logger.error('Failed to clear style in thread state:', err));
+          } else {
+            // If no state message exists (truly missing), create one with cleared style
+            try {
+              const resp = await client.chat.postMessage({
+                channel: channelId,
+                thread_ts: threadTs,
+                text: WELCOME_TEXT,
+                blocks: buildWelcomeBlocks(null),
+                metadata: buildThreadStateMetadata(nextState),
+              });
+              if (resp.ts) {
+                setCachedThreadState({ threadKey, stateMessageTs: resp.ts, state: nextState });
+              }
+            } catch (error) {
+              logger.error('Failed to create thread state message for clear style:', error);
+            }
+          }
+
+          await client.chat.postMessage({
+            channel: channelId,
+            thread_ts: threadTs,
+            text: 'Style cleared.',
+            blocks: buildStyleConfirmationBlocks(null),
           });
           break;
         }
@@ -162,6 +250,9 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
             });
             return;
           }
+
+          // Use per-run style override if present, otherwise fall back to thread's customStyle
+          const effectiveStyle = intent.styleOverride ?? state.customStyle;
 
           // Set status after validation so we don't show "Summarizing..." for an immediate error.
           client.assistant.threads
@@ -183,7 +274,7 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
             text: text.toLowerCase(),
             message_count: intent.count,
             target_channel_id: null,
-            custom_prompt: state.customStyle,
+            custom_prompt: effectiveStyle,
             // AI App UX: always reply in-thread (never post publicly from the worker).
             visible: false,
             destination: 'Thread',

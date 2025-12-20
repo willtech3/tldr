@@ -44,6 +44,33 @@ describe('parseUserIntent', () => {
     });
   });
 
+  describe('clear_style intent', () => {
+    it('should recognize "clear style" command', () => {
+      const result = parseUserIntent('clear style');
+      expect(result).toEqual({ type: 'clear_style' });
+    });
+
+    it('should recognize "reset style" command', () => {
+      const result = parseUserIntent('reset style');
+      expect(result).toEqual({ type: 'clear_style' });
+    });
+
+    it('should recognize "remove style" command', () => {
+      const result = parseUserIntent('remove style');
+      expect(result).toEqual({ type: 'clear_style' });
+    });
+
+    it('should handle case insensitively', () => {
+      const result = parseUserIntent('CLEAR STYLE');
+      expect(result).toEqual({ type: 'clear_style' });
+    });
+
+    it('should handle whitespace', () => {
+      const result = parseUserIntent('  clear   style  ');
+      expect(result).toEqual({ type: 'clear_style' });
+    });
+  });
+
   describe('summarize intent', () => {
     it('should recognize "summarize" command', () => {
       const result = parseUserIntent('summarize');
@@ -52,6 +79,7 @@ describe('parseUserIntent', () => {
         count: null,
         targetChannel: null,
         postHere: false,
+        styleOverride: null,
       });
     });
 
@@ -62,6 +90,7 @@ describe('parseUserIntent', () => {
         count: 50,
         targetChannel: null,
         postHere: false,
+        styleOverride: null,
       });
     });
 
@@ -72,6 +101,7 @@ describe('parseUserIntent', () => {
         count: 100,
         targetChannel: null,
         postHere: false,
+        styleOverride: null,
       });
     });
 
@@ -82,6 +112,7 @@ describe('parseUserIntent', () => {
         count: null,
         targetChannel: 'C123ABC',
         postHere: false,
+        styleOverride: null,
       });
     });
 
@@ -92,6 +123,7 @@ describe('parseUserIntent', () => {
         count: null,
         targetChannel: null,
         postHere: true,
+        styleOverride: null,
       });
     });
 
@@ -102,6 +134,7 @@ describe('parseUserIntent', () => {
         count: null,
         targetChannel: null,
         postHere: true,
+        styleOverride: null,
       });
     });
 
@@ -112,6 +145,40 @@ describe('parseUserIntent', () => {
         count: 25,
         targetChannel: 'C789XYZ',
         postHere: true,
+        styleOverride: null,
+      });
+    });
+
+    it('should parse per-run style override', () => {
+      const result = parseUserIntent('summarize with style: be funny');
+      expect(result).toEqual({
+        type: 'summarize',
+        count: null,
+        targetChannel: null,
+        postHere: false,
+        styleOverride: 'be funny',
+      });
+    });
+
+    it('should parse per-run style override with count', () => {
+      const result = parseUserIntent('summarize last 50 with style: write as haiku');
+      expect(result).toEqual({
+        type: 'summarize',
+        count: 50,
+        targetChannel: null,
+        postHere: false,
+        styleOverride: 'write as haiku',
+      });
+    });
+
+    it('should parse per-run style override with extra whitespace', () => {
+      const result = parseUserIntent('summarize with style:   extremely concise  ');
+      expect(result).toEqual({
+        type: 'summarize',
+        count: null,
+        targetChannel: null,
+        postHere: false,
+        styleOverride: 'extremely concise',
       });
     });
   });

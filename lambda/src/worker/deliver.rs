@@ -76,9 +76,22 @@ pub async fn deliver_summary(
             .origin_channel_id
             .as_deref()
             .unwrap_or(source_channel_id);
+
+        // Format message with style header if custom_prompt is set
+        let formatted_summary = if let Some(style) = &task.custom_prompt {
+            let truncated_style = if style.len() > 60 {
+                format!("{}...", &style[..57])
+            } else {
+                style.clone()
+            };
+            format!("_Style: {}_\n\n{}", truncated_style, summary)
+        } else {
+            summary.to_string()
+        };
+
         if let Err(e) = slack_bot
             .slack_client()
-            .post_message_in_thread(reply_channel, thread_ts, summary)
+            .post_message_in_thread(reply_channel, thread_ts, &formatted_summary)
             .await
         {
             error!(

@@ -4,6 +4,7 @@
  * This is the main Bolt app configuration. It handles:
  * - Assistant thread events (thread_started, context_changed)
  * - Message events in assistant threads
+ * - Interactive components (style modal)
  *
  * The app is designed to:
  * - ACK Slack requests within 3 seconds (fast ACK requirement)
@@ -13,7 +14,7 @@
 
 import { App, LogLevel, Receiver } from '@slack/bolt';
 import { AppConfig } from './config';
-import { registerAssistantHandlers, registerMessageHandlers } from './handlers';
+import { registerAssistantHandlers, registerMessageHandlers, registerStyleHandlers } from './handlers';
 
 /**
  * Create and configure the Bolt app instance.
@@ -33,6 +34,7 @@ export function createApp(config: AppConfig, receiver: Receiver): App {
   // Register all handlers
   registerAssistantHandlers(app);
   registerMessageHandlers(app, config);
+  registerStyleHandlers(app);
 
   return app;
 }

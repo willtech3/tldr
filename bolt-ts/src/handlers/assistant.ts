@@ -29,6 +29,8 @@ interface AssistantThread {
 
 /**
  * Default suggested prompts shown when assistant thread starts.
+ * Note: "Set style" is handled via the button in the welcome message, not as a
+ * suggested prompt, to avoid sending a message the bot can't respond to.
  */
 const DEFAULT_PROMPTS: Array<{ title: string; message: string }> = [
   { title: 'Summarize', message: 'summarize' },
@@ -163,7 +165,7 @@ export function registerAssistantHandlers(app: App): void {
           channel: channelId,
           thread_ts: threadTs,
           text: WELCOME_TEXT,
-          blocks: buildWelcomeBlocks(),
+          blocks: buildWelcomeBlocks(nextState.customStyle),
           metadata: buildThreadStateMetadata(nextState),
         });
         if (welcome.ts) {
@@ -182,7 +184,7 @@ export function registerAssistantHandlers(app: App): void {
         channel: channelId,
         ts: stateMessageTs,
         text: WELCOME_TEXT,
-        blocks: buildWelcomeBlocks(),
+        blocks: buildWelcomeBlocks(nextState.customStyle),
         metadata: buildThreadStateMetadata(nextState),
       })
       .then(() => {
