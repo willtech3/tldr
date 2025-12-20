@@ -177,10 +177,10 @@ This section is intentionally written as a **checklist** so coding agents can ex
 
 ### PR 5 — Images + links depth (V1 quality bar)
 
-- ☐ Extract links (URLs + unfurls) and include "Links shared".
+- ✅ Extract links (URLs + unfurls) and include "Links shared".
 - ✅ Handle Slack files (images) using authenticated download (bot token) and feed to Responses API as images.
-- ☐ Add "Image highlights" section.
-- ☐ Add receipts (permalinks) for trust.
+- ✅ Add "Image highlights" section.
+- ✅ Add receipts (permalinks) for trust.
 
 ---
 
