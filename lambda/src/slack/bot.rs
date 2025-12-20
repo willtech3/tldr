@@ -8,11 +8,55 @@ use openai_api_rs::v1::chat_completion::{
 use serde_json::Value;
 use slack_morphism::{SlackFile, SlackHistoryMessage};
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use tracing::{debug, error, info};
 use url::Url;
 
 use crate::core::config::AppConfig;
 use crate::errors::SlackError;
+use crate::utils::links;
+
+#[derive(Clone, Debug)]
+struct ReceiptSeed {
+    ts: String,
+    author: String,
+    snippet: String,
+}
+
+#[derive(Clone, Debug)]
+struct Receipt {
+    permalink: String,
+    author: String,
+    snippet: String,
+}
+
+fn format_links_context(links: &[String]) -> String {
+    if links.is_empty() {
+        "Links shared (deduped):\n- None\n".to_string()
+    } else {
+        let mut s = String::from("Links shared (deduped):\n");
+        for l in links.iter().take(20) {
+            let _ = writeln!(s, "- {l}");
+        }
+        s
+    }
+}
+
+fn format_receipts_context(receipts: &[Receipt]) -> String {
+    if receipts.is_empty() {
+        "Receipts (permalinks to original Slack messages):\n- None\n".to_string()
+    } else {
+        let mut s = String::from("Receipts (permalinks to original Slack messages):\n");
+        for r in receipts.iter().take(8) {
+            if r.snippet.is_empty() {
+                let _ = writeln!(s, "- {} — {}", r.permalink, r.author);
+            } else {
+                let _ = writeln!(s, "- {} — {}: \"{}\"", r.permalink, r.author, r.snippet);
+            }
+        }
+        s
+    }
+}
 
 /// Common Slack functionality
 pub struct SlackBot {
@@ -243,17 +287,106 @@ impl SlackBot {
             })
             .collect();
 
-        // Build the full prompt using the new method with channel context
+        // Extract links shared (URLs + Slack link markup + best-effort block scanning)
+        let links_shared = links::extract_links_from_messages(messages);
+
+        // Build a set of message receipts (permalinks) to support trust.
+        // We prefer messages that contained links or files, falling back to the newest N messages.
+        let author_for = |msg: &SlackHistoryMessage| -> String {
+            let user_id = msg
+                .sender
+                .user
+                .as_ref()
+                .map_or("Unknown User", |uid| uid.as_ref());
+
+            if user_id == "Unknown User" {
+                user_id.to_string()
+            } else {
+                user_info_cache
+                    .get(user_id)
+                    .map_or_else(|| user_id.to_string(), std::clone::Clone::clone)
+            }
+        };
+
+        let snippet_for = |msg: &SlackHistoryMessage| -> String {
+            let raw = msg.content.text.as_deref().unwrap_or("").replace('\n', " ");
+            // Keep snippets short and safe for Slack formatting.
+            let clipped: String = if raw.chars().count() > 80 {
+                raw.chars().take(77).collect()
+            } else {
+                raw
+            };
+            clipped.replace('`', "'").trim().to_string()
+        };
+
+        let mut receipt_seeds: Vec<ReceiptSeed> = Vec::new();
+        for msg in messages {
+            let has_files = msg.content.files.as_ref().is_some_and(|fs| !fs.is_empty());
+            let has_links = !links::extract_links_from_message(msg).is_empty();
+            if has_files || has_links {
+                receipt_seeds.push(ReceiptSeed {
+                    ts: msg.origin.ts.0.clone(),
+                    author: author_for(msg),
+                    snippet: snippet_for(msg),
+                });
+            }
+        }
+
+        if receipt_seeds.is_empty() {
+            for msg in messages.iter().take(8) {
+                receipt_seeds.push(ReceiptSeed {
+                    ts: msg.origin.ts.0.clone(),
+                    author: author_for(msg),
+                    snippet: snippet_for(msg),
+                });
+            }
+        }
+
+        if receipt_seeds.len() > 8 {
+            receipt_seeds.truncate(8);
+        }
+
+        let slack_client = &self.slack_client;
+        let fetches = receipt_seeds.iter().map(|seed| async move {
+            let res = slack_client
+                .get_message_permalink(channel_id, &seed.ts)
+                .await;
+            (seed, res)
+        });
+
+        let mut receipts: Vec<Receipt> = Vec::new();
+        for (seed, res) in join_all(fetches).await {
+            match res {
+                Ok(permalink) => receipts.push(Receipt {
+                    permalink,
+                    author: seed.author.clone(),
+                    snippet: seed.snippet.clone(),
+                }),
+                Err(e) => {
+                    error!(
+                        "Failed to fetch message permalink for ts {} in channel {}: {}",
+                        seed.ts, channel_id, e
+                    );
+                }
+            }
+        }
+
+        // Build the full prompt using the new method with channel context.
+        // We include the extracted "Links shared" and "Receipts" so the model can present
+        // them without hallucinating URLs.
         let messages_text = format!(
-            "Channel: #{}\n\n{}",
+            "Channel: #{}\n\nMessages:\n{}\n\n{}\n\n{}",
             channel_name,
-            formatted_messages.join("\n")
+            formatted_messages.join("\n"),
+            format_links_context(&links_shared),
+            format_receipts_context(&receipts),
         );
 
         // 1. Base text portion
         let mut prompt = self.build_prompt(&messages_text, custom_prompt);
 
         // 2. Append image data so the model can see pictures
+        let mut has_any_images = false;
         for msg in messages {
             if let Some(files) = &msg.content.files {
                 let mut imgs: Vec<ImageUrl> = Vec::new();
@@ -330,6 +463,7 @@ impl SlackBot {
                     }
                 }
                 if !imgs.is_empty() {
+                    has_any_images = true;
                     // Cap total images to avoid invalid_request_error and huge payloads
                     let cap = self.llm_client.get_max_images_total();
                     if imgs.len() > cap {
@@ -372,7 +506,39 @@ impl SlackBot {
         }
 
         // Generate the summary using the LlmClient
-        let summary_text = self.llm_client.generate_summary(prompt).await?;
+        let mut summary_text = self.llm_client.generate_summary(prompt).await?;
+
+        // Safety net: ensure required PR5 sections exist even if the model omits them.
+        // We keep these minimal; the richer rendering is expected to come from the model output.
+        if !summary_text.to_ascii_lowercase().contains("links shared") {
+            summary_text.push_str("\n\n*Links shared*\n");
+            if links_shared.is_empty() {
+                summary_text.push_str("- None\n");
+            } else {
+                for l in links_shared.iter().take(20) {
+                    let _ = writeln!(summary_text, "- {l}");
+                }
+            }
+        }
+
+        if has_any_images
+            && !summary_text
+                .to_ascii_lowercase()
+                .contains("image highlights")
+        {
+            summary_text.push_str("\n\n*Image highlights*\n- (No image highlights provided.)\n");
+        }
+
+        if !summary_text.to_ascii_lowercase().contains("receipts") {
+            summary_text.push_str("\n\n*Receipts*\n");
+            if receipts.is_empty() {
+                summary_text.push_str("- None\n");
+            } else {
+                for r in receipts.iter().take(8) {
+                    let _ = writeln!(summary_text, "- {}", r.permalink);
+                }
+            }
+        }
 
         // Format the final summary message. Use a channel mention so Slack renders the name.
         let formatted_summary = format!("*Summary from <#{channel_id}>*\n\n{summary_text}");

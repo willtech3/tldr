@@ -64,4 +64,12 @@ For CDK workflows, see `cdk/env.example` and create `cdk/.env` accordingly.
 
 If network access is restricted during task execution, run `./scripts/agent-setup.sh` while network is allowed so caches are primed.
 
+---
 
+### Documentation standards
+
+When working with checklists in project documentation files (markdown), use the following emoji conventions:
+- ✅ — Completed item (green checkmark)
+- ☐ — Incomplete/pending item (empty white box)
+
+When completing tasks from a checklist, update the checkbox emoji from ☐ to ✅ to reflect progress.
