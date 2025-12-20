@@ -347,7 +347,7 @@ impl SlackBot {
         }
 
         let slack_client = &self.slack_client;
-        let fetches = receipt_seeds.iter().cloned().map(|seed| async move {
+        let fetches = receipt_seeds.iter().map(|seed| async move {
             let res = slack_client
                 .get_message_permalink(channel_id, &seed.ts)
                 .await;
@@ -359,8 +359,8 @@ impl SlackBot {
             match res {
                 Ok(permalink) => receipts.push(Receipt {
                     permalink,
-                    author: seed.author,
-                    snippet: seed.snippet,
+                    author: seed.author.clone(),
+                    snippet: seed.snippet.clone(),
                 }),
                 Err(e) => {
                     error!(
