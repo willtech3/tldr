@@ -6,6 +6,7 @@ use futures::StreamExt;
 use openai_api_rs::v1::chat_completion::{ChatCompletionMessage, Content, ImageUrl, MessageRole};
 use reqwest::Client;
 use serde_json::{Value, json};
+use std::collections::VecDeque;
 use std::pin::Pin;
 use std::time::Duration;
 use tracing::info;
@@ -565,6 +566,8 @@ impl LlmClient {
         Ok(StreamingResponse::Active(ActiveStreamingResponse {
             byte_stream: Box::pin(response.bytes_stream()),
             parser: SseParser::new(),
+            pending_results: VecDeque::new(),
+            utf8_buffer: Vec::new(),
             completed: false,
         }))
     }
@@ -600,6 +603,8 @@ type ByteStream = Pin<Box<dyn futures::Stream<Item = Result<bytes::Bytes, reqwes
 pub struct ActiveStreamingResponse {
     byte_stream: ByteStream,
     parser: SseParser,
+    pending_results: VecDeque<ParseResult>,
+    utf8_buffer: Vec<u8>,
     completed: bool,
 }
 
@@ -607,6 +612,8 @@ impl std::fmt::Debug for ActiveStreamingResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ActiveStreamingResponse")
             .field("completed", &self.completed)
+            .field("pending_results_len", &self.pending_results.len())
+            .field("utf8_buffer_len", &self.utf8_buffer.len())
             .field("parser_buffer_len", &self.parser.remaining_buffer().len())
             .finish_non_exhaustive()
     }
@@ -631,37 +638,63 @@ impl ActiveStreamingResponse {
         }
 
         loop {
+            // Always drain any already-parsed results first. `SseParser::feed()` consumes all
+            // complete frames from its internal buffer, so we must not drop results when
+            // multiple frames arrive in a single HTTP chunk.
+            while let Some(result) = self.pending_results.pop_front() {
+                match result {
+                    ParseResult::Event(event) => {
+                        if matches!(
+                            event,
+                            StreamEvent::Completed | StreamEvent::Failed(_) | StreamEvent::Error(_)
+                        ) {
+                            self.completed = true;
+                        }
+                        return Ok(Some(event));
+                    }
+                    ParseResult::Done => {
+                        self.completed = true;
+                        return Ok(None);
+                    }
+                    ParseResult::UnknownEvent(_) | ParseResult::Incomplete => {
+                        // Ignore and keep draining.
+                    }
+                }
+            }
+
             // Try to get the next chunk from the byte stream
             match self.byte_stream.next().await {
                 Some(Ok(bytes)) => {
-                    // Convert bytes to string
-                    let chunk = String::from_utf8_lossy(&bytes);
+                    // Preserve UTF-8 correctness across arbitrary byte chunk boundaries.
+                    // `String::from_utf8_lossy` can introduce U+FFFD when codepoints are split.
+                    self.utf8_buffer.extend_from_slice(&bytes);
 
-                    // Feed to SSE parser
-                    let results = self.parser.feed(&chunk);
-
-                    // Process parse results
-                    for result in results {
-                        match result {
-                            ParseResult::Event(event) => {
-                                // Check if this is a terminal event
-                                if matches!(
-                                    event,
-                                    StreamEvent::Completed
-                                        | StreamEvent::Failed(_)
-                                        | StreamEvent::Error(_)
-                                ) {
-                                    self.completed = true;
-                                }
-                                return Ok(Some(event));
+                    // Feed any valid UTF-8 prefix into the SSE parser; keep an incomplete
+                    // trailing sequence buffered until the next chunk arrives.
+                    match std::str::from_utf8(&self.utf8_buffer) {
+                        Ok(valid_str) => {
+                            self.pending_results.extend(self.parser.feed(valid_str));
+                            self.utf8_buffer.clear();
+                        }
+                        Err(e) => {
+                            let valid_up_to = e.valid_up_to();
+                            if valid_up_to > 0 {
+                                // SAFETY: `valid_up_to` is guaranteed to be on a UTF-8 boundary.
+                                let valid_prefix =
+                                    std::str::from_utf8(&self.utf8_buffer[..valid_up_to])
+                                        .unwrap_or("");
+                                self.pending_results.extend(self.parser.feed(valid_prefix));
+                                self.utf8_buffer.drain(..valid_up_to);
                             }
-                            ParseResult::Done => {
+
+                            if e.error_len().is_some() {
                                 self.completed = true;
-                                return Ok(None);
+                                return Err(SlackError::OpenAIError(
+                                    "Invalid UTF-8 in OpenAI streaming response".to_string(),
+                                ));
                             }
-                            ParseResult::UnknownEvent(_) | ParseResult::Incomplete => {
-                                // Continue processing
-                            }
+                            // Otherwise, we have an incomplete trailing UTF-8 sequence. Wait for
+                            // more bytes.
                         }
                     }
                 }
@@ -878,5 +911,68 @@ mod tests {
     fn test_streaming_response_is_too_large() {
         let too_large = StreamingResponse::TooLarge;
         assert!(too_large.is_too_large());
+    }
+
+    #[tokio::test]
+    async fn test_next_event_does_not_drop_multiple_events_in_single_chunk() {
+        let sse = concat!(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\" World\"}\n\n",
+            "data: {\"type\":\"response.completed\"}\n\n"
+        );
+
+        let stream = futures::stream::iter(vec![Ok(bytes::Bytes::from(sse))]);
+
+        let mut resp = ActiveStreamingResponse {
+            byte_stream: Box::pin(stream),
+            parser: SseParser::new(),
+            pending_results: VecDeque::new(),
+            utf8_buffer: Vec::new(),
+            completed: false,
+        };
+
+        assert_eq!(
+            resp.next_event().await.unwrap(),
+            Some(StreamEvent::TextDelta("Hello".to_string()))
+        );
+        assert_eq!(
+            resp.next_event().await.unwrap(),
+            Some(StreamEvent::TextDelta(" World".to_string()))
+        );
+        assert_eq!(
+            resp.next_event().await.unwrap(),
+            Some(StreamEvent::Completed)
+        );
+        assert_eq!(resp.next_event().await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn test_next_event_handles_utf8_split_across_byte_chunks() {
+        let event = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello 世界\"}\n\n";
+        let event_bytes = event.as_bytes();
+
+        // Split inside the UTF-8 bytes for '世' (0xE4 0xB8 0x96).
+        let split_at = event_bytes
+            .iter()
+            .position(|b| *b == 0xE4)
+            .expect("expected UTF-8 multi-byte sequence in test input");
+
+        let chunk1 = bytes::Bytes::copy_from_slice(&event_bytes[..=split_at]);
+        let chunk2 = bytes::Bytes::copy_from_slice(&event_bytes[split_at + 1..]);
+
+        let stream = futures::stream::iter(vec![Ok(chunk1), Ok(chunk2)]);
+
+        let mut resp = ActiveStreamingResponse {
+            byte_stream: Box::pin(stream),
+            parser: SseParser::new(),
+            pending_results: VecDeque::new(),
+            utf8_buffer: Vec::new(),
+            completed: false,
+        };
+
+        assert_eq!(
+            resp.next_event().await.unwrap(),
+            Some(StreamEvent::TextDelta("Hello 世界".to_string()))
+        );
     }
 }

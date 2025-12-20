@@ -521,23 +521,23 @@ mod tests {
         // Simulate a JSON event split across many small chunks
         let full_event = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Complete message here!\"}\n\n";
 
+        let mut emitted: Vec<ParseResult> = Vec::new();
+
         // Split into very small chunks (like TCP might)
         for chunk in full_event.as_bytes().chunks(5) {
             let chunk_str = std::str::from_utf8(chunk).unwrap();
             let results = parser.feed(chunk_str);
 
-            // Only the last chunk should produce a result
-            if chunk_str.ends_with("\n\n") || parser.remaining_buffer().is_empty() {
-                // Might have result
-            } else {
-                assert!(results.is_empty(), "Should not emit until boundary reached");
-            }
+            emitted.extend(results);
         }
 
-        // Feed remaining if buffer still has content
-        if !parser.remaining_buffer().is_empty() {
-            // Need to close it
-        }
+        assert_eq!(
+            emitted,
+            vec![ParseResult::Event(StreamEvent::TextDelta(
+                "Complete message here!".to_string()
+            ))]
+        );
+        assert!(parser.remaining_buffer().is_empty());
     }
 
     #[test]
