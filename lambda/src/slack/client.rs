@@ -67,6 +67,71 @@ pub struct MessageNotInStreamingState;
 /// Maximum character limit for `markdown_text` in streaming API calls.
 pub const STREAM_MARKDOWN_TEXT_LIMIT: usize = 12_000;
 
+/// Slack error code for when a message is not in streaming state.
+const ERROR_MESSAGE_NOT_IN_STREAMING_STATE: &str = "message_not_in_streaming_state";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Streaming payload builders (extracted for testability)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Build the JSON payload for `chat.startStream`.
+#[must_use]
+pub fn build_start_stream_payload(
+    channel: &str,
+    thread_ts: &str,
+    markdown_text: Option<&str>,
+) -> Value {
+    let mut payload = json!({
+        "channel": channel,
+        "thread_ts": thread_ts,
+    });
+
+    if let Some(text) = markdown_text {
+        payload["markdown_text"] = Value::String(text.to_string());
+    }
+
+    payload
+}
+
+/// Build the JSON payload for `chat.appendStream`.
+#[must_use]
+pub fn build_append_stream_payload(channel: &str, ts: &str, markdown_text: &str) -> Value {
+    json!({
+        "channel": channel,
+        "ts": ts,
+        "markdown_text": markdown_text,
+    })
+}
+
+/// Build the JSON payload for `chat.stopStream`.
+#[must_use]
+pub fn build_stop_stream_payload(
+    channel: &str,
+    ts: &str,
+    markdown_text: Option<&str>,
+    blocks: Option<&Value>,
+    metadata: Option<&Value>,
+) -> Value {
+    let mut payload = json!({
+        "channel": channel,
+        "ts": ts,
+    });
+
+    if let Some(text) = markdown_text {
+        payload["markdown_text"] = Value::String(text.to_string());
+    }
+
+    if let Some(b) = blocks {
+        payload["blocks"] = b.clone();
+    }
+
+    if let Some(m) = metadata {
+        payload["metadata"] = m.clone();
+    }
+
+    payload
+}
+
 /// Slack API client with retry logic and error handling
 pub struct SlackClient {
     token: SlackApiToken,
@@ -746,14 +811,7 @@ impl SlackClient {
         thread_ts: &str,
         markdown_text: Option<&str>,
     ) -> Result<String, SlackError> {
-        let mut payload = json!({
-            "channel": channel,
-            "thread_ts": thread_ts,
-        });
-
-        if let Some(text) = markdown_text {
-            payload["markdown_text"] = Value::String(text.to_string());
-        }
+        let payload = build_start_stream_payload(channel, thread_ts, markdown_text);
 
         let resp = self
             .call_slack_streaming_api("https://slack.com/api/chat.startStream", &payload)
@@ -789,11 +847,7 @@ impl SlackClient {
         ts: &str,
         markdown_text: &str,
     ) -> Result<Result<(), MessageNotInStreamingState>, SlackError> {
-        let payload = json!({
-            "channel": channel,
-            "ts": ts,
-            "markdown_text": markdown_text,
-        });
+        let payload = build_append_stream_payload(channel, ts, markdown_text);
 
         match self
             .call_slack_streaming_api("https://slack.com/api/chat.appendStream", &payload)
@@ -801,7 +855,7 @@ impl SlackClient {
         {
             Ok(_) => Ok(Ok(())),
             Err(SlackError::ApiError(ref msg))
-                if msg.contains("message_not_in_streaming_state") =>
+                if msg.contains(ERROR_MESSAGE_NOT_IN_STREAMING_STATE) =>
             {
                 Ok(Err(MessageNotInStreamingState))
             }
@@ -833,22 +887,7 @@ impl SlackClient {
         blocks: Option<&Value>,
         metadata: Option<&Value>,
     ) -> Result<(), SlackError> {
-        let mut payload = json!({
-            "channel": channel,
-            "ts": ts,
-        });
-
-        if let Some(text) = markdown_text {
-            payload["markdown_text"] = Value::String(text.to_string());
-        }
-
-        if let Some(b) = blocks {
-            payload["blocks"] = b.clone();
-        }
-
-        if let Some(m) = metadata {
-            payload["metadata"] = m.clone();
-        }
+        let payload = build_stop_stream_payload(channel, ts, markdown_text, blocks, metadata);
 
         self.call_slack_streaming_api("https://slack.com/api/chat.stopStream", &payload)
             .await?;
@@ -1018,18 +1057,12 @@ mod streaming_tests {
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
-    // Request payload construction tests
+    // Payload builder function tests (using actual production code)
     // ─────────────────────────────────────────────────────────────────────────────
 
     #[test]
-    fn test_start_stream_payload_minimal() {
-        let channel = "D1234567890";
-        let thread_ts = "1721609600.000000";
-
-        let payload = json!({
-            "channel": channel,
-            "thread_ts": thread_ts,
-        });
+    fn test_build_start_stream_payload_minimal() {
+        let payload = build_start_stream_payload("D1234567890", "1721609600.000000", None);
 
         assert_eq!(payload["channel"], "D1234567890");
         assert_eq!(payload["thread_ts"], "1721609600.000000");
@@ -1037,16 +1070,9 @@ mod streaming_tests {
     }
 
     #[test]
-    fn test_start_stream_payload_with_markdown() {
-        let channel = "D1234567890";
-        let thread_ts = "1721609600.000000";
-        let markdown_text = "**Hello** world";
-
-        let mut payload = json!({
-            "channel": channel,
-            "thread_ts": thread_ts,
-        });
-        payload["markdown_text"] = Value::String(markdown_text.to_string());
+    fn test_build_start_stream_payload_with_markdown() {
+        let payload =
+            build_start_stream_payload("D1234567890", "1721609600.000000", Some("**Hello** world"));
 
         assert_eq!(payload["channel"], "D1234567890");
         assert_eq!(payload["thread_ts"], "1721609600.000000");
@@ -1054,16 +1080,9 @@ mod streaming_tests {
     }
 
     #[test]
-    fn test_append_stream_payload() {
-        let channel = "C123ABC456";
-        let ts = "1503435956.000247";
-        let markdown_text = "More text to append";
-
-        let payload = json!({
-            "channel": channel,
-            "ts": ts,
-            "markdown_text": markdown_text,
-        });
+    fn test_build_append_stream_payload() {
+        let payload =
+            build_append_stream_payload("C123ABC456", "1503435956.000247", "More text to append");
 
         assert_eq!(payload["channel"], "C123ABC456");
         assert_eq!(payload["ts"], "1503435956.000247");
@@ -1071,14 +1090,9 @@ mod streaming_tests {
     }
 
     #[test]
-    fn test_stop_stream_payload_minimal() {
-        let channel = "C123ABC456";
-        let ts = "1503435956.000247";
-
-        let payload = json!({
-            "channel": channel,
-            "ts": ts,
-        });
+    fn test_build_stop_stream_payload_minimal() {
+        let payload =
+            build_stop_stream_payload("C123ABC456", "1503435956.000247", None, None, None);
 
         assert_eq!(payload["channel"], "C123ABC456");
         assert_eq!(payload["ts"], "1503435956.000247");
@@ -1088,10 +1102,7 @@ mod streaming_tests {
     }
 
     #[test]
-    fn test_stop_stream_payload_with_blocks_and_metadata() {
-        let channel = "C123ABC456";
-        let ts = "1503435956.000247";
-        let markdown_text = "Final text";
+    fn test_build_stop_stream_payload_with_blocks_and_metadata() {
         let blocks = json!([{
             "type": "context_actions",
             "elements": [{
@@ -1116,13 +1127,13 @@ mod streaming_tests {
             }
         });
 
-        let mut payload = json!({
-            "channel": channel,
-            "ts": ts,
-        });
-        payload["markdown_text"] = Value::String(markdown_text.to_string());
-        payload["blocks"] = blocks.clone();
-        payload["metadata"] = metadata.clone();
+        let payload = build_stop_stream_payload(
+            "C123ABC456",
+            "1503435956.000247",
+            Some("Final text"),
+            Some(&blocks),
+            Some(&metadata),
+        );
 
         assert_eq!(payload["channel"], "C123ABC456");
         assert_eq!(payload["ts"], "1503435956.000247");
@@ -1134,6 +1145,36 @@ mod streaming_tests {
             payload["metadata"]["event_payload"]["streamed"]
                 .as_bool()
                 .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_build_stop_stream_payload_with_only_markdown() {
+        let payload = build_stop_stream_payload(
+            "C123ABC456",
+            "1503435956.000247",
+            Some("Final text only"),
+            None,
+            None,
+        );
+
+        assert_eq!(payload["channel"], "C123ABC456");
+        assert_eq!(payload["ts"], "1503435956.000247");
+        assert_eq!(payload["markdown_text"], "Final text only");
+        assert!(payload.get("blocks").is_none());
+        assert!(payload.get("metadata").is_none());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Error constant tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_error_constant_matches_slack_error() {
+        // Ensure the constant matches what Slack actually returns
+        assert_eq!(
+            ERROR_MESSAGE_NOT_IN_STREAMING_STATE,
+            "message_not_in_streaming_state"
         );
     }
 
