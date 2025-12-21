@@ -30,6 +30,16 @@ struct Receipt {
     snippet: String,
 }
 
+/// Prompt + context returned from `build_summarize_prompt_data`.
+///
+/// This is used by both the non-streaming and streaming summarization paths.
+pub(crate) struct SummarizePromptData {
+    pub(crate) prompt: Vec<ChatCompletionMessage>,
+    pub(crate) links_shared: Vec<String>,
+    pub(crate) receipt_permalinks: Vec<String>,
+    pub(crate) has_any_images: bool,
+}
+
 fn format_links_context(links: &[String]) -> String {
     if links.is_empty() {
         "Links shared (deduped):\n- None\n".to_string()
@@ -209,22 +219,59 @@ impl SlackBot {
         self.llm_client.build_prompt(messages_markdown, custom_opt)
     }
 
+    pub(crate) fn apply_safety_net_sections(summary_text: &mut String, data: &SummarizePromptData) {
+        // Safety net: ensure required sections exist even if the model omits them.
+        // We keep these minimal; the richer rendering is expected to come from the model output.
+        if !summary_text.to_ascii_lowercase().contains("links shared") {
+            summary_text.push_str("\n\n*Links shared*\n");
+            if data.links_shared.is_empty() {
+                summary_text.push_str("- None\n");
+            } else {
+                for l in data.links_shared.iter().take(20) {
+                    let _ = writeln!(summary_text, "- {l}");
+                }
+            }
+        }
+
+        if !summary_text
+            .to_ascii_lowercase()
+            .contains("image highlights")
+        {
+            summary_text.push_str("\n\n*Image highlights*\n");
+            if data.has_any_images {
+                summary_text.push_str("- (No image highlights provided.)\n");
+            } else {
+                summary_text.push_str("- None\n");
+            }
+        }
+
+        if !summary_text.to_ascii_lowercase().contains("receipts") {
+            summary_text.push_str("\n\n*Receipts*\n");
+            if data.receipt_permalinks.is_empty() {
+                summary_text.push_str("- None\n");
+            } else {
+                for r in data.receipt_permalinks.iter().take(8) {
+                    let _ = writeln!(summary_text, "- {r}");
+                }
+            }
+        }
+    }
+
+    /// Build the `OpenAI` prompt (and supporting safety-net context) for summarization.
+    ///
+    /// This encapsulates the "fetch messages → build prompt" logic so the worker can reuse it for
+    /// both non-streaming and streaming `OpenAI` calls without duplicating Slack-side processing.
+    ///
     /// # Errors
     ///
-    /// Returns an error if the `OpenAI` API call fails or Slack API lookups needed
-    /// for prompt construction fail.
-    #[allow(clippy::too_many_lines)] // The orchestration here benefits from locality; refactor if it grows.
-    pub async fn summarize_messages_with_chatgpt(
+    /// Returns an error if Slack API calls required for prompt construction fail.
+    #[allow(clippy::too_many_lines)]
+    pub(crate) async fn build_summarize_prompt_data(
         &mut self,
-        _config: &AppConfig,
         messages: &[SlackHistoryMessage],
         channel_id: &str,
         custom_prompt: Option<&str>,
-    ) -> Result<String, SlackError> {
-        if messages.is_empty() {
-            return Ok("No messages to summarize.".to_string());
-        }
-
+    ) -> Result<SummarizePromptData, SlackError> {
         // Get channel name from channel_id
         let channel_name = self.slack_client.get_channel_name(channel_id).await?;
 
@@ -371,6 +418,9 @@ impl SlackBot {
             }
         }
 
+        let receipt_permalinks: Vec<String> =
+            receipts.iter().map(|r| r.permalink.clone()).collect();
+
         // Build the full prompt using the new method with channel context.
         // We include the extracted "Links shared" and "Receipts" so the model can present
         // them without hallucinating URLs.
@@ -505,40 +555,37 @@ impl SlackBot {
             }
         }
 
+        Ok(SummarizePromptData {
+            prompt,
+            links_shared,
+            receipt_permalinks,
+            has_any_images,
+        })
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the `OpenAI` API call fails or Slack API lookups needed
+    /// for prompt construction fail.
+    pub async fn summarize_messages_with_chatgpt(
+        &mut self,
+        _config: &AppConfig,
+        messages: &[SlackHistoryMessage],
+        channel_id: &str,
+        custom_prompt: Option<&str>,
+    ) -> Result<String, SlackError> {
+        if messages.is_empty() {
+            return Ok("No messages to summarize.".to_string());
+        }
+
+        let mut data = self
+            .build_summarize_prompt_data(messages, channel_id, custom_prompt)
+            .await?;
+
         // Generate the summary using the LlmClient
+        let prompt = std::mem::take(&mut data.prompt);
         let mut summary_text = self.llm_client.generate_summary(prompt).await?;
-
-        // Safety net: ensure required PR5 sections exist even if the model omits them.
-        // We keep these minimal; the richer rendering is expected to come from the model output.
-        if !summary_text.to_ascii_lowercase().contains("links shared") {
-            summary_text.push_str("\n\n*Links shared*\n");
-            if links_shared.is_empty() {
-                summary_text.push_str("- None\n");
-            } else {
-                for l in links_shared.iter().take(20) {
-                    let _ = writeln!(summary_text, "- {l}");
-                }
-            }
-        }
-
-        if has_any_images
-            && !summary_text
-                .to_ascii_lowercase()
-                .contains("image highlights")
-        {
-            summary_text.push_str("\n\n*Image highlights*\n- (No image highlights provided.)\n");
-        }
-
-        if !summary_text.to_ascii_lowercase().contains("receipts") {
-            summary_text.push_str("\n\n*Receipts*\n");
-            if receipts.is_empty() {
-                summary_text.push_str("- None\n");
-            } else {
-                for r in receipts.iter().take(8) {
-                    let _ = writeln!(summary_text, "- {}", r.permalink);
-                }
-            }
-        }
+        Self::apply_safety_net_sections(&mut summary_text, &data);
 
         // Format the final summary message. Use a channel mention so Slack renders the name.
         let formatted_summary = format!("*Summary from <#{channel_id}>*\n\n{summary_text}");

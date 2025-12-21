@@ -13,6 +13,9 @@ interface TldrStackProps extends cdk.StackProps {
   slackSigningSecret: string;
   openaiApiKey: string;
   openaiOrgId: string;
+  enableStreaming: string;
+  streamMinAppendIntervalMs?: string;
+  streamMaxChunkChars?: string;
 }
 
 export class TldrStack extends cdk.Stack {
@@ -90,6 +93,11 @@ export class TldrStack extends cdk.Stack {
       OPENAI_API_KEY: props.openaiApiKey,
       OPENAI_ORG_ID: props.openaiOrgId,
       PROCESSING_QUEUE_URL: processingQueue.queueUrl,
+      ENABLE_STREAMING: props.enableStreaming,
+      ...(props.streamMinAppendIntervalMs
+        ? { STREAM_MIN_APPEND_INTERVAL_MS: props.streamMinAppendIntervalMs }
+        : {}),
+      ...(props.streamMaxChunkChars ? { STREAM_MAX_CHUNK_CHARS: props.streamMaxChunkChars } : {}),
       // ensure no trailing slash to avoid double slashes when composing paths
       API_BASE_URL: api.url.replace(/\/$/, ''),
     };

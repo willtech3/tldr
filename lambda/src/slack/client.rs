@@ -64,7 +64,10 @@ pub struct StreamResponse {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MessageNotInStreamingState;
 
-/// Maximum character limit for `markdown_text` in streaming API calls.
+/// Slack's documented per-call character limit for `markdown_text` in streaming APIs.
+///
+/// This is the maximum number of characters that can be sent in a single
+/// `chat.startStream`, `chat.appendStream`, or `chat.stopStream` call.
 pub const STREAM_MARKDOWN_TEXT_LIMIT: usize = 12_000;
 
 /// Slack error code for when a message is not in streaming state.
@@ -378,6 +381,68 @@ impl SlackClient {
             );
 
             session.chat_delete(&delete_req).await?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Update an existing message via Slack's `chat.update` API.
+    ///
+    /// This is used to replace streamed partial output with the canonical failure message
+    /// (and/or to attach/remove blocks).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Slack API request or response parsing fails.
+    pub async fn update_message(
+        &self,
+        channel_id: &str,
+        ts: &str,
+        text: Option<&str>,
+        blocks: Option<&Value>,
+    ) -> Result<(), SlackError> {
+        let mut payload = json!({
+            "channel": channel_id,
+            "ts": ts,
+        });
+
+        if let Some(t) = text {
+            payload["text"] = Value::String(t.to_string());
+        }
+
+        if let Some(b) = blocks {
+            payload["blocks"] = b.clone();
+        }
+
+        self.with_retry(|| async {
+            let resp = HTTP_CLIENT
+                .post("https://slack.com/api/chat.update")
+                .bearer_auth(&self.token.token_value.0)
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|e| SlackError::GeneralError(format!("Failed to update message: {e}")))?;
+
+            if !resp.status().is_success() {
+                return Err(SlackError::ApiError(format!(
+                    "chat.update HTTP {}",
+                    resp.status()
+                )));
+            }
+
+            let body: Value = resp.json().await.map_err(|e| {
+                SlackError::GeneralError(format!("chat.update JSON parse error: {e}"))
+            })?;
+
+            if !body.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+                return Err(SlackError::ApiError(format!(
+                    "chat.update error: {}",
+                    body.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown")
+                )));
+            }
+
             Ok(())
         })
         .await
