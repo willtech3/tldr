@@ -18,7 +18,12 @@ use crate::errors::SlackError;
 const MAX_CONTEXT_TOKENS: usize = 400_000;
 const MAX_OUTPUT_TOKENS: usize = 100_000;
 const TOKEN_BUFFER: usize = 250;
-const INLINE_IMAGE_MAX_BYTES: usize = 64 * 1024;
+// Inline image bytes cap when embedding images as Base64 data URLs.
+//
+// This is intentionally conservative to avoid oversized HTTP payloads and excessive
+// memory usage in Lambda. Images above this size should be skipped (or downscaled/
+// proxied in a future enhancement).
+const INLINE_IMAGE_MAX_BYTES: usize = 1024 * 1024; // 1 MiB
 const URL_IMAGE_MAX_BYTES: usize = 20 * 1024 * 1024;
 
 const ALLOWED_IMAGE_MIME: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
@@ -70,6 +75,24 @@ pub fn canonicalize_mime(mime: &str) -> String {
 #[must_use]
 pub fn estimate_tokens(text: &str) -> usize {
     text.chars().count() / 4 + 1
+}
+
+#[must_use]
+fn estimate_prompt_tokens(prompt: &[ChatCompletionMessage]) -> usize {
+    // Token estimation is used only to size max_output_tokens safely. It must not be
+    // distorted by Base64 image payloads (which are not "text tokens" in the same way).
+    //
+    // For images, use a conservative fixed estimate per image to avoid massively
+    // overcounting when images are provided as data URLs.
+    const TOKENS_PER_IMAGE_ESTIMATE: usize = 1_500;
+
+    prompt
+        .iter()
+        .map(|msg| match &msg.content {
+            Content::Text(t) => estimate_tokens(t),
+            Content::ImageUrl(imgs) => imgs.len().saturating_mul(TOKENS_PER_IMAGE_ESTIMATE),
+        })
+        .sum()
 }
 
 /// LLM API client for generating summaries
@@ -224,10 +247,7 @@ impl LlmClient {
             prompt.len()
         );
 
-        let estimated_input_tokens = prompt
-            .iter()
-            .map(|msg| estimate_tokens(&format!("{:?}", msg.content)))
-            .sum::<usize>();
+        let estimated_input_tokens = estimate_prompt_tokens(&prompt);
 
         info!("Estimated input tokens: {}", estimated_input_tokens);
 
@@ -301,7 +321,10 @@ impl LlmClient {
 
                 let estimated_input_tokens = text_only_prompt
                     .iter()
-                    .map(|msg| estimate_tokens(&format!("{:?}", msg.content)))
+                    .map(|msg| match &msg.content {
+                        Content::Text(t) => estimate_tokens(t),
+                        Content::ImageUrl(_) => 0,
+                    })
                     .sum::<usize>();
                 info!(
                     "Estimated input tokens (fallback): {}",
@@ -514,10 +537,7 @@ impl LlmClient {
             prompt.len()
         );
 
-        let estimated_input_tokens = prompt
-            .iter()
-            .map(|msg| estimate_tokens(&format!("{:?}", msg.content)))
-            .sum::<usize>();
+        let estimated_input_tokens = estimate_prompt_tokens(&prompt);
 
         info!(
             "Estimated input tokens (streaming): {}",
@@ -601,10 +621,7 @@ impl LlmClient {
                 info!("Falling back to text-only prompt after streaming image error");
 
                 let text_only_prompt = LlmClient::strip_images_from_prompt(&prompt);
-                let estimated_input_tokens = text_only_prompt
-                    .iter()
-                    .map(|msg| estimate_tokens(&format!("{:?}", msg.content)))
-                    .sum::<usize>();
+                let estimated_input_tokens = estimate_prompt_tokens(&text_only_prompt);
 
                 info!(
                     "Estimated input tokens (streaming fallback): {}",

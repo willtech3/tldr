@@ -2,6 +2,7 @@
 //!
 //! Encapsulates all Slack API interactions with retry logic and error handling.
 
+use futures::StreamExt;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -802,6 +803,66 @@ impl SlackClient {
             .and_then(|s| s.parse::<usize>().ok());
 
         Ok(Some((content_type_opt, size_opt)))
+    }
+
+    /// Download an image file from Slack (authenticated) into memory with a strict size cap.
+    ///
+    /// Slack `url_private` / `url_private_download` requires a bearer token. This helper
+    /// performs a GET with bot auth, enforces a maximum number of bytes, and returns the
+    /// raw bytes for Base64 encoding.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails, Slack responds non-2xx, or the image
+    /// exceeds `max_bytes`.
+    pub async fn download_image_bytes(
+        &self,
+        url: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, SlackError> {
+        if max_bytes == 0 {
+            return Err(SlackError::GeneralError(
+                "download_image_bytes max_bytes must be > 0".to_string(),
+            ));
+        }
+
+        let resp = HTTP_CLIENT
+            .get(url)
+            .bearer_auth(&self.token.token_value.0)
+            .send()
+            .await
+            .map_err(|e| SlackError::HttpError(format!("Failed to download Slack image: {e}")))?;
+
+        if !resp.status().is_success() {
+            return Err(SlackError::ApiError(format!(
+                "Slack image download HTTP {}",
+                resp.status()
+            )));
+        }
+
+        if let Some(len) = resp.content_length()
+            && len > u64::try_from(max_bytes).unwrap_or(u64::MAX)
+        {
+            return Err(SlackError::GeneralError(format!(
+                "Slack image too large to inline ({len}B > {max_bytes}B)"
+            )));
+        }
+
+        let mut out: Vec<u8> = Vec::new();
+        let mut stream = resp.bytes_stream();
+        while let Some(item) = stream.next().await {
+            let chunk = item.map_err(|e| {
+                SlackError::HttpError(format!("Error reading Slack image download stream: {e}"))
+            })?;
+            if out.len().saturating_add(chunk.len()) > max_bytes {
+                return Err(SlackError::GeneralError(format!(
+                    "Slack image too large to inline (exceeded {max_bytes}B cap)"
+                )));
+            }
+            out.extend_from_slice(&chunk);
+        }
+
+        Ok(out)
     }
 
     /// # Errors

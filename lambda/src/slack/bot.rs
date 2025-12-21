@@ -5,11 +5,12 @@ use openai_api_rs::v1::chat_completion::{
     self as chat_completion, ChatCompletionMessage, Content, ContentType, ImageUrl, ImageUrlType,
     MessageRole,
 };
+use openssl::base64;
 use serde_json::Value;
 use slack_morphism::{SlackFile, SlackHistoryMessage};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 use url::Url;
 
 use crate::core::config::AppConfig;
@@ -138,66 +139,6 @@ impl SlackBot {
                 Err(e)
             }
         }
-    }
-
-    async fn fetch_image_size(&self, url: &str) -> Result<Option<usize>, SlackError> {
-        self.slack_client.fetch_image_size(url).await
-    }
-
-    async fn ensure_public_file_url(&self, file: &SlackFile) -> Result<String, SlackError> {
-        // Step 1: Use slack_client to ensure the file has a public permalink
-        let permalink = self.slack_client.ensure_public_file_url(file).await?;
-
-        // Step 2: Extract pub_secret from the permalink.
-        let secret = Url::parse(&permalink)
-            .ok()
-            .and_then(|u| {
-                // First, try query string
-                if let Some(val) = u
-                    .query_pairs()
-                    .find(|(k, _)| k == "pub_secret")
-                    .map(|(_, v)| v.to_string())
-                {
-                    return Some(val);
-                }
-
-                // Fallback: public permalinks are of form
-                // https://slack-files.com/TXXXX-FFFF-<secret>
-                // Extract last hyphen-separated part of last path segment.
-                u.path_segments()
-                    .and_then(|mut segs| segs.next_back().map(std::string::ToString::to_string))
-                    .and_then(|last_seg| {
-                        last_seg
-                            .rsplit('-')
-                            .next()
-                            .map(std::string::ToString::to_string)
-                    })
-            })
-            .ok_or_else(|| {
-                SlackError::ApiError("pub_secret missing in permalink_public".to_string())
-            })?;
-
-        // Step 3: Construct direct asset URL by adding pub_secret to download URL.
-        let base_download = Self::get_slack_file_download_url(file)
-            .ok_or_else(|| SlackError::ApiError("No downloadable URL on SlackFile".to_string()))?;
-
-        debug!(
-            "Ensuring public URL for file {} (mimetype={:?}): base={}",
-            file.id.0,
-            file.mimetype.as_ref().map(|m| m.0.clone()),
-            base_download
-        );
-
-        // Start with the original private download URL and attach the pub_secret.
-        let mut direct = base_download.clone();
-        direct.set_query(Some(&format!("pub_secret={secret}")));
-
-        // Prefer the original /download/ path (direct already has it).
-        // Slack frequently returns text/html for HEAD on public files, even when GET serves the image.
-        // Since we already validated allowed image types earlier using Slack metadata or path extension,
-        // and we've attached a valid pub_secret, return the constructed URL without strict HEAD checks.
-        // As a safety net, if clients later fail to fetch, Slack will log it; we avoid precluding valid cases here.
-        Ok(direct.to_string())
     }
 
     /// Helper to obtain the best URL for downloading a Slack file.
@@ -458,56 +399,53 @@ impl SlackBot {
                             continue; // Skip unsupported formats like HEIC, TIFF, etc.
                         }
 
-                        // Server-side HEAD validation on private URL with bot token
-                        let head_info = self
-                            .slack_client
-                            .fetch_image_head(url.as_str())
-                            .await
-                            .unwrap_or(None);
+                        // Option A: Download the image from Slack using bot auth and inline it
+                        // as a Base64 data URL so OpenAI does not need to fetch from Slack.
+                        //
+                        // This avoids "Error while downloading ..." failures from OpenAI when
+                        // Slack URLs are not publicly reachable.
+                        let inline_max = self.llm_client.get_inline_image_max_bytes();
 
-                        // If HEAD succeeded, ensure content-type is image/* and enforce size limit
-                        if let Some((ct_opt, size_opt)) = head_info {
+                        // Best-effort HEAD validation (content-type + size) on private URL
+                        if let Ok(Some((ct_opt, size_opt))) =
+                            self.slack_client.fetch_image_head(url.as_str()).await
+                        {
                             if let Some(ct) = ct_opt {
                                 let ct_can = crate::ai::client::canonicalize_mime(&ct);
                                 if !ct_can.starts_with("image/")
                                     || !self.llm_client.is_allowed_image_mime(&ct_can)
                                 {
-                                    // Not an image; skip this file entirely
                                     continue;
                                 }
                             }
 
-                            // Skip if over OpenAI hard limit
-                            if let Some(sz) = size_opt {
-                                let url_max = self.llm_client.get_url_image_max_bytes();
-                                if sz > url_max {
-                                    info!(
-                                        "Skipping image {} because size {}B > {}B",
-                                        url, sz, url_max
-                                    );
-                                    continue;
-                                }
+                            if let Some(sz) = size_opt
+                                && sz > inline_max
+                            {
+                                info!(
+                                    "Skipping image {} because size {}B > inline cap {}B",
+                                    url, sz, inline_max
+                                );
+                                continue;
                             }
                         }
 
-                        let size_opt = self.fetch_image_size(url.as_str()).await.unwrap_or(None);
-
-                        // Skip if over OpenAI hard limit
-                        let url_max = self.llm_client.get_url_image_max_bytes();
-                        if let Some(sz) = size_opt.filter(|&s| s > url_max) {
-                            info!("Skipping image {} because size {}B > {}B", url, sz, url_max);
-                            continue;
-                        }
-
-                        // Always use an http(s) URL for the model. Avoid data URIs.
-                        match self.ensure_public_file_url(file).await {
-                            Ok(public_url) => imgs.push(ImageUrl {
-                                r#type: ContentType::image_url,
-                                text: None,
-                                image_url: Some(ImageUrlType { url: public_url }),
-                            }),
+                        match self
+                            .slack_client
+                            .download_image_bytes(url.as_str(), inline_max)
+                            .await
+                        {
+                            Ok(bytes) => {
+                                let b64 = base64::encode_block(&bytes);
+                                let data_url = format!("data:{canon};base64,{b64}");
+                                imgs.push(ImageUrl {
+                                    r#type: ContentType::image_url,
+                                    text: None,
+                                    image_url: Some(ImageUrlType { url: data_url }),
+                                });
+                            }
                             Err(e) => {
-                                error!("Failed to get public URL for image {}: {}", url, e);
+                                error!("Failed to download/inline image {}: {}", url, e);
                             }
                         }
                     }
