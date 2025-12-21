@@ -593,6 +593,7 @@ impl LlmClient {
             utf8_buffer: Vec::new(),
             unexpected_event_types: HashSet::new(),
             saw_completed_event: false,
+            saw_any_text: false,
             completed: false,
         }))
     }
@@ -632,6 +633,7 @@ pub struct ActiveStreamingResponse {
     utf8_buffer: Vec<u8>,
     unexpected_event_types: HashSet<String>,
     saw_completed_event: bool,
+    saw_any_text: bool,
     completed: bool,
 }
 
@@ -640,6 +642,7 @@ impl std::fmt::Debug for ActiveStreamingResponse {
         f.debug_struct("ActiveStreamingResponse")
             .field("completed", &self.completed)
             .field("saw_completed_event", &self.saw_completed_event)
+            .field("saw_any_text", &self.saw_any_text)
             .field("pending_results_len", &self.pending_results.len())
             .field("utf8_buffer_len", &self.utf8_buffer.len())
             .field(
@@ -652,6 +655,62 @@ impl std::fmt::Debug for ActiveStreamingResponse {
 }
 
 impl ActiveStreamingResponse {
+    fn drain_pending_results(&mut self) -> Result<Option<StreamEvent>, SlackError> {
+        while let Some(result) = self.pending_results.pop_front() {
+            match result {
+                ParseResult::Event(event) => match event {
+                    StreamEvent::Completed => {
+                        self.saw_completed_event = true;
+                        self.completed = true;
+                        return Ok(Some(StreamEvent::Completed));
+                    }
+                    StreamEvent::Failed(_) | StreamEvent::Error(_) => {
+                        self.completed = true;
+                        return Ok(Some(event));
+                    }
+                    StreamEvent::TextDelta(ref delta) => {
+                        if !delta.is_empty() {
+                            self.saw_any_text = true;
+                        }
+                        return Ok(Some(event));
+                    }
+                },
+                ParseResult::Done => {
+                    self.completed = true;
+                    if self.saw_completed_event {
+                        return Ok(None);
+                    }
+                    if self.saw_any_text {
+                        // Some providers (or proxies) may terminate the stream with a [DONE]
+                        // sentinel (ChatCompletions-style) without emitting a
+                        // `response.completed` event. If we've already seen text deltas,
+                        // treat this as a successful completion for robustness.
+                        warn!(
+                            "OpenAI stream ended with [DONE] before response.completed; treating as completed"
+                        );
+                        self.saw_completed_event = true;
+                        return Ok(Some(StreamEvent::Completed));
+                    }
+                    warn!("OpenAI stream ended with [DONE] before response.completed");
+                    return Err(SlackError::OpenAIError(
+                        "OpenAI stream ended before response.completed".to_string(),
+                    ));
+                }
+                ParseResult::UnknownEvent(event_type) => {
+                    if EXPECTED_IGNORED_SSE_EVENT_TYPES.contains(&event_type.as_str()) {
+                        debug!(event_type = %event_type, "Ignoring expected OpenAI SSE event");
+                    } else if self.unexpected_event_types.insert(event_type.clone()) {
+                        warn!(event_type = %event_type, "Unexpected OpenAI SSE event type");
+                    } else {
+                        debug!(event_type = %event_type, "Ignoring repeated unexpected OpenAI SSE event type");
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
     /// Returns the next stream event.
     ///
     /// This method handles:
@@ -673,40 +732,11 @@ impl ActiveStreamingResponse {
             // Always drain any already-parsed results first. `SseParser::feed()` consumes all
             // complete frames from its internal buffer, so we must not drop results when
             // multiple frames arrive in a single HTTP chunk.
-            while let Some(result) = self.pending_results.pop_front() {
-                match result {
-                    ParseResult::Event(event) => match event {
-                        StreamEvent::Completed => {
-                            self.saw_completed_event = true;
-                            self.completed = true;
-                            return Ok(Some(StreamEvent::Completed));
-                        }
-                        StreamEvent::Failed(_) | StreamEvent::Error(_) => {
-                            self.completed = true;
-                            return Ok(Some(event));
-                        }
-                        StreamEvent::TextDelta(_) => return Ok(Some(event)),
-                    },
-                    ParseResult::Done => {
-                        self.completed = true;
-                        if self.saw_completed_event {
-                            return Ok(None);
-                        }
-                        warn!("OpenAI stream ended with [DONE] before response.completed");
-                        return Err(SlackError::OpenAIError(
-                            "OpenAI stream ended before response.completed".to_string(),
-                        ));
-                    }
-                    ParseResult::UnknownEvent(event_type) => {
-                        if EXPECTED_IGNORED_SSE_EVENT_TYPES.contains(&event_type.as_str()) {
-                            debug!(event_type = %event_type, "Ignoring expected OpenAI SSE event");
-                        } else if self.unexpected_event_types.insert(event_type.clone()) {
-                            warn!(event_type = %event_type, "Unexpected OpenAI SSE event type");
-                        } else {
-                            debug!(event_type = %event_type, "Ignoring repeated unexpected OpenAI SSE event type");
-                        }
-                    }
-                }
+            if let Some(event) = self.drain_pending_results()? {
+                return Ok(Some(event));
+            }
+            if self.completed {
+                return Ok(None);
             }
 
             // Try to get the next chunk from the byte stream
@@ -763,6 +793,16 @@ impl ActiveStreamingResponse {
                     if self.saw_completed_event {
                         return Ok(None);
                     }
+                    if self.saw_any_text {
+                        // Similar to the [DONE] case above: if we got any content, but the
+                        // server closed the connection without a `response.completed` event,
+                        // treat as completed to avoid dropping a usable summary.
+                        warn!(
+                            "OpenAI stream ended without response.completed; treating as completed"
+                        );
+                        self.saw_completed_event = true;
+                        return Ok(Some(StreamEvent::Completed));
+                    }
                     warn!("OpenAI stream ended without response.completed");
                     return Err(SlackError::OpenAIError(
                         "OpenAI stream ended without response.completed".to_string(),
@@ -792,6 +832,9 @@ impl ActiveStreamingResponse {
         while let Some(event) = self.next_event().await? {
             match event {
                 StreamEvent::TextDelta(delta) => {
+                    if !delta.is_empty() {
+                        self.saw_any_text = true;
+                    }
                     collected.push_str(&delta);
                 }
                 StreamEvent::Completed => {
@@ -989,6 +1032,7 @@ mod tests {
             utf8_buffer: Vec::new(),
             unexpected_event_types: HashSet::new(),
             saw_completed_event: false,
+            saw_any_text: false,
             completed: false,
         };
 
@@ -996,6 +1040,7 @@ mod tests {
             resp.next_event().await.unwrap(),
             Some(StreamEvent::TextDelta("Hello".to_string()))
         );
+        assert!(resp.saw_any_text);
         assert_eq!(
             resp.next_event().await.unwrap(),
             Some(StreamEvent::TextDelta(" World".to_string()))
@@ -1030,6 +1075,7 @@ mod tests {
             utf8_buffer: Vec::new(),
             unexpected_event_types: HashSet::new(),
             saw_completed_event: false,
+            saw_any_text: false,
             completed: false,
         };
 
@@ -1055,6 +1101,7 @@ mod tests {
             utf8_buffer: Vec::new(),
             unexpected_event_types: HashSet::new(),
             saw_completed_event: false,
+            saw_any_text: false,
             completed: false,
         };
 
@@ -1076,6 +1123,7 @@ mod tests {
             utf8_buffer: Vec::new(),
             unexpected_event_types: HashSet::new(),
             saw_completed_event: false,
+            saw_any_text: false,
             completed: false,
         };
 
@@ -1096,11 +1144,14 @@ mod tests {
             utf8_buffer: Vec::new(),
             unexpected_event_types: HashSet::new(),
             saw_completed_event: false,
+            saw_any_text: false,
             completed: false,
         };
 
-        let err = resp.collect_text().await.unwrap_err();
-        assert!(err.to_string().contains("ended without response.completed"));
+        // Some servers may close the stream without emitting response.completed; if we got text,
+        // we treat it as completed for robustness.
+        let text = resp.collect_text().await.unwrap();
+        assert_eq!(text, "partial");
     }
 
     #[tokio::test]
@@ -1116,6 +1167,7 @@ mod tests {
             utf8_buffer: Vec::new(),
             unexpected_event_types: HashSet::new(),
             saw_completed_event: false,
+            saw_any_text: false,
             completed: false,
         };
 
@@ -1135,6 +1187,7 @@ mod tests {
             utf8_buffer: Vec::new(),
             unexpected_event_types: HashSet::new(),
             saw_completed_event: false,
+            saw_any_text: false,
             completed: false,
         };
 
@@ -1157,11 +1210,42 @@ mod tests {
             utf8_buffer: Vec::new(),
             unexpected_event_types: HashSet::new(),
             saw_completed_event: false,
+            saw_any_text: false,
             completed: false,
         };
 
         let err = resp.next_event().await.unwrap_err();
         assert!(err.to_string().contains("ended before response.completed"));
+    }
+
+    #[tokio::test]
+    async fn test_next_event_treats_done_as_completed_after_text() {
+        let sse = concat!(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n",
+            "data: [DONE]\n\n"
+        );
+        let stream = futures::stream::iter(vec![Ok(bytes::Bytes::from(sse))]);
+
+        let mut resp = ActiveStreamingResponse {
+            byte_stream: Box::pin(stream),
+            parser: SseParser::new(),
+            pending_results: VecDeque::new(),
+            utf8_buffer: Vec::new(),
+            unexpected_event_types: HashSet::new(),
+            saw_completed_event: false,
+            saw_any_text: false,
+            completed: false,
+        };
+
+        assert_eq!(
+            resp.next_event().await.unwrap(),
+            Some(StreamEvent::TextDelta("Hello".to_string()))
+        );
+        assert_eq!(
+            resp.next_event().await.unwrap(),
+            Some(StreamEvent::Completed)
+        );
+        assert_eq!(resp.next_event().await.unwrap(), None);
     }
 
     #[tokio::test]
@@ -1175,6 +1259,7 @@ mod tests {
             utf8_buffer: Vec::new(),
             unexpected_event_types: HashSet::new(),
             saw_completed_event: false,
+            saw_any_text: false,
             completed: false,
         };
 
@@ -1194,6 +1279,7 @@ mod tests {
             utf8_buffer: Vec::new(),
             unexpected_event_types: HashSet::new(),
             saw_completed_event: false,
+            saw_any_text: false,
             completed: false,
         };
 
@@ -1218,6 +1304,7 @@ mod tests {
             utf8_buffer: Vec::new(),
             unexpected_event_types: HashSet::new(),
             saw_completed_event: false,
+            saw_any_text: false,
             completed: false,
         };
 
