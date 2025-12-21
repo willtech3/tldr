@@ -62,8 +62,10 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
             streaming::stream_summary_to_assistant_thread(&mut slack_bot, &config, &task).await
         {
             error!(
-                "Streaming delivery failed (corr_id={}): {}",
-                task.correlation_id, e
+                event = "tldr_streaming_failed",
+                corr_id = %task.correlation_id,
+                error = %e,
+                "Streaming delivery failed"
             );
         }
         return Ok(());

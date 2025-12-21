@@ -233,12 +233,16 @@ impl SlackBot {
             }
         }
 
-        if data.has_any_images
-            && !summary_text
-                .to_ascii_lowercase()
-                .contains("image highlights")
+        if !summary_text
+            .to_ascii_lowercase()
+            .contains("image highlights")
         {
-            summary_text.push_str("\n\n*Image highlights*\n- (No image highlights provided.)\n");
+            summary_text.push_str("\n\n*Image highlights*\n");
+            if data.has_any_images {
+                summary_text.push_str("- (No image highlights provided.)\n");
+            } else {
+                summary_text.push_str("- None\n");
+            }
         }
 
         if !summary_text.to_ascii_lowercase().contains("receipts") {

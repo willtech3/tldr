@@ -260,6 +260,7 @@ async fn finalize_stream_success(
     channel: &str,
     stream_ts: &str,
     blocks: &Value,
+    fallback_text: &str,
 ) -> Result<(), SlackError> {
     match slack_bot
         .slack_client()
@@ -271,7 +272,7 @@ async fn finalize_stream_success(
             // Already finalized; best-effort attach blocks via chat.update.
             slack_bot
                 .slack_client()
-                .update_message(channel, stream_ts, None, Some(blocks))
+                .update_message(channel, stream_ts, Some(fallback_text), Some(blocks))
                 .await
         }
         Err(e) => Err(e),
@@ -564,6 +565,7 @@ pub async fn stream_summary_to_assistant_thread(
         let before_len = collected.len();
         let mut finalized = collected;
         SlackBot::apply_safety_net_sections(&mut finalized, &data);
+        let fallback_text = format!("{prefix}{finalized}");
         if finalized.len() > before_len {
             pending.push_str(&finalized[before_len..]);
             if can_append {
@@ -583,12 +585,13 @@ pub async fn stream_summary_to_assistant_thread(
 
         let blocks = build_feedback_blocks(&task.correlation_id);
         if can_append {
-            finalize_stream_success(slack_bot, assistant_channel, ts, &blocks).await?;
+            finalize_stream_success(slack_bot, assistant_channel, ts, &blocks, &fallback_text)
+                .await?;
         } else {
             // Message already finalized; best effort attach blocks via chat.update.
             if let Err(e) = slack_bot
                 .slack_client()
-                .update_message(assistant_channel, ts, None, Some(&blocks))
+                .update_message(assistant_channel, ts, Some(&fallback_text), Some(&blocks))
                 .await
             {
                 warn!(
@@ -604,8 +607,10 @@ pub async fn stream_summary_to_assistant_thread(
 
     if let Err(ref e) = result {
         error!(
-            "Streaming summary failed (corr_id={}): {}",
-            task.correlation_id, e
+            event = "tldr_streaming_failed",
+            corr_id = %task.correlation_id,
+            error = %e,
+            "Streaming summary failed"
         );
         ensure_canonical_failure(
             slack_bot,
