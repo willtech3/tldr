@@ -148,6 +148,8 @@ jobs:
           SLACK_REDIRECT_URL:   ${{ secrets.SLACK_REDIRECT_URL }}
           # Ensure region/account for CDK
           CDK_DEFAULT_REGION:   ${{ env.AWS_REGION }}
+          # Enable streaming responses in assistant threads
+          ENABLE_STREAMING:     'true'
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
       # Slack manifest updates must be done manually
