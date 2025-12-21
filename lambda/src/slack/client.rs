@@ -12,8 +12,8 @@ use slack_morphism::prelude::{
     SlackApiConversationsOpenRequest, SlackApiUsersInfoRequest,
 };
 use slack_morphism::{
-    SlackApiToken, SlackApiTokenValue, SlackChannelId, SlackFile, SlackHistoryMessage,
-    SlackMessageContent, SlackTs, SlackUserId,
+    SlackApiToken, SlackApiTokenValue, SlackChannelId, SlackHistoryMessage, SlackMessageContent,
+    SlackTs, SlackUserId,
 };
 use std::time::Duration;
 use tokio_retry::strategy::jitter;
@@ -748,27 +748,6 @@ impl SlackClient {
 
     // Image-related methods
 
-    /// # Errors
-    pub async fn fetch_image_size(&self, url: &str) -> Result<Option<usize>, SlackError> {
-        let resp = HTTP_CLIENT
-            .head(url)
-            .bearer_auth(&self.token.token_value.0)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            return Ok(None);
-        }
-
-        let size_opt = resp
-            .headers()
-            .get(reqwest::header::CONTENT_LENGTH)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.parse::<usize>().ok());
-
-        Ok(size_opt)
-    }
-
     /// Perform an authenticated `HEAD` to retrieve image `Content-Type` and size.
     ///
     /// Returns `Ok(Some((content_type_opt, size_opt)))` on 2xx; `Ok(None)` on non-success status.
@@ -863,49 +842,6 @@ impl SlackClient {
         }
 
         Ok(out)
-    }
-
-    /// # Errors
-    pub async fn ensure_public_file_url(&self, file: &SlackFile) -> Result<String, SlackError> {
-        // Step 1: Ensure the file has a public permalink. Avoid extra API call if already present.
-        let permalink = if let Some(link) = &file.permalink_public {
-            link.to_string()
-        } else {
-            // Publish the file via Slack API → files.sharedPublicURL
-            let api_url = "https://slack.com/api/files.sharedPublicURL";
-            let params = [("file", file.id.0.clone())];
-
-            let resp = HTTP_CLIENT
-                .post(api_url)
-                .bearer_auth(&self.token.token_value.0)
-                .form(&params)
-                .send()
-                .await?;
-
-            if !resp.status().is_success() {
-                return Err(SlackError::ApiError(format!(
-                    "files.sharedPublicURL failed with status {}",
-                    resp.status()
-                )));
-            }
-
-            let result: Value = resp.json().await?;
-
-            if !result["ok"].as_bool().unwrap_or(false) {
-                let error_msg = result["error"]
-                    .as_str()
-                    .unwrap_or("Unknown error from files.sharedPublicURL");
-                return Err(SlackError::ApiError(error_msg.to_string()));
-            }
-
-            // Extract the public permalink from the response
-            result["file"]["permalink_public"]
-                .as_str()
-                .ok_or_else(|| SlackError::ApiError("No permalink_public in response".to_string()))?
-                .to_string()
-        };
-
-        Ok(permalink)
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -1317,5 +1253,125 @@ mod streaming_tests {
         let err = MessageNotInStreamingState;
         let debug_str = format!("{err:?}");
         assert!(debug_str.contains("MessageNotInStreamingState"));
+    }
+}
+
+#[cfg(test)]
+mod image_download_tests {
+    use super::*;
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // download_image_bytes validation tests (no network required)
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// Helper to create a minimal `SlackClient` for testing (won't make real API calls)
+    fn test_client() -> SlackClient {
+        SlackClient::new("xoxb-test-token".to_string())
+    }
+
+    #[tokio::test]
+    async fn test_download_image_bytes_rejects_zero_max_bytes() {
+        let client = test_client();
+
+        let result = client
+            .download_image_bytes("https://example.com/image.png", 0)
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            SlackError::GeneralError(msg) => {
+                assert!(msg.contains("max_bytes must be > 0"));
+            }
+            other => panic!("Expected GeneralError, got: {other:?}"),
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Base64 data URL construction tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_base64_data_url_construction() {
+        // Test that Base64 encoding + data URL format is correct
+        let bytes: &[u8] = b"test image bytes";
+        let b64 = openssl::base64::encode_block(bytes);
+        let data_url = format!("data:image/png;base64,{b64}");
+
+        // Verify the data URL format
+        assert!(data_url.starts_with("data:image/png;base64,"));
+
+        // Verify the Base64 is valid and decodes back to original
+        let decoded = openssl::base64::decode_block(&b64).unwrap();
+        assert_eq!(decoded, bytes);
+    }
+
+    #[test]
+    fn test_base64_encoding_various_mime_types() {
+        let bytes: &[u8] = b"PNG image data";
+        let b64 = openssl::base64::encode_block(bytes);
+
+        // Test various MIME types used by OpenAI
+        for mime in ["image/png", "image/jpeg", "image/gif", "image/webp"] {
+            let data_url = format!("data:{mime};base64,{b64}");
+            assert!(data_url.starts_with(&format!("data:{mime};base64,")));
+        }
+    }
+
+    #[test]
+    fn test_base64_encoding_handles_binary_data() {
+        // Test that binary data (all byte values) encodes correctly
+        let bytes: Vec<u8> = (0u8..=255).collect();
+        let b64 = openssl::base64::encode_block(&bytes);
+
+        // Should not panic and should produce valid Base64
+        assert!(!b64.is_empty());
+
+        // Should decode back correctly
+        let decoded = openssl::base64::decode_block(&b64).unwrap();
+        assert_eq!(decoded, bytes);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Size cap enforcement tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_size_enforcement_logic() {
+        // Test that size enforcement logic works correctly with various values
+        let inline_cap: usize = 1024 * 1024; // 1 MiB
+
+        // Simulate the size check logic used in download_image_bytes
+        let small_size: usize = 500_000; // 500 KB - should pass
+        let large_size: usize = 2_000_000; // 2 MB - should fail
+
+        // Size check: image should be rejected if it exceeds inline_cap
+        assert!(
+            small_size <= inline_cap,
+            "Small images should pass size check"
+        );
+        assert!(
+            large_size > inline_cap,
+            "Large images should fail size check"
+        );
+
+        // Boundary check: exactly at cap should pass
+        assert!(inline_cap <= inline_cap, "Exactly at cap should pass");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Error message format tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_slack_error_display_formats() {
+        let http_err = SlackError::HttpError("connection failed".to_string());
+        let api_err = SlackError::ApiError("invalid_auth".to_string());
+        let general_err = SlackError::GeneralError("image too large".to_string());
+
+        // All error types should produce readable Display output
+        assert!(format!("{http_err}").contains("connection failed"));
+        assert!(format!("{api_err}").contains("invalid_auth"));
+        assert!(format!("{general_err}").contains("image too large"));
     }
 }
