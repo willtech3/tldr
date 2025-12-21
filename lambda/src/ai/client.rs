@@ -34,6 +34,25 @@ const EXPECTED_IGNORED_SSE_EVENT_TYPES: &[&str] = &[
 ];
 
 #[must_use]
+fn looks_like_invalid_image_error(error_text: &str) -> bool {
+    let lowered = error_text.to_ascii_lowercase();
+    // OpenAI commonly reports image URL ingestion failures as invalid_request_error with
+    // messages like "Error while downloading <url>" and param=url, code=invalid_value.
+    //
+    // We treat these as recoverable by retrying without image inputs.
+    (lowered.contains("invalid_request_error")
+        || lowered.contains("\"type\": \"invalid_request_error\""))
+        && (lowered.contains("image data")
+            || lowered.contains("not represent a valid image")
+            || lowered.contains("error while downloading")
+            || lowered.contains("\"param\": \"url\"")
+            || lowered.contains("param\": \"url\"")
+            || lowered.contains("\"code\": \"invalid_value\"")
+            || lowered.contains("code\": \"invalid_value\"")
+            || lowered.contains("image"))
+}
+
+#[must_use]
 pub fn canonicalize_mime(mime: &str) -> String {
     let main = mime
         .split(';')
@@ -273,11 +292,7 @@ impl LlmClient {
                 format!("Failed to read error response body (status {status}): {e}")
             });
             // Fallback: if the error is about invalid image data, retry without images
-            let lowered = error_text.to_ascii_lowercase();
-            let looks_like_invalid_image = lowered.contains("invalid_request_error")
-                && (lowered.contains("image data")
-                    || lowered.contains("not represent a valid image")
-                    || lowered.contains("image"));
+            let looks_like_invalid_image = looks_like_invalid_image_error(&error_text);
 
             if looks_like_invalid_image {
                 info!("Falling back to text-only prompt after image error");
@@ -570,7 +585,7 @@ impl LlmClient {
 
         let response = client
             .post("https://api.openai.com/v1/responses")
-            .headers(headers)
+            .headers(headers.clone())
             .json(&request_body)
             .send()
             .await
@@ -581,6 +596,76 @@ impl LlmClient {
             let error_text = response.text().await.unwrap_or_else(|e| {
                 format!("Failed to read error response body (status {status}): {e}")
             });
+            let looks_like_invalid_image = looks_like_invalid_image_error(&error_text);
+            if looks_like_invalid_image {
+                info!("Falling back to text-only prompt after streaming image error");
+
+                let text_only_prompt = LlmClient::strip_images_from_prompt(&prompt);
+                let estimated_input_tokens = text_only_prompt
+                    .iter()
+                    .map(|msg| estimate_tokens(&format!("{:?}", msg.content)))
+                    .sum::<usize>();
+
+                info!(
+                    "Estimated input tokens (streaming fallback): {}",
+                    estimated_input_tokens
+                );
+
+                let max_output_tokens = MAX_CONTEXT_TOKENS
+                    .saturating_sub(estimated_input_tokens)
+                    .saturating_sub(TOKEN_BUFFER)
+                    .min(MAX_OUTPUT_TOKENS);
+
+                info!(
+                    "Calculated max output tokens (streaming fallback): {}",
+                    max_output_tokens
+                );
+
+                if max_output_tokens < 500 {
+                    return Ok(StreamingResponse::TooLarge);
+                }
+
+                let input_messages = build_responses_input_from_prompt(&text_only_prompt);
+                let request_body = json!({
+                    "model": self.model_name,
+                    "input": input_messages,
+                    "max_output_tokens": max_output_tokens,
+                    "stream": true
+                });
+
+                let response2 = client
+                    .post("https://api.openai.com/v1/responses")
+                    .headers(headers)
+                    .json(&request_body)
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        SlackError::HttpError(format!(
+                            "OpenAI streaming request failed (fallback): {e}"
+                        ))
+                    })?;
+
+                let status2 = response2.status();
+                if !status2.is_success() {
+                    let error_text2 = response2.text().await.unwrap_or_else(|e| {
+                        format!("Failed to read error response body (status {status2}): {e}")
+                    });
+                    return Err(SlackError::OpenAIError(format!(
+                        "OpenAI streaming API error (fallback, status {status2}): {error_text2}"
+                    )));
+                }
+
+                return Ok(StreamingResponse::Active(ActiveStreamingResponse {
+                    byte_stream: Box::pin(response2.bytes_stream()),
+                    parser: SseParser::new(),
+                    pending_results: VecDeque::new(),
+                    utf8_buffer: Vec::new(),
+                    unexpected_event_types: HashSet::new(),
+                    saw_completed_event: false,
+                    saw_any_text: false,
+                    completed: false,
+                }));
+            }
             return Err(SlackError::OpenAIError(format!(
                 "OpenAI streaming API error (status {status}): {error_text}"
             )));
@@ -903,6 +988,19 @@ pub(crate) fn build_responses_input_from_prompt(prompt: &[ChatCompletionMessage]
 mod tests {
     use super::*;
     use openai_api_rs::v1::chat_completion::{ImageUrlType, MessageRole};
+
+    #[test]
+    fn test_looks_like_invalid_image_error_detects_download_failures() {
+        let err = r#"{
+  "error": {
+    "message": "Error while downloading https://files.slack.com/files-pri/T123-F456/download/img.png?pub_secret=abc.",
+    "type": "invalid_request_error",
+    "param": "url",
+    "code": "invalid_value"
+  }
+}"#;
+        assert!(looks_like_invalid_image_error(err));
+    }
 
     #[test]
     fn test_build_responses_input_filters_assistant_and_uses_typed_parts() {
