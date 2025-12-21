@@ -1,8 +1,24 @@
 //! Streaming delivery for assistant-thread summaries.
 //!
-//! This module implements end-to-end streaming for thread destinations using:
-//! - `OpenAI` Responses API streaming (`stream: true`)
-//! - Slack streaming Web API methods (`chat.startStream`, `chat.appendStream`, `chat.stopStream`)
+//! # Overview
+//!
+//! This module implements end-to-end streaming for thread destinations by:
+//! 1. Fetching channel messages via Slack API
+//! 2. Streaming `OpenAI` responses via SSE (Server-Sent Events)
+//! 3. Progressively appending chunks to Slack via `chat.*Stream` APIs
+//!
+//! # Error Handling
+//!
+//! On any failure, the module ensures the user sees a canonical failure message
+//! and no partial streamed content remains visible. This is achieved through
+//! [`ensure_canonical_failure`] which handles cleanup for both pre-stream and
+//! mid-stream failures.
+//!
+//! # Key Invariants
+//!
+//! - Streaming is only started after the first non-empty `OpenAI` delta arrives
+//! - Chunks respect Slack's 12,000 character markdown limit
+//! - Rate limiting between appends is enforced via `stream_min_append_interval_ms`
 
 use serde_json::{Value, json};
 use slack_morphism::SlackHistoryMessage;
@@ -84,6 +100,12 @@ fn build_feedback_blocks(correlation_id: &str) -> Value {
     ])
 }
 
+/// Find the byte index corresponding to `max_chars` Unicode characters.
+///
+/// This is necessary because Rust strings are UTF-8 encoded, where characters
+/// may be 1-4 bytes. We cannot simply slice at byte position `max_chars`.
+///
+/// Returns `s.len()` if the string has fewer than `max_chars` characters.
 #[must_use]
 fn slice_end_for_max_chars(s: &str, max_chars: usize) -> usize {
     if max_chars == 0 {
@@ -98,6 +120,27 @@ fn slice_end_for_max_chars(s: &str, max_chars: usize) -> usize {
     s.len()
 }
 
+/// Extract a chunk from the buffer, preferring natural break points.
+///
+/// # Split Priority (highest to lowest)
+///
+/// 1. **Paragraph boundary** (`\n\n`) - keeps logical sections together
+/// 2. **Line boundary** (`\n`) - keeps sentences together
+/// 3. **Whitespace** - avoids breaking mid-word
+/// 4. **Hard character limit** - fallback when no natural break exists
+///
+/// This priority order ensures Slack messages render cleanly, avoiding
+/// mid-word or mid-sentence breaks when possible.
+///
+/// # Returns
+///
+/// - `None` if buffer is empty
+/// - `Some(chunk)` with the extracted text; the chunk is drained from `buffer`
+///
+/// # Unicode Safety
+///
+/// Uses [`slice_end_for_max_chars`] to handle multi-byte UTF-8 characters
+/// correctly. Never splits in the middle of a Unicode codepoint.
 #[must_use]
 fn take_stream_chunk(buffer: &mut String, max_chars: usize) -> Option<String> {
     if buffer.is_empty() {
@@ -114,12 +157,14 @@ fn take_stream_chunk(buffer: &mut String, max_chars: usize) -> Option<String> {
     let byte_end = slice_end_for_max_chars(buffer, max_chars);
     let prefix = &buffer[..byte_end];
 
+    // Priority 1 & 2: Look for paragraph or line boundaries
     let mut split_idx = prefix
         .rfind("\n\n")
         .filter(|&p| p > 0)
         .map(|p| p + 2)
         .or_else(|| prefix.rfind('\n').filter(|&p| p > 0).map(|p| p + 1));
 
+    // Priority 3: Fall back to any whitespace boundary
     if split_idx.is_none() {
         let mut last_ws: Option<usize> = None;
         for (idx, ch) in prefix.char_indices() {
@@ -130,6 +175,7 @@ fn take_stream_chunk(buffer: &mut String, max_chars: usize) -> Option<String> {
         split_idx = last_ws.filter(|&p| p > 0);
     }
 
+    // Priority 4: Hard split at max_chars if no natural break found
     let split_idx = split_idx.unwrap_or(byte_end);
     Some(buffer.drain(..split_idx).collect())
 }
@@ -154,21 +200,31 @@ async fn append_one_chunk(
     stream_ts: &str,
     pending: &mut String,
     max_chunk_chars: usize,
+    correlation_id: &str,
 ) -> Result<bool, SlackError> {
     let Some(chunk) = take_stream_chunk(pending, max_chunk_chars) else {
         return Ok(true);
     };
 
-    match slack_bot
+    if slack_bot
         .slack_client()
         .append_stream(channel, stream_ts, &chunk)
         .await?
+        .is_ok()
     {
-        Ok(()) => Ok(true),
-        Err(_) => Ok(false), // message_not_in_streaming_state
+        Ok(true)
+    } else {
+        // Message transitioned out of streaming state (e.g., user clicked, timeout, etc.)
+        warn!(
+            "Slack message left streaming state during append (corr_id={}, lost {} chars)",
+            correlation_id,
+            chunk.chars().count()
+        );
+        Ok(false)
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn flush_all_pending(
     slack_bot: &SlackBot,
     channel: &str,
@@ -177,11 +233,20 @@ async fn flush_all_pending(
     max_chunk_chars: usize,
     min_interval: Duration,
     last_append_at: &mut Option<Instant>,
+    correlation_id: &str,
 ) -> Result<bool, SlackError> {
     while !pending.is_empty() {
         sleep_for_append_interval(*last_append_at, min_interval).await;
 
-        let ok = append_one_chunk(slack_bot, channel, stream_ts, pending, max_chunk_chars).await?;
+        let ok = append_one_chunk(
+            slack_bot,
+            channel,
+            stream_ts,
+            pending,
+            max_chunk_chars,
+            correlation_id,
+        )
+        .await?;
         if !ok {
             return Ok(false);
         }
@@ -213,26 +278,49 @@ async fn finalize_stream_success(
     }
 }
 
+/// Ensure the user sees the canonical failure message after a streaming error.
+///
+/// This function handles cleanup for both pre-stream and mid-stream failures,
+/// guaranteeing users see a consistent error message regardless of when the failure occurred.
+///
+/// # Cleanup Strategy
+///
+/// - **Case 1 (streaming never started):** Post canonical error directly in-thread.
+/// - **Case 2 (streaming started):** Stop stream, replace message content with canonical error,
+///   or fall back to delete + post if update fails.
 async fn ensure_canonical_failure(
     slack_bot: &SlackBot,
     channel: &str,
     thread_ts: &str,
     stream_ts: Option<&str>,
+    correlation_id: &str,
 ) {
     // Case 1: streaming never started → just post canonical error in-thread.
     let Some(ts) = stream_ts else {
-        let _ = slack_bot
+        if let Err(e) = slack_bot
             .slack_client()
             .post_message_in_thread(channel, thread_ts, CANONICAL_FAILURE_MESSAGE)
-            .await;
+            .await
+        {
+            error!(
+                "Failed to post canonical failure message (corr_id={}): {}",
+                correlation_id, e
+            );
+        }
         return;
     };
 
     // Case 2: streaming started → stop stream, then ensure the visible message contains ONLY the canonical error.
-    let _ = slack_bot
+    if let Err(e) = slack_bot
         .slack_client()
         .stop_stream(channel, ts, None, None, None)
-        .await;
+        .await
+    {
+        warn!(
+            "Failed to stop stream during cleanup (corr_id={}): {}",
+            correlation_id, e
+        );
+    }
 
     let empty_blocks = json!([]);
     if slack_bot
@@ -250,11 +338,23 @@ async fn ensure_canonical_failure(
     }
 
     // Fallback: delete the streamed message, then post a fresh canonical error message.
-    let _ = slack_bot.slack_client().delete_message(channel, ts).await;
-    let _ = slack_bot
+    if let Err(e) = slack_bot.slack_client().delete_message(channel, ts).await {
+        warn!(
+            "Failed to delete streamed message during cleanup (corr_id={}): {}",
+            correlation_id, e
+        );
+    }
+
+    if let Err(e) = slack_bot
         .slack_client()
         .post_message_in_thread(channel, thread_ts, CANONICAL_FAILURE_MESSAGE)
-        .await;
+        .await
+    {
+        error!(
+            "Failed to post fallback canonical failure message (corr_id={}): {}",
+            correlation_id, e
+        );
+    }
 }
 
 async fn fetch_messages_for_task(
@@ -419,6 +519,7 @@ pub async fn stream_summary_to_assistant_thread(
                             ts,
                             &mut pending,
                             max_chunk_chars,
+                            &task.correlation_id,
                         )
                         .await?;
                         last_append_at = Some(Instant::now());
@@ -448,12 +549,14 @@ pub async fn stream_summary_to_assistant_thread(
                 max_chunk_chars,
                 min_interval,
                 &mut last_append_at,
+                &task.correlation_id,
             )
             .await?;
         } else {
             warn!(
-                "Slack message left streaming state before flush completed (corr_id={})",
-                task.correlation_id
+                "Slack message left streaming state before flush (corr_id={}, pending {} chars)",
+                task.correlation_id,
+                pending.chars().count()
             );
         }
 
@@ -472,6 +575,7 @@ pub async fn stream_summary_to_assistant_thread(
                     max_chunk_chars,
                     min_interval,
                     &mut last_append_at,
+                    &task.correlation_id,
                 )
                 .await?;
             }
@@ -482,10 +586,16 @@ pub async fn stream_summary_to_assistant_thread(
             finalize_stream_success(slack_bot, assistant_channel, ts, &blocks).await?;
         } else {
             // Message already finalized; best effort attach blocks via chat.update.
-            let _ = slack_bot
+            if let Err(e) = slack_bot
                 .slack_client()
                 .update_message(assistant_channel, ts, None, Some(&blocks))
-                .await;
+                .await
+            {
+                warn!(
+                    "Failed to attach feedback blocks to finalized message (corr_id={}): {}",
+                    task.correlation_id, e
+                );
+            }
         }
 
         Ok(())
@@ -502,6 +612,7 @@ pub async fn stream_summary_to_assistant_thread(
             assistant_channel,
             thread_ts,
             stream_ts.as_deref(),
+            &task.correlation_id,
         )
         .await;
     }
@@ -512,6 +623,69 @@ pub async fn stream_summary_to_assistant_thread(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // slice_end_for_max_chars tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn slice_end_handles_ascii() {
+        let s = "Hello, World!";
+        assert_eq!(slice_end_for_max_chars(s, 5), 5);
+        assert_eq!(&s[..slice_end_for_max_chars(s, 5)], "Hello");
+    }
+
+    #[test]
+    fn slice_end_handles_multibyte_emoji() {
+        // 😀 is 4 bytes in UTF-8
+        let s = "Hello😀World";
+        // "Hello" = 5 chars, "😀" = 1 char (4 bytes), total 6 chars for "Hello😀"
+        let idx = slice_end_for_max_chars(s, 6);
+        assert_eq!(&s[..idx], "Hello😀");
+        // Verify we can safely slice at this index
+        assert!(s.is_char_boundary(idx));
+    }
+
+    #[test]
+    fn slice_end_handles_cjk_characters() {
+        // Each CJK character is 3 bytes in UTF-8
+        let s = "你好世界"; // 4 characters, 12 bytes
+        let idx = slice_end_for_max_chars(s, 2);
+        assert_eq!(&s[..idx], "你好");
+        assert!(s.is_char_boundary(idx));
+    }
+
+    #[test]
+    fn slice_end_handles_mixed_multibyte() {
+        // Mix of ASCII (1 byte), emoji (4 bytes), and CJK (3 bytes)
+        let s = "Hi🎉你好";
+        // H=1, i=1, 🎉=1, 你=1, 好=1 = 5 chars
+        let idx = slice_end_for_max_chars(s, 4);
+        assert_eq!(&s[..idx], "Hi🎉你");
+        assert!(s.is_char_boundary(idx));
+    }
+
+    #[test]
+    fn slice_end_zero_max_returns_zero() {
+        let s = "abc";
+        assert_eq!(slice_end_for_max_chars(s, 0), 0);
+    }
+
+    #[test]
+    fn slice_end_exceeds_string_length() {
+        let s = "short";
+        assert_eq!(slice_end_for_max_chars(s, 100), s.len());
+    }
+
+    #[test]
+    fn slice_end_empty_string() {
+        let s = "";
+        assert_eq!(slice_end_for_max_chars(s, 5), 0);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // take_stream_chunk boundary preference tests
+    // ─────────────────────────────────────────────────────────────────────────────
 
     #[test]
     fn chunker_prefers_paragraph_boundaries() {
@@ -525,6 +699,24 @@ mod tests {
     }
 
     #[test]
+    fn chunker_prefers_line_over_whitespace() {
+        let mut buf = "line1\nword1 word2 word3".to_string();
+        let c1 = take_stream_chunk(&mut buf, 10).unwrap();
+        // Should prefer \n over space
+        assert_eq!(c1, "line1\n");
+        assert_eq!(buf, "word1 word2 word3");
+    }
+
+    #[test]
+    fn chunker_falls_back_to_whitespace() {
+        let mut buf = "word1 word2 word3 word4".to_string();
+        let c1 = take_stream_chunk(&mut buf, 12).unwrap();
+        // Should split at whitespace, not mid-word
+        assert_eq!(c1, "word1 word2 ");
+        assert_eq!(buf, "word3 word4");
+    }
+
+    #[test]
     fn chunker_falls_back_to_hard_split() {
         let mut buf = "abcdefghij".to_string();
         let c1 = take_stream_chunk(&mut buf, 4).unwrap();
@@ -534,5 +726,94 @@ mod tests {
         let c3 = take_stream_chunk(&mut buf, 4).unwrap();
         assert_eq!(c3.chars().count(), 2);
         assert!(buf.is_empty());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // take_stream_chunk edge case tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn chunker_returns_none_for_empty_buffer() {
+        let mut buf = String::new();
+        assert!(take_stream_chunk(&mut buf, 100).is_none());
+    }
+
+    #[test]
+    fn chunker_returns_entire_buffer_when_smaller_than_max() {
+        let mut buf = "short".to_string();
+        let c1 = take_stream_chunk(&mut buf, 100).unwrap();
+        assert_eq!(c1, "short");
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn chunker_handles_exact_fit() {
+        let mut buf = "12345".to_string();
+        let c1 = take_stream_chunk(&mut buf, 5).unwrap();
+        assert_eq!(c1, "12345");
+        assert!(buf.is_empty());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // take_stream_chunk UTF-8 safety tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn chunker_handles_emoji_at_boundary() {
+        // Emoji at the exact boundary should not be split
+        let mut buf = "Hello😀World".to_string();
+        let c1 = take_stream_chunk(&mut buf, 6).unwrap();
+        // "Hello😀" = 6 chars, should take all 6
+        assert_eq!(c1, "Hello😀");
+        assert_eq!(buf, "World");
+    }
+
+    #[test]
+    fn chunker_handles_cjk_text() {
+        let mut buf = "你好世界早上好".to_string(); // 7 CJK characters
+        let c1 = take_stream_chunk(&mut buf, 4).unwrap();
+        assert_eq!(c1.chars().count(), 4);
+        assert_eq!(c1, "你好世界");
+        assert_eq!(buf, "早上好");
+    }
+
+    #[test]
+    fn chunker_handles_emoji_sequence() {
+        // Multiple emojis in a row
+        let mut buf = "🎉🎊🎈✨🌟".to_string(); // 5 emoji chars
+        let c1 = take_stream_chunk(&mut buf, 3).unwrap();
+        assert_eq!(c1.chars().count(), 3);
+        assert_eq!(c1, "🎉🎊🎈");
+        assert_eq!(buf, "✨🌟");
+    }
+
+    #[test]
+    fn chunker_preserves_all_content() {
+        // Verify no data loss with mixed content
+        let original = "Hello 你好 🎉 World 世界!";
+        let mut buf = original.to_string();
+        let mut collected = String::new();
+
+        while let Some(chunk) = take_stream_chunk(&mut buf, 5) {
+            collected.push_str(&chunk);
+        }
+
+        assert_eq!(collected, original);
+    }
+
+    #[test]
+    fn chunker_never_exceeds_max_chars() {
+        let mut buf = "This is a longer string with multiple words and spaces".to_string();
+        let max = 10;
+
+        while let Some(chunk) = take_stream_chunk(&mut buf, max) {
+            assert!(
+                chunk.chars().count() <= max,
+                "Chunk '{}' has {} chars, exceeds max {}",
+                chunk,
+                chunk.chars().count(),
+                max
+            );
+        }
     }
 }

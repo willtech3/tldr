@@ -64,7 +64,10 @@ pub struct StreamResponse {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MessageNotInStreamingState;
 
-/// Maximum character limit for `markdown_text` in streaming API calls.
+/// Slack's documented per-call character limit for `markdown_text` in streaming APIs.
+///
+/// This is the maximum number of characters that can be sent in a single
+/// `chat.startStream`, `chat.appendStream`, or `chat.stopStream` call.
 pub const STREAM_MARKDOWN_TEXT_LIMIT: usize = 12_000;
 
 /// Slack error code for when a message is not in streaming state.

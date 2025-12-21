@@ -1,4 +1,3 @@
-// The handler is long due to Lambda event plumbing and branching; split later if it grows further.
 use lambda_runtime::{Error, LambdaEvent};
 use reqwest::Client as HttpClient;
 use serde_json::Value;
@@ -50,6 +49,11 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
     let http_client = HttpClient::new();
 
     // Stream end-to-end into assistant threads when enabled. This path is thread-only.
+    //
+    // Design note: We intentionally return Ok(()) even on streaming failure to prevent
+    // Lambda retries which would cause duplicate user-facing messages. The streaming
+    // module handles cleanup internally (via ensure_canonical_failure) to show the user
+    // an error message. Failures are logged with correlation_id for monitoring/alerting.
     if config.enable_streaming
         && matches!(task.destination, Destination::Thread)
         && task.thread_ts.is_some()

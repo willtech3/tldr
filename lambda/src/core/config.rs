@@ -1,7 +1,13 @@
 use std::env;
 
-const STREAM_MARKDOWN_TEXT_LIMIT: usize = 12_000;
+use crate::slack::client::STREAM_MARKDOWN_TEXT_LIMIT;
+
+/// Default chunk size for streaming appends. Set below the Slack limit to allow
+/// headroom for prefix text and to balance latency vs. API call frequency.
 const DEFAULT_STREAM_MAX_CHUNK_CHARS: usize = 4_000;
+
+/// Default minimum interval between `chat.appendStream` calls (milliseconds).
+/// Prevents overwhelming Slack's rate limits while still providing responsive streaming.
 const DEFAULT_STREAM_MIN_APPEND_INTERVAL_MS: u64 = 1_000;
 
 #[derive(Debug, Clone)]
