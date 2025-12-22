@@ -13,6 +13,7 @@ interface TldrStackProps extends cdk.StackProps {
   slackSigningSecret: string;
   openaiApiKey: string;
   openaiOrgId: string;
+  openaiModel?: string;
   enableStreaming: string;
   streamMinAppendIntervalMs?: string;
   streamMaxChunkChars?: string;
@@ -92,6 +93,7 @@ export class TldrStack extends cdk.Stack {
       SLACK_SIGNING_SECRET: props.slackSigningSecret,
       OPENAI_API_KEY: props.openaiApiKey,
       OPENAI_ORG_ID: props.openaiOrgId,
+      ...(props.openaiModel ? { OPENAI_MODEL: props.openaiModel } : {}),
       PROCESSING_QUEUE_URL: processingQueue.queueUrl,
       ENABLE_STREAMING: props.enableStreaming,
       ...(props.streamMinAppendIntervalMs

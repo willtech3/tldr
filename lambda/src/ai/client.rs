@@ -270,7 +270,8 @@ impl LlmClient {
         let request_body = json!({
             "model": self.model_name,
             "input": input_messages,
-            "max_output_tokens": max_output_tokens
+            "max_output_tokens": max_output_tokens,
+            "reasoning": { "effort": "low" }
         });
 
         let client = Client::builder()
@@ -348,7 +349,8 @@ impl LlmClient {
                 let request_body = json!({
                     "model": self.model_name,
                     "input": input_messages,
-                    "max_output_tokens": max_output_tokens
+                    "max_output_tokens": max_output_tokens,
+                    "reasoning": { "effort": "low" }
                 });
 
                 let client = Client::builder()
@@ -567,6 +569,7 @@ impl LlmClient {
             "model": self.model_name,
             "input": input_messages,
             "max_output_tokens": max_output_tokens,
+            "reasoning": { "effort": "low" },
             "stream": true
         });
 
@@ -647,6 +650,7 @@ impl LlmClient {
                     "model": self.model_name,
                     "input": input_messages,
                     "max_output_tokens": max_output_tokens,
+                    "reasoning": { "effort": "low" },
                     "stream": true
                 });
 

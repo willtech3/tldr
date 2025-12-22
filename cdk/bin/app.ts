@@ -30,6 +30,7 @@ new TldrStack(app, 'TldrStack', {
   slackSigningSecret: process.env.SLACK_SIGNING_SECRET || '',
   openaiApiKey: process.env.OPENAI_API_KEY || '',
   openaiOrgId: process.env.OPENAI_ORG_ID || '',
+  openaiModel: process.env.OPENAI_MODEL,
   enableStreaming: process.env.ENABLE_STREAMING || 'false',
   streamMinAppendIntervalMs: process.env.STREAM_MIN_APPEND_INTERVAL_MS,
   streamMaxChunkChars: process.env.STREAM_MAX_CHUNK_CHARS,

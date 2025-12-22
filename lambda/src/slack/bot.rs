@@ -88,7 +88,7 @@ impl SlackBot {
         let model = config
             .openai_model
             .clone()
-            .unwrap_or_else(|| "gpt-5".to_string());
+            .unwrap_or_else(|| "gpt-5.2".to_string());
         let llm_client = LlmClient::new(
             config.openai_api_key.clone(),
             config.openai_org_id.clone(),
