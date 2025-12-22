@@ -4,6 +4,7 @@
 #![allow(clippy::uninlined_format_args)]
 use reqwest::Client as HttpClient;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
+use serde_json::{Value, json};
 use tracing::{error, info};
 
 use crate::core::models::{Destination, ProcessingTask};
@@ -89,9 +90,21 @@ pub async fn deliver_summary(
             summary.to_string()
         };
 
+        // Build action buttons for thread summaries
+        let action_buttons = build_summary_action_buttons(
+            source_channel_id,
+            task.message_count.unwrap_or(50),
+            task.custom_prompt.as_deref(),
+        );
+
         if let Err(e) = slack_bot
             .slack_client()
-            .post_message_in_thread(reply_channel, thread_ts, &formatted_summary)
+            .post_message_with_blocks(
+                reply_channel,
+                Some(thread_ts),
+                &formatted_summary,
+                &action_buttons,
+            )
             .await
         {
             error!(
@@ -279,4 +292,93 @@ pub async fn notify_no_messages(
         .await?;
     }
     Ok(())
+}
+
+/// Build Block Kit actions with Share/Roast/Receipts buttons for thread summaries.
+///
+/// Creates an actions block with three interactive buttons:
+/// - 📤 Share to #channel - Posts summary back to source channel
+/// - 🔥 Roast This - Reruns summary with roasting style (hidden if already roasting)
+/// - 📜 Pull Receipts - Reruns summary with receipts style (hidden if already in receipts mode)
+///
+/// # Arguments
+///
+/// * `source_channel_id` - The channel ID being summarized
+/// * `message_count` - Number of messages in the summary
+/// * `current_style` - The current summary style (if any)
+#[must_use]
+pub(crate) fn build_summary_action_buttons(
+    source_channel_id: &str,
+    message_count: u32,
+    current_style: Option<&str>,
+) -> Value {
+    let mut button_elements = vec![];
+
+    // Share button - always shown
+    let share_button_value = json!({
+        "action": "share_summary",
+        "sourceChannelId": source_channel_id,
+        "count": message_count,
+        "style": current_style,
+    });
+
+    button_elements.push(json!({
+        "type": "button",
+        "text": {
+            "type": "plain_text",
+            "text": "📤 Share to channel",
+            "emoji": true
+        },
+        "action_id": "share_summary",
+        "value": serde_json::to_string(&share_button_value).unwrap_or_default()
+    }));
+
+    // Roast button - only shown if NOT already roasting
+    let is_roast_style = current_style.is_some_and(|s| s.to_lowercase().contains("roast"));
+
+    if !is_roast_style {
+        let roast_button_value = json!({
+            "action": "rerun_roast",
+            "channelId": source_channel_id,
+            "count": message_count,
+        });
+
+        button_elements.push(json!({
+            "type": "button",
+            "text": {
+                "type": "plain_text",
+                "text": "🔥 Roast This",
+                "emoji": true
+            },
+            "action_id": "rerun_roast",
+            "value": serde_json::to_string(&roast_button_value).unwrap_or_default()
+        }));
+    }
+
+    // Receipts button - only shown if NOT already in receipts mode
+    let is_receipts_style = current_style.is_some_and(|s| s.to_lowercase().contains("receipt"));
+
+    if !is_receipts_style {
+        let receipts_button_value = json!({
+            "action": "rerun_receipts",
+            "channelId": source_channel_id,
+            "count": message_count,
+        });
+
+        button_elements.push(json!({
+            "type": "button",
+            "text": {
+                "type": "plain_text",
+                "text": "📜 Pull Receipts",
+                "emoji": true
+            },
+            "action_id": "rerun_receipts",
+            "value": serde_json::to_string(&receipts_button_value).unwrap_or_default()
+        }));
+    }
+
+    json!([{
+        "type": "actions",
+        "elements": button_elements
+    }])
 }

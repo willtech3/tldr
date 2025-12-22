@@ -14,7 +14,12 @@
 
 import { App, LogLevel, Receiver } from '@slack/bolt';
 import { AppConfig } from './config';
-import { registerAssistantHandlers, registerMessageHandlers, registerStyleHandlers } from './handlers';
+import {
+  registerAssistantHandlers,
+  registerMessageHandlers,
+  registerStyleHandlers,
+  registerActionHandlers,
+} from './handlers';
 
 /**
  * Create and configure the Bolt app instance.
@@ -35,6 +40,7 @@ export function createApp(config: AppConfig, receiver: Receiver): App {
   registerAssistantHandlers(app);
   registerMessageHandlers(app, config);
   registerStyleHandlers(app);
+  registerActionHandlers(app);
 
   return app;
 }
