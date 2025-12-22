@@ -56,7 +56,7 @@ clean:
 	cd bolt-ts && rm -rf node_modules dist coverage
 	rm -rf lambda/target
 	rm -rf lambda/.cargo
-	rm -f lambda/Cargo.lock
+
 	find . -name "*.orig" -type f -delete
 	find . -name ".DS_Store" -type f -delete
 	@echo "🧹 Cleaned build artifacts and caches"

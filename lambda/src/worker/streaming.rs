@@ -33,9 +33,6 @@ use crate::errors::SlackError;
 use crate::slack::SlackBot;
 use crate::slack::client::STREAM_MARKDOWN_TEXT_LIMIT;
 
-const CANONICAL_FAILURE_MESSAGE: &str =
-    "Sorry, I couldn't generate a summary at this time. Please try again later.";
-
 #[must_use]
 fn build_style_prefix(custom_prompt: Option<&str>) -> Option<String> {
     let style = custom_prompt
@@ -269,7 +266,7 @@ async fn ensure_canonical_failure(
     let Some(ts) = stream_ts else {
         if let Err(e) = slack_bot
             .slack_client()
-            .post_message_in_thread(channel, thread_ts, CANONICAL_FAILURE_MESSAGE)
+            .post_message_in_thread(channel, thread_ts, super::CANONICAL_FAILURE_MESSAGE)
             .await
         {
             error!(
@@ -298,7 +295,7 @@ async fn ensure_canonical_failure(
         .update_message(
             channel,
             ts,
-            Some(CANONICAL_FAILURE_MESSAGE),
+            Some(super::CANONICAL_FAILURE_MESSAGE),
             Some(&empty_blocks),
         )
         .await
@@ -317,7 +314,7 @@ async fn ensure_canonical_failure(
 
     if let Err(e) = slack_bot
         .slack_client()
-        .post_message_in_thread(channel, thread_ts, CANONICAL_FAILURE_MESSAGE)
+        .post_message_in_thread(channel, thread_ts, super::CANONICAL_FAILURE_MESSAGE)
         .await
     {
         error!(

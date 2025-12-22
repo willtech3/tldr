@@ -16,7 +16,6 @@ import { App, LogLevel, Receiver } from '@slack/bolt';
 import { AppConfig } from './config';
 import {
   registerAssistantHandlers,
-  registerMessageHandlers,
   registerStyleHandlers,
   registerActionHandlers,
 } from './handlers';
@@ -37,8 +36,9 @@ export function createApp(config: AppConfig, receiver: Receiver): App {
   });
 
   // Register all handlers
-  registerAssistantHandlers(app);
-  registerMessageHandlers(app, config);
+  // Note: registerAssistantHandlers uses the Assistant class which handles
+  // assistant_thread_started, assistant_thread_context_changed, and message.im events
+  registerAssistantHandlers(app, config);
   registerStyleHandlers(app);
   registerActionHandlers(app);
 

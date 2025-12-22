@@ -84,8 +84,7 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
         }
         Err(e) => {
             error!("Failed to generate summary: {}", e);
-            let error_message =
-                "Sorry, I couldn't generate a summary at this time. Please try again later.";
+            let error_message = super::CANONICAL_FAILURE_MESSAGE;
 
             // Primary: deliver error to assistant thread if destination is Thread
             if matches!(task.destination, Destination::Thread) {
