@@ -9,12 +9,10 @@ It is written to be “no guessing required”: explicit architecture choice, ex
 ## Goals / non-goals
 
 - **Goal**: Stream summaries into the assistant thread so users see text appear progressively (ChatGPT-style), instead of waiting for a full response.
-- **Goal**: Keep Slack’s HTTP/event ACK requirements intact by preserving the current **Bolt TS → SQS → Rust Worker** architecture.
-- **Goal**: Add Slack-native feedback buttons to the finalized streamed message and handle feedback events.
+- **Goal**: Keep Slack's HTTP/event ACK requirements intact by preserving the current **Bolt TS → SQS → Rust Worker** architecture.
 
 - **Non-goal**: Replace the current prompt builder, image handling, or receipts/links logic (we will reuse existing Rust logic).
 - **Non-goal**: Switch to a different OpenAI API surface (TLDR already uses the **Responses API**).
-- **Non-goal**: Introduce a new datastore (feedback can be logged first; persistence is optional).
 
 ---
 
@@ -92,18 +90,6 @@ Slack provides thread-level status / loading indicators:
 - Status clears automatically when the app sends a reply.
 - Sending an empty string in `status` clears the status indicator.
 
-### Feedback buttons (Slack AI apps)
-
-Slack AI apps support a dedicated feedback UI element:
-
-- Block element docs: [Feedback buttons element](https://docs.slack.dev/reference/block-kit/block-elements/feedback-buttons-element/)
-- Bolt JS message sending docs (includes full streaming + feedback example): [Sending messages — Streaming messages](https://docs.slack.dev/tools/bolt-js/concepts/message-sending/#streaming-messages)
-
-**Verified shape (important for implementation)**:
-- Use block type `context_actions`.
-- Use element type `feedback_buttons` with `positive_button` and `negative_button`.
-- Clicking sends a `block_actions` interaction payload to your app.
-
 ### OpenAI Responses streaming (SSE)
 
 OpenAI Responses supports streaming via server-sent events (SSE):
@@ -163,8 +149,7 @@ In the Rust worker:
 
 - **Must** stream only when the primary destination is `Destination::Thread` and `thread_ts` is present.
 - **Must** post the summary incrementally into the assistant thread using Slack `chat.*Stream`.
-- **Must** attach feedback buttons at completion.
-- **Must** preserve the existing exact failure message string (see “Error handling” below).
+- **Must** preserve the existing exact failure message string (see "Error handling" below).
 - **Must** stream into the assistant thread identifiers from the task:
   - Slack `channel` for `chat.*Stream`: `ProcessingTask.origin_channel_id` (fallback to `ProcessingTask.channel_id` only if missing).
   - Slack `thread_ts` for `chat.startStream`: `ProcessingTask.thread_ts`.
@@ -294,49 +279,6 @@ Sorry, I couldn't generate a summary at this time. Please try again later.
 
 ---
 
-## Feedback buttons (Slack AI UX)
-
-### Block to attach on completion
-
-Attach a `context_actions` block with a `feedback_buttons` element at the end of the streamed message (via `chat.stopStream({ blocks: [...] })`).
-
-**Implementation guidance**:
-- Choose a unique `action_id` (recommended: `tldr_feedback`).
-- Encode the correlation id + rating in the `value` fields (values are strings; JSON is acceptable if kept small).
-- The Rust worker must construct and send the block JSON (because the worker calls `chat.stopStream`). Bolt TS only needs to handle the resulting `block_actions` interaction.
-
-Example block (worker-side; values shown as JSON strings for easy parsing):
-
-```json
-{
-  "type": "context_actions",
-  "elements": [
-    {
-      "type": "feedback_buttons",
-      "action_id": "tldr_feedback",
-      "positive_button": {
-        "text": { "type": "plain_text", "text": "Good Response" },
-        "value": "{\"rating\":\"good\",\"correlation_id\":\"<corr_id>\"}"
-      },
-      "negative_button": {
-        "text": { "type": "plain_text", "text": "Bad Response" },
-        "value": "{\"rating\":\"bad\",\"correlation_id\":\"<corr_id>\"}"
-      }
-    }
-  ]
-}
-```
-
-### Bolt handler
-
-Add a Bolt handler to capture the `block_actions` payload:
-
-- **Must** ACK immediately.
-- **Should** log a structured event (rating, correlation_id, user_id, channel_id, thread_ts, message.ts).
-- **Optional**: update the message to acknowledge receipt (e.g., remove/disable the feedback buttons) rather than posting a new message into the thread.
-
----
-
 ## Configuration (env vars)
 
 All configuration is via env vars (consistent with existing `AppConfig` patterns).
@@ -355,7 +297,7 @@ All configuration is via env vars (consistent with existing `AppConfig` patterns
 
 ### Bolt (TypeScript)
 
-- No new required env vars. (The Bolt side only adds richer `loading_messages` and handles feedback actions.)
+- No new required env vars. (The Bolt side only adds richer `loading_messages`.)
 
 ## Implementation plan (agents: do these tasks in order)
 
@@ -403,23 +345,12 @@ Each section below is written as an **execution checklist**. Each PR should keep
     - Required: `*Summary from <#<task.channel_id>>*\n\n`
   - ☐ Call `chat.startStream` with `channel = task.origin_channel_id` and `thread_ts = task.thread_ts`, initializing `markdown_text` with the prefix plus the first delta.
   - ☐ Append text chunks with the chunking policy above.
-  - ☐ After OpenAI completes, apply the same “safety net” rules currently in `lambda/src/slack/bot.rs` (ensure “Links shared”, “Image highlights”, “Receipts” exist) and append any missing sections before stopping the stream.
-  - ☐ Stop the stream and attach feedback blocks (construct blocks JSON in Rust, matching Slack’s `context_actions` + `feedback_buttons` spec).
+  - ☐ After OpenAI completes, apply the same "safety net" rules currently in `lambda/src/slack/bot.rs` (ensure "Links shared", "Image highlights", "Receipts" exist) and append any missing sections before stopping the stream.
+  - ☐ Stop the stream.
 - ☐ Preserve the existing non-streaming path for non-thread destinations.
 - ☐ Ensure canonical error message behavior on any failure.
 
-### PR 5 — Bolt: feedback buttons handler
-
-- ☐ Add a new handler file (recommended: `bolt-ts/src/handlers/feedback.ts`) and register it:
-  - ☐ Export from `bolt-ts/src/handlers/index.ts`.
-  - ☐ Call `registerFeedbackHandlers(app)` in `bolt-ts/src/app.ts`.
-- ☐ On feedback action:
-  - ☐ ACK immediately
-  - ☐ Parse rating + correlation id from `actions[0].value` and log them (plus context like user/channel/thread/message ts)
-  - ☐ (Optional) `chat.update` the message to remove/disable the buttons so users can’t double-submit
-- ☐ Ensure the Bolt handler listens to the exact `action_id` used by the Rust worker (recommended: `tldr_feedback`).
-
-### PR 6 — Hardening: rate limits, timeouts, and idempotency
+### PR 5 — Hardening: rate limits, timeouts, and idempotency
 
 - ☐ Add a streaming-loop timeout (abort OpenAI request and finalize Slack message deterministically).
 - ☐ Add structured logging around `startStream`/`appendStream`/`stopStream` with correlation ids.
@@ -444,8 +375,6 @@ Each section below is written as an **execution checklist**. Each PR should keep
 
 - ☐ In an assistant thread, `summarize` produces a streaming reply (not a single final post).
 - ☐ Loading state is visible before first chunk and clears once streaming begins.
-- ☐ Feedback buttons appear only after completion.
-- ☐ Clicking feedback produces a `block_actions` event and the app ACKs without errors.
 - ☐ Error path shows **only** the canonical failure message.
 
 ---
@@ -455,6 +384,5 @@ Each section below is written as an **execution checklist**. Each PR should keep
 - **Streaming UX**: Summary text appears incrementally in the assistant thread and feels smooth.
 - **Slack compliance**: Bolt TS continues to ACK event requests within 3 seconds (no new slow calls in the hot path).
 - **Rate limit safety**: Append cadence respects Slack Tier 4 limits under normal usage, and 429 handling is correct.
-- **Reliability**: Any failure results in the canonical failure message, with no orphaned “stuck streaming” messages.
-- **Feedback UX**: Feedback buttons render and feedback is captured by the app.
+- **Reliability**: Any failure results in the canonical failure message, with no orphaned "stuck streaming" messages.
 

@@ -20,7 +20,7 @@
 //! - Chunks respect Slack's 12,000 character markdown limit
 //! - Rate limiting between appends is enforced via `stream_min_append_interval_ms`
 
-use serde_json::{Value, json};
+use serde_json::json;
 use slack_morphism::SlackHistoryMessage;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -35,8 +35,6 @@ use crate::slack::client::STREAM_MARKDOWN_TEXT_LIMIT;
 
 const CANONICAL_FAILURE_MESSAGE: &str =
     "Sorry, I couldn't generate a summary at this time. Please try again later.";
-
-const FEEDBACK_ACTION_ID: &str = "tldr_feedback";
 
 #[must_use]
 fn build_style_prefix(custom_prompt: Option<&str>) -> Option<String> {
@@ -64,40 +62,6 @@ fn build_stream_prefix(task: &ProcessingTask) -> String {
     prefix.push_str(&task.channel_id);
     prefix.push_str(">*\n\n");
     prefix
-}
-
-#[must_use]
-fn build_feedback_blocks(correlation_id: &str) -> Value {
-    let good_value = json!({
-        "rating": "good",
-        "correlation_id": correlation_id,
-    })
-    .to_string();
-    let bad_value = json!({
-        "rating": "bad",
-        "correlation_id": correlation_id,
-    })
-    .to_string();
-
-    json!([
-        {
-            "type": "context_actions",
-            "elements": [
-                {
-                    "type": "feedback_buttons",
-                    "action_id": FEEDBACK_ACTION_ID,
-                    "positive_button": {
-                        "text": { "type": "plain_text", "text": "Good Response" },
-                        "value": good_value
-                    },
-                    "negative_button": {
-                        "text": { "type": "plain_text", "text": "Bad Response" },
-                        "value": bad_value
-                    }
-                }
-            ]
-        }
-    ])
 }
 
 /// Find the byte index corresponding to `max_chars` Unicode characters.
@@ -259,21 +223,16 @@ async fn finalize_stream_success(
     slack_bot: &SlackBot,
     channel: &str,
     stream_ts: &str,
-    blocks: &Value,
-    fallback_text: &str,
 ) -> Result<(), SlackError> {
     match slack_bot
         .slack_client()
-        .stop_stream(channel, stream_ts, None, Some(blocks), None)
+        .stop_stream(channel, stream_ts, None, None, None)
         .await
     {
         Ok(()) => Ok(()),
         Err(SlackError::ApiError(ref msg)) if msg.contains("message_not_in_streaming_state") => {
-            // Already finalized; best-effort attach blocks via chat.update.
-            slack_bot
-                .slack_client()
-                .update_message(channel, stream_ts, Some(fallback_text), Some(blocks))
-                .await
+            // Already finalized; nothing more to do.
+            Ok(())
         }
         Err(e) => Err(e),
     }
@@ -565,7 +524,6 @@ pub async fn stream_summary_to_assistant_thread(
         let before_len = collected.len();
         let mut finalized = collected;
         SlackBot::apply_safety_net_sections(&mut finalized, &data);
-        let fallback_text = format!("{prefix}{finalized}");
         if finalized.len() > before_len {
             pending.push_str(&finalized[before_len..]);
             if can_append {
@@ -583,23 +541,10 @@ pub async fn stream_summary_to_assistant_thread(
             }
         }
 
-        let blocks = build_feedback_blocks(&task.correlation_id);
         if can_append {
-            finalize_stream_success(slack_bot, assistant_channel, ts, &blocks, &fallback_text)
-                .await?;
-        } else {
-            // Message already finalized; best effort attach blocks via chat.update.
-            if let Err(e) = slack_bot
-                .slack_client()
-                .update_message(assistant_channel, ts, Some(&fallback_text), Some(&blocks))
-                .await
-            {
-                warn!(
-                    "Failed to attach feedback blocks to finalized message (corr_id={}): {}",
-                    task.correlation_id, e
-                );
-            }
+            finalize_stream_success(slack_bot, assistant_channel, ts).await?;
         }
+        // If !can_append, message was already finalized; nothing more to do.
 
         Ok(())
     }

@@ -1166,18 +1166,10 @@ mod streaming_tests {
     #[test]
     fn test_build_stop_stream_payload_with_blocks_and_metadata() {
         let blocks = json!([{
-            "type": "context_actions",
+            "type": "context",
             "elements": [{
-                "type": "feedback_buttons",
-                "action_id": "tldr_feedback",
-                "positive_button": {
-                    "text": { "type": "plain_text", "text": "Good Response" },
-                    "value": "{\"rating\":\"good\"}"
-                },
-                "negative_button": {
-                    "text": { "type": "plain_text", "text": "Bad Response" },
-                    "value": "{\"rating\":\"bad\"}"
-                }
+                "type": "mrkdwn",
+                "text": "Summary completed"
             }]
         }]);
         let metadata = json!({
@@ -1200,7 +1192,7 @@ mod streaming_tests {
         assert_eq!(payload["channel"], "C123ABC456");
         assert_eq!(payload["ts"], "1503435956.000247");
         assert_eq!(payload["markdown_text"], "Final text");
-        assert_eq!(payload["blocks"][0]["type"], "context_actions");
+        assert_eq!(payload["blocks"][0]["type"], "context");
         assert_eq!(payload["metadata"]["event_type"], "tldr_summary");
         assert_eq!(payload["metadata"]["event_payload"]["v"], 1);
         assert!(
