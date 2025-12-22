@@ -18,9 +18,13 @@ export const INPUT_ACTION_STYLE = 'style_input_action';
 /**
  * Build welcome message blocks shown when assistant thread starts.
  *
+ * @param viewingChannelId - Optional channel ID the user is currently viewing
  * @param activeStyle - Optional active style to display
  */
-export function buildWelcomeBlocks(activeStyle?: string | null): KnownBlock[] {
+export function buildWelcomeBlocks(
+  viewingChannelId?: string | null,
+  activeStyle?: string | null
+): KnownBlock[] {
   const blocks: KnownBlock[] = [
     {
       type: 'section',
@@ -35,6 +39,19 @@ export function buildWelcomeBlocks(activeStyle?: string | null): KnownBlock[] {
       },
     },
   ];
+
+  // Show current channel context so users know what will be summarized
+  if (viewingChannelId) {
+    blocks.push({
+      type: 'context',
+      elements: [
+        {
+          type: 'mrkdwn',
+          text: `📍 *Viewing:* <#${viewingChannelId}>`,
+        },
+      ],
+    });
+  }
 
   // Show active style if set
   if (activeStyle) {
