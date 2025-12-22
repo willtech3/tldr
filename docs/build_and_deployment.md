@@ -1,6 +1,6 @@
 # TLDR Build and Deployment Pipeline
 
-This document explains the Docker-based build pipeline and deployment process for the TLDR Rust Lambda functions.
+This document explains the build pipeline and deployment process for TLDR's two Lambda functions: the Bolt.js API (TypeScript) and the Rust Worker.
 
 ## Overview
 
@@ -38,10 +38,9 @@ just qa
 ```
 
 This executes:
-- `cargo fmt --check`
-- `cargo clippy` with strict warnings
-- `cargo test`
-- CDK TypeScript build
+- Rust: `cargo fmt --check`, `cargo clippy` with strict warnings, `cargo test`
+- Bolt.js: `npm run build`, `npm run lint`, `npm test`
+- CDK: TypeScript build
 
 ### Local Build (Debugging Only)
 
@@ -55,9 +54,11 @@ To build Lambda functions locally for debugging:
 
 This script:
 1. Builds a Docker image with necessary tools and dependencies
-2. Compiles both Lambda functions (API and Worker)
-3. Extracts artifacts (bootstrap binaries and function.zip files)
+2. Compiles the Rust Worker Lambda
+3. Extracts artifacts (bootstrap binary and function.zip)
 4. Places them in expected locations for CDK deployment
+
+Note: The Bolt.js API Lambda is built separately via `npm run build` in the `bolt-ts/` directory.
 
 ## Technical Details
 
@@ -79,10 +80,13 @@ The Dockerfile:
 ### Build Artifacts
 
 After building, artifacts are placed in:
-- `lambda/target/lambda/tldr-api/bootstrap` - API Lambda binary
-- `lambda/target/lambda/tldr-api/function.zip` - API Lambda package
+
+**Rust Worker Lambda:**
 - `lambda/target/lambda/tldr-worker/bootstrap` - Worker Lambda binary
 - `lambda/target/lambda/tldr-worker/function.zip` - Worker Lambda package
+
+**Bolt.js API Lambda:**
+- `bolt-ts/bundle/index.js` - Bundled TypeScript/JavaScript
 
 ### CDK Deployment
 

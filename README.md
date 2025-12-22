@@ -7,7 +7,7 @@ TLDR is a serverless Slack bot that turns a wall of unread messages into a conci
 ## ✨ Key Features
 
 - **AI App Experience** – Native Slack AI App split-view integration with suggested prompts and context tracking.
-- **AI-Generated Summaries** – Uses OpenAI (GPT-4.1 by default) to distill channel messages into digestible summaries.
+- **AI-Generated Summaries** – Uses OpenAI (GPT-5.2 by default) to distill channel messages into digestible summaries.
 - **Custom Styles** – Make summaries funny, formal, or fit your friend group's vibe.
 - **Hybrid Architecture** – TypeScript Bolt.js for Slack events + Rust worker for fast async processing.
 - **Built for Speed** – Instant acknowledgement with async summarization for snappy UX.
@@ -111,7 +111,7 @@ Environment variables (set in Lambda or GitHub secrets):
 | `SLACK_SIGNING_SECRET` | Verifies Slack requests |
 | `OPENAI_API_KEY` | Access token for the OpenAI API |
 | `OPENAI_ORG_ID` | Optional, sets OpenAI-Organization header |
-| `OPENAI_MODEL` | Optional, override model (defaults to `gpt-4.1`) |
+| `OPENAI_MODEL` | Optional, override model (defaults to `gpt-5.2`) |
 | `PROCESSING_QUEUE_URL` | URL of the SQS queue |
 
 ---
