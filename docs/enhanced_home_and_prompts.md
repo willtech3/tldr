@@ -110,9 +110,9 @@ If a user runs a "boring" summary, give them one-click access to the "fun" modes
 - `bolt-ts/src/blocks.ts` — Update `buildWelcomeBlocks`.
 
 **Checklist**:
-- ☐ Update `DEFAULT_PROMPTS` with the 4 new personas.
-- ☐ Update `buildWelcomeBlocks` to show `📍 Viewing: <#channel>`.
-- ☐ Update `assistant_thread_started` and `context_changed` to pass `viewingChannelId`.
+- ✅ Update `DEFAULT_PROMPTS` with the 4 new personas.
+- ✅ Update `buildWelcomeBlocks` to show `📍 Viewing: <#channel>`.
+- ✅ Update `assistant_thread_started` and `context_changed` to pass `viewingChannelId`.
 
 ### PR 2 — Interactive Thread Actions (Share & Pivot)
 

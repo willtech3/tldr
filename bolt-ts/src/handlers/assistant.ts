@@ -29,14 +29,35 @@ interface AssistantThread {
 
 /**
  * Default suggested prompts shown when assistant thread starts.
+ *
+ * These prompts are optimized for the friend group use case:
+ * - Roasting and sarcasm are central
+ * - "Receipts" (calling out contradictions) are valuable
+ * - Entertainment and engagement matter more than corporate utility
+ *
  * Note: "Set style" is handled via the button in the welcome message, not as a
  * suggested prompt, to avoid sending a message the bot can't respond to.
  */
 const DEFAULT_PROMPTS: Array<{ title: string; message: string }> = [
-  { title: 'Summarize', message: 'summarize' },
-  { title: 'Summarize last 50', message: 'summarize last 50' },
-  { title: 'Summarize last 100', message: 'summarize last 100' },
-  { title: 'Help', message: 'help' },
+  {
+    title: '🔥 Choose Violence',
+    message:
+      'summarize with style: be hyper-critical, sarcastic, and roast everyone mercilessly. call out bad takes and dumb ideas.',
+  },
+  {
+    title: '📋 Just the Facts',
+    message: 'summarize',
+  },
+  {
+    title: '🕵️ Run the Investigation',
+    message:
+      'summarize with style: break down by person. what did each person contribute? be specific about who said what.',
+  },
+  {
+    title: '📜 Pull the Receipts',
+    message:
+      'summarize with style: find contradictions, broken promises, and things people said they would do but didn\'t. bring the receipts.',
+  },
 ];
 
 const WELCOME_TEXT = 'Welcome to TLDR';
@@ -89,12 +110,12 @@ export function registerAssistantHandlers(app: App): void {
         })
         .catch((err) => logger.error('Failed to set thread title:', err));
 
-      // Post welcome message
+      // Post welcome message with channel context
       const welcome = await client.chat.postMessage({
         channel: channelId,
         thread_ts: threadTs,
         text: WELCOME_TEXT,
-        blocks: buildWelcomeBlocks(),
+        blocks: buildWelcomeBlocks(initialState.viewingChannelId, initialState.customStyle),
         metadata: buildThreadStateMetadata(initialState),
       });
 
@@ -165,7 +186,7 @@ export function registerAssistantHandlers(app: App): void {
           channel: channelId,
           thread_ts: threadTs,
           text: WELCOME_TEXT,
-          blocks: buildWelcomeBlocks(nextState.customStyle),
+          blocks: buildWelcomeBlocks(nextState.viewingChannelId, nextState.customStyle),
           metadata: buildThreadStateMetadata(nextState),
         });
         if (welcome.ts) {
@@ -178,13 +199,13 @@ export function registerAssistantHandlers(app: App): void {
     }
 
     // Persist context into Slack thread state message metadata.
-    // Keep message content stable; we update metadata only.
+    // Update the welcome message to reflect the new viewing channel.
     void client.chat
       .update({
         channel: channelId,
         ts: stateMessageTs,
         text: WELCOME_TEXT,
-        blocks: buildWelcomeBlocks(nextState.customStyle),
+        blocks: buildWelcomeBlocks(nextState.viewingChannelId, nextState.customStyle),
         metadata: buildThreadStateMetadata(nextState),
       })
       .then(() => {

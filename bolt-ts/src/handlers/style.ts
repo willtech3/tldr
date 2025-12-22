@@ -149,7 +149,7 @@ export function registerStyleHandlers(app: App): void {
           channel: assistantChannelId,
           ts: stateMessageTs,
           text: WELCOME_TEXT,
-          blocks: buildWelcomeBlocks(newStyle),
+          blocks: buildWelcomeBlocks(nextState.viewingChannelId, newStyle),
           metadata: buildThreadStateMetadata(nextState),
         });
         setCachedThreadState({ threadKey, stateMessageTs, state: nextState });
@@ -163,7 +163,7 @@ export function registerStyleHandlers(app: App): void {
           channel: assistantChannelId,
           thread_ts: assistantThreadTs,
           text: WELCOME_TEXT,
-          blocks: buildWelcomeBlocks(newStyle),
+          blocks: buildWelcomeBlocks(nextState.viewingChannelId, newStyle),
           metadata: buildThreadStateMetadata(nextState),
         });
         if (resp.ts) {

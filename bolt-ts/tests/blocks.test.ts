@@ -49,7 +49,7 @@ describe('Block Kit builders', () => {
     });
 
     it('should include active style context when style is set', () => {
-      const blocks = buildWelcomeBlocks('be funny');
+      const blocks = buildWelcomeBlocks(null, 'be funny');
       const context = blocks.find(
         (b) => b.type === 'context' && 'elements' in b && b.elements.some((e) => 'text' in e && typeof e.text === 'string' && e.text.includes('Active style'))
       );
@@ -58,8 +58,10 @@ describe('Block Kit builders', () => {
 
     it('should truncate long styles', () => {
       const longStyle = 'a'.repeat(150);
-      const blocks = buildWelcomeBlocks(longStyle);
-      const context = blocks.find((b) => b.type === 'context');
+      const blocks = buildWelcomeBlocks(null, longStyle);
+      const context = blocks.find(
+        (b) => b.type === 'context' && 'elements' in b && b.elements.some((e) => 'text' in e && typeof e.text === 'string' && e.text.includes('Active style'))
+      );
       expect(context).toBeDefined();
       if (context?.type === 'context') {
         const textElement = context.elements.find((e) => 'text' in e);
@@ -68,6 +70,40 @@ describe('Block Kit builders', () => {
           expect(textElement.text.length).toBeLessThan(150);
         }
       }
+    });
+
+    it('should include viewing channel context when viewingChannelId is set', () => {
+      const blocks = buildWelcomeBlocks('C12345');
+      const context = blocks.find(
+        (b) => b.type === 'context' && 'elements' in b && b.elements.some((e) => 'text' in e && typeof e.text === 'string' && e.text.includes('Viewing'))
+      );
+      expect(context).toBeDefined();
+      if (context?.type === 'context') {
+        const textElement = context.elements.find((e) => 'text' in e);
+        if (textElement && 'text' in textElement) {
+          expect(textElement.text).toContain('<#C12345>');
+        }
+      }
+    });
+
+    it('should not include viewing channel context when viewingChannelId is null', () => {
+      const blocks = buildWelcomeBlocks(null);
+      const context = blocks.find(
+        (b) => b.type === 'context' && 'elements' in b && b.elements.some((e) => 'text' in e && typeof e.text === 'string' && e.text.includes('Viewing'))
+      );
+      expect(context).toBeUndefined();
+    });
+
+    it('should include both viewing channel and active style when both are set', () => {
+      const blocks = buildWelcomeBlocks('C12345', 'be funny');
+      const viewingContext = blocks.find(
+        (b) => b.type === 'context' && 'elements' in b && b.elements.some((e) => 'text' in e && typeof e.text === 'string' && e.text.includes('Viewing'))
+      );
+      const styleContext = blocks.find(
+        (b) => b.type === 'context' && 'elements' in b && b.elements.some((e) => 'text' in e && typeof e.text === 'string' && e.text.includes('Active style'))
+      );
+      expect(viewingContext).toBeDefined();
+      expect(styleContext).toBeDefined();
     });
   });
 

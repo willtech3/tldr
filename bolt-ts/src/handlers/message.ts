@@ -133,7 +133,7 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
                 channel: channelId,
                 ts: stateMessageTs,
                 text: WELCOME_TEXT,
-                blocks: buildWelcomeBlocks(nextState.customStyle),
+                blocks: buildWelcomeBlocks(nextState.viewingChannelId, nextState.customStyle),
                 metadata: buildThreadStateMetadata(nextState),
               })
               .then(() => {
@@ -147,7 +147,7 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
                 channel: channelId,
                 thread_ts: threadTs,
                 text: WELCOME_TEXT,
-                blocks: buildWelcomeBlocks(nextState.customStyle),
+                blocks: buildWelcomeBlocks(nextState.viewingChannelId, nextState.customStyle),
                 metadata: buildThreadStateMetadata(nextState),
               });
               if (resp.ts) {
@@ -204,7 +204,7 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
                 channel: channelId,
                 ts: stateMessageTs,
                 text: WELCOME_TEXT,
-                blocks: buildWelcomeBlocks(null),
+                blocks: buildWelcomeBlocks(nextState.viewingChannelId, null),
                 metadata: buildThreadStateMetadata(nextState),
               })
               .then(() => {
@@ -218,7 +218,7 @@ export function registerMessageHandlers(app: App, config: AppConfig): void {
                 channel: channelId,
                 thread_ts: threadTs,
                 text: WELCOME_TEXT,
-                blocks: buildWelcomeBlocks(null),
+                blocks: buildWelcomeBlocks(nextState.viewingChannelId, null),
                 metadata: buildThreadStateMetadata(nextState),
               });
               if (resp.ts) {
