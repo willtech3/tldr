@@ -78,6 +78,9 @@ Implementation notes:
   - Custom prompt only (always custom).
   - A quick way to set/replace style for the current thread (stored in Slack thread metadata).
   - A per-run override (doesn't persist).
+- **Engagement Actions**:
+  - "Share to Channel" button with story-format attribution.
+  - "Roast This" / "Pull Receipts" pivot buttons.
 - **Image + link handling**:
   - Extract and list links shared.
   - Include image/file references with short AI-generated descriptions (vision-capable model).
@@ -89,7 +92,6 @@ Implementation notes:
 - Message/global shortcuts
 - OAuth "unread" user-token flow
 - Scheduled / emoji workflows
-- "Share" UI
 
 If we ever want one of these again, we re-introduce it intentionally behind a new issue and acceptance criteria.
 

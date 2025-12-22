@@ -135,7 +135,8 @@ impl LlmClient {
    - Image highlights\n\
    - Receipts\n\
    Include each section header, even if empty or not applicable.\n\
-3. Links shared: List only links provided in the input under \"Links shared (deduped)\".\n\
+3. Links shared: List only links provided in the input under \"Links shared\".\n\
+   - Select only the top 10 most relevant links based on the input messages and CUSTOM_STYLE values.
    - Format each as `<URL|descriptive name>`. If the descriptive name is missing or unclear, use \"Shared link\".\n\
    - If no links, write \"None\".\n\
    - If a CUSTOM STYLE block is given, reflect its tone and style in the descriptive names.\n\
