@@ -223,10 +223,20 @@ async fn finalize_stream_success(
     slack_bot: &SlackBot,
     channel: &str,
     stream_ts: &str,
+    source_channel_id: &str,
+    message_count: u32,
+    custom_prompt: Option<&str>,
 ) -> Result<(), SlackError> {
+    // Build action buttons to append to the streamed summary
+    let action_buttons = super::deliver::build_summary_action_buttons(
+        source_channel_id,
+        message_count,
+        custom_prompt,
+    );
+
     match slack_bot
         .slack_client()
-        .stop_stream(channel, stream_ts, None, None, None)
+        .stop_stream(channel, stream_ts, None, Some(&action_buttons), None)
         .await
     {
         Ok(()) => Ok(()),
@@ -542,7 +552,15 @@ pub async fn stream_summary_to_assistant_thread(
         }
 
         if can_append {
-            finalize_stream_success(slack_bot, assistant_channel, ts).await?;
+            finalize_stream_success(
+                slack_bot,
+                assistant_channel,
+                ts,
+                &task.channel_id,
+                task.message_count.unwrap_or(50),
+                task.custom_prompt.as_deref(),
+            )
+            .await?;
         }
         // If !can_append, message was already finalized; nothing more to do.
 

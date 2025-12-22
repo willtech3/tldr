@@ -43,18 +43,12 @@ export function registerActionHandlers(app: App): void {
   }
 
   // Handle "Share to channel" button
-  app.action<BlockAction>('share_summary', async ({ ack, body, client, logger }) => {
+  app.action<BlockAction>('share_summary', async ({ ack, body, action, client, logger }) => {
     await ack();
 
     try {
-      if (!('action' in body) || !body.action || typeof body.action !== 'object') {
+      if (!action || typeof action !== 'object' || !('type' in action) || action.type !== 'button') {
         logger.error('Invalid action payload for share_summary');
-        return;
-      }
-
-      const action = body.action;
-      if (!('type' in action) || action.type !== 'button') {
-        logger.error('Action is not a button');
         return;
       }
 
@@ -112,18 +106,12 @@ export function registerActionHandlers(app: App): void {
   });
 
   // Handle "Roast This" button
-  app.action<BlockAction>('rerun_roast', async ({ ack, body, client, logger }) => {
+  app.action<BlockAction>('rerun_roast', async ({ ack, body, action, client, logger }) => {
     await ack();
 
     try {
-      if (!('action' in body) || !body.action || typeof body.action !== 'object') {
+      if (!action || typeof action !== 'object' || !('type' in action) || action.type !== 'button') {
         logger.error('Invalid action payload for rerun_roast');
-        return;
-      }
-
-      const action = body.action;
-      if (!('type' in action) || action.type !== 'button') {
-        logger.error('Action is not a button');
         return;
       }
 
@@ -181,18 +169,12 @@ export function registerActionHandlers(app: App): void {
   });
 
   // Handle "Pull Receipts" button
-  app.action<BlockAction>('rerun_receipts', async ({ ack, body, client, logger }) => {
+  app.action<BlockAction>('rerun_receipts', async ({ ack, body, action, client, logger }) => {
     await ack();
 
     try {
-      if (!('action' in body) || !body.action || typeof body.action !== 'object') {
+      if (!action || typeof action !== 'object' || !('type' in action) || action.type !== 'button') {
         logger.error('Invalid action payload for rerun_receipts');
-        return;
-      }
-
-      const action = body.action;
-      if (!('type' in action) || action.type !== 'button') {
-        logger.error('Action is not a button');
         return;
       }
 

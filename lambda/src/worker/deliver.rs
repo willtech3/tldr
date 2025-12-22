@@ -307,7 +307,7 @@ pub async fn notify_no_messages(
 /// * `message_count` - Number of messages in the summary
 /// * `current_style` - The current summary style (if any)
 #[must_use]
-fn build_summary_action_buttons(
+pub(crate) fn build_summary_action_buttons(
     source_channel_id: &str,
     message_count: u32,
     current_style: Option<&str>,

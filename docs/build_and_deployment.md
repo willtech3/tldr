@@ -125,8 +125,8 @@ For local Lambda testing without deployment:
 cd lambda
 cargo lambda build --release
 cargo lambda watch  # Starts local server on :9000
-# In another terminal:
-cargo lambda invoke --data-file test/fixtures/slash_command.json
+# In another terminal, invoke with an SQS event payload:
+cargo lambda invoke --data-ascii '{"Records":[]}'
 ```
 
 ## Related Documentation
