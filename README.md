@@ -7,10 +7,10 @@ TLDR is a serverless Slack bot that turns a wall of unread messages into a conci
 ## ✨ Key Features
 
 - **AI App Experience** – Native Slack AI App split-view integration with suggested prompts and context tracking.
-- **AI-Generated Summaries** – Uses OpenAI (GPT-5.2 by default) to distill channel messages into digestible summaries.
+- **AI-Generated Summaries** – Uses OpenAI (GPT-4.1 by default) to distill channel messages into digestible summaries.
 - **Custom Styles** – Make summaries funny, formal, or fit your friend group's vibe.
-- **Two-Lambda Architecture** – Instant acknowledgement + async processing for snappy UX.
-- **Built with Rust** – Fast, reliable worker using Tokio runtime.
+- **Hybrid Architecture** – TypeScript Bolt.js for Slack events + Rust worker for fast async processing.
+- **Built for Speed** – Instant acknowledgement with async summarization for snappy UX.
 
 ---
 
@@ -33,19 +33,20 @@ That's it! TLDR automatically tracks which channel you're viewing and summarizes
 ## 🏗️ High-Level Architecture
 
 ```
-┌─────────┐    ┌────────────┐   SQS   ┌──────────────┐    ┌────────────────────┐
-│  Slack  │──►│ API Lambda │─▶Queue▶│ Worker Lambda │───►│ OpenAI Responses API│
-└─────────┘    └────────────┘         └──────┬───────┘    └────────────────────┘
-                                             │
-                                             ▼
-                                     ┌───────────────┐
-                                     │ Assistant     │
-                                     │ Thread Reply  │
-                                     └───────────────┘
+┌─────────┐    ┌────────────────┐   SQS   ┌──────────────┐    ┌────────────────────┐
+│  Slack  │───►│ Bolt.js Lambda │──Queue─►│ Rust Worker  │───►│ OpenAI Responses API│
+└─────────┘    │  (TypeScript)  │         │   Lambda     │    └────────────────────┘
+               └────────────────┘         └──────┬───────┘
+                                                 │
+                                                 ▼
+                                         ┌───────────────┐
+                                         │ Assistant     │
+                                         │ Thread Reply  │
+                                         └───────────────┘
 ```
 
-1. **API Lambda** – Handles Slack events and interactions, enqueues jobs to SQS.
-2. **Worker Lambda** – Fetches channel messages, calls OpenAI, posts summary to the assistant thread.
+1. **Bolt.js Lambda** (`bolt-ts/`) – Handles all Slack events, interactions, home tab, and message parsing. Enqueues summarization jobs to SQS.
+2. **Rust Worker Lambda** (`lambda/`) – Fetches channel messages, calls OpenAI, posts summary to the assistant thread.
 
 ---
 
@@ -53,10 +54,9 @@ That's it! TLDR automatically tracks which channel you're viewing and summarizes
 
 ### Prerequisites
 
-- Rust (stable, Edition 2024)
-- `cargo-lambda` ≥ 0.17 for local Lambda builds
+- Node.js 18+ & npm (for Bolt.js and CDK)
+- Rust (stable) with `cargo-lambda` for local Lambda builds
 - AWS CLI with a profile that can deploy Lambda + SQS
-- Node 18+ & npm (for the CDK stack)
 - A Slack workspace (paid plan required for AI Apps) & OpenAI API key
 
 ### Steps
@@ -68,12 +68,13 @@ $ git clone https://github.com/your-org/tldr.git && cd tldr
 # 2. Configure environment
 $ cp cdk/env.example cdk/.env   # then edit the values
 
-# 3. Build & test the Lambda crate
-$ cd lambda
-$ cargo test
-$ cargo lambda build --release
+# 3. Install Bolt.js dependencies
+$ cd bolt-ts && npm install && cd ..
 
-# 4. Run quality checks
+# 4. Build & test the Rust worker
+$ cd lambda && cargo test && cd ..
+
+# 5. Run quality checks
 $ just qa
 ```
 
@@ -84,7 +85,7 @@ $ just qa
 The **`cdk/`** folder contains an AWS CDK stack that provisions:
 
 - API Gateway endpoint
-- Lambda functions (API + Worker)
+- Lambda functions (Bolt.js API + Rust Worker)
 - SQS queue
 - IAM roles & CloudWatch logs
 
@@ -110,7 +111,7 @@ Environment variables (set in Lambda or GitHub secrets):
 | `SLACK_SIGNING_SECRET` | Verifies Slack requests |
 | `OPENAI_API_KEY` | Access token for the OpenAI API |
 | `OPENAI_ORG_ID` | Optional, sets OpenAI-Organization header |
-| `OPENAI_MODEL` | Optional, override model (defaults to `gpt-5.2`) |
+| `OPENAI_MODEL` | Optional, override model (defaults to `gpt-4.1`) |
 | `PROCESSING_QUEUE_URL` | URL of the SQS queue |
 
 ---
@@ -118,15 +119,21 @@ Environment variables (set in Lambda or GitHub secrets):
 ## 🗂️ Project Layout
 
 ```
-├─ lambda/          # Rust crate with Lambda handlers
+├─ bolt-ts/         # TypeScript Bolt.js app (Slack API Lambda)
+│   ├─ src/
+│   │   ├─ index.ts         # Lambda entrypoint
+│   │   ├─ app.ts           # Bolt app configuration
+│   │   ├─ handlers/        # Event & action handlers
+│   │   ├─ blocks.ts        # Slack Block Kit builders
+│   │   └─ intent.ts        # Natural language command parser
+│   └─ package.json
+├─ lambda/          # Rust crate (Worker Lambda)
 │   ├─ src/
 │   │   ├─ bin/
-│   │   │   ├─ api.rs        # API Lambda entrypoint
-│   │   │   └─ worker.rs     # Worker Lambda entrypoint
-│   │   ├─ ai/               # OpenAI integration
-│   │   ├─ api/              # Slack event handlers
-│   │   ├─ slack/            # Slack API client
-│   │   └─ worker/           # Summarization logic
+│   │   │   └─ worker.rs    # Worker Lambda entrypoint
+│   │   ├─ ai/              # OpenAI integration
+│   │   ├─ slack/           # Slack API client
+│   │   └─ worker/          # Summarization logic
 │   └─ Cargo.toml
 ├─ cdk/             # AWS CDK stack (TypeScript)
 ├─ docs/            # Additional documentation
@@ -140,16 +147,17 @@ Environment variables (set in Lambda or GitHub secrets):
 - [Slack Configuration](docs/slack_configuration.md) – Complete Slack app setup guide
 - [User Workflows](docs/user_workflows.md) – Detailed user interaction documentation
 - [Build & Deployment](docs/build_and_deployment.md) – CI/CD and deployment details
-- [AI App Rewrite Plan](docs/ai_app_first_rewrite_bolt_js.md) – Future architecture direction
+- [Enhanced AI Features](docs/enhanced_home_and_prompts.md) – Home tab and prompt improvements
 
 ---
 
 ## 🤝 Contributing
 
-1. Make sure `cargo check` and `cargo clippy -- -D warnings` pass.
-2. Run `just qa` before committing.
-3. Add unit tests in `#[cfg(test)]` modules and doc-tests in public APIs.
-4. Open a PR – GitHub Actions will run the full test & lint suite.
+1. Make sure `cargo check` and `cargo clippy -- -D warnings` pass for Rust.
+2. Run `npm run lint` in `bolt-ts/` for TypeScript.
+3. Run `just qa` before committing.
+4. Add unit tests for new functionality.
+5. Open a PR – GitHub Actions will run the full test & lint suite.
 
 ---
 
