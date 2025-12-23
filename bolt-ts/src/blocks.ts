@@ -11,20 +11,29 @@ type KnownBlock = types.KnownBlock;
 
 // Action IDs for interactive components
 export const ACTION_OPEN_STYLE_MODAL = 'open_style_modal';
+export const ACTION_SELECT_MESSAGE_COUNT = 'select_message_count';
 export const MODAL_CALLBACK_SET_STYLE = 'set_style_modal';
 export const INPUT_BLOCK_STYLE = 'style_input_block';
 export const INPUT_ACTION_STYLE = 'style_input_action';
+
+/** Preset message count options for the dropdown */
+export const MESSAGE_COUNT_OPTIONS = [5, 10, 15, 20, 25, 30, 40, 50, 75, 100, 150, 200, 300, 500];
 
 /**
  * Build welcome message blocks shown when assistant thread starts.
  *
  * @param viewingChannelId - Optional channel ID the user is currently viewing
  * @param activeStyle - Optional active style to display
+ * @param defaultMessageCount - Optional default message count (defaults to 50)
  */
 export function buildWelcomeBlocks(
   viewingChannelId?: string | null,
-  activeStyle?: string | null
+  activeStyle?: string | null,
+  defaultMessageCount?: number | null
 ): KnownBlock[] {
+  // Determine effective message count for the dropdown
+  const effectiveCount = defaultMessageCount ?? 50;
+
   const blocks: KnownBlock[] = [
     {
       type: 'section',
@@ -36,6 +45,26 @@ export function buildWelcomeBlocks(
           '• Click a suggested prompt below\n' +
           '• Or type `help` to see all commands\n' +
           '• Just type `summarize` to get started',
+      },
+    },
+    // Message count dropdown
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: '📊 *Messages:*',
+      },
+      accessory: {
+        type: 'static_select',
+        action_id: ACTION_SELECT_MESSAGE_COUNT,
+        initial_option: {
+          text: { type: 'plain_text', text: String(effectiveCount) },
+          value: String(effectiveCount),
+        },
+        options: MESSAGE_COUNT_OPTIONS.map((count) => ({
+          text: { type: 'plain_text', text: String(count) },
+          value: String(count),
+        })),
       },
     },
   ];

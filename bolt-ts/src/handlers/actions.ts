@@ -5,12 +5,22 @@
  * - Share summary to source channel
  * - Rerun summary with Roast style
  * - Rerun summary with Receipts style
+ * - Message count selection dropdown
  */
 
 import { App, BlockAction } from '@slack/bolt';
 import { v4 as uuidv4 } from 'uuid';
 import { sendToSqs } from '../sqs';
-import type { ProcessingTask } from '../types';
+import type { ProcessingTask, ThreadContext } from '../types';
+import { ACTION_SELECT_MESSAGE_COUNT, buildWelcomeBlocks } from '../blocks';
+import {
+  buildThreadStateMetadata,
+  findThreadStateMessage,
+  getCachedThreadState,
+  makeThreadKey,
+  setCachedThreadState,
+  type SlackWebApiClient,
+} from '../thread_state';
 
 /**
  * Button value metadata for Share action.
@@ -230,4 +240,114 @@ export function registerActionHandlers(app: App): void {
       logger.error('Failed to handle rerun_receipts action:', error);
     }
   });
+
+  // Handle message count dropdown selection
+  app.action<BlockAction>(
+    ACTION_SELECT_MESSAGE_COUNT,
+    async ({ ack, body, action, client, logger }) => {
+      await ack();
+
+      try {
+        // Validate action is a static_select
+        if (
+          !action ||
+          typeof action !== 'object' ||
+          !('type' in action) ||
+          action.type !== 'static_select'
+        ) {
+          logger.error('Invalid action payload for message count selection');
+          return;
+        }
+
+        // Extract selected value
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const selectedOption = (action as any).selected_option;
+        if (!selectedOption || typeof selectedOption.value !== 'string') {
+          logger.error('No selected option in message count action');
+          return;
+        }
+
+        const newCount = parseInt(selectedOption.value, 10);
+        if (isNaN(newCount)) {
+          logger.error('Invalid message count value:', selectedOption.value);
+          return;
+        }
+
+        // Get thread context from the action body
+        const message = 'message' in body ? body.message : null;
+        const channel = 'channel' in body ? body.channel : null;
+
+        if (!message || !channel) {
+          logger.error('Could not extract message or channel from action body');
+          return;
+        }
+
+        const assistantChannelId = channel.id;
+        // The dropdown is in the welcome message, which is at the root of the thread.
+        // body.message.ts is the welcome message timestamp.
+        // body.message.thread_ts would be the thread root (should be same for root message).
+        const welcomeMessageTs = message.ts;
+        const threadTs = message.thread_ts ?? message.ts;
+        const threadKey = makeThreadKey(assistantChannelId, threadTs);
+
+        // Load current thread state
+        let currentState: ThreadContext = {
+          viewingChannelId: null,
+          customStyle: null,
+          defaultMessageCount: null,
+        };
+
+        const cached = getCachedThreadState(threadKey);
+        if (cached) {
+          currentState = cached.state;
+        } else {
+          // Try loading from Slack metadata
+          try {
+            const loaded = await findThreadStateMessage({
+              client: client as unknown as SlackWebApiClient,
+              assistantChannelId,
+              assistantThreadTs: threadTs,
+            });
+            if (loaded) {
+              currentState = loaded.state;
+            }
+          } catch (error) {
+            logger.warn('Failed to load thread state from Slack:', error);
+          }
+        }
+
+        // Update state with new message count
+        const nextState: ThreadContext = {
+          ...currentState,
+          defaultMessageCount: newCount,
+        };
+
+        // Persist to welcome message metadata via chat.update
+        await client.chat.update({
+          channel: assistantChannelId,
+          ts: welcomeMessageTs,
+          text: 'Welcome to TLDR',
+          blocks: buildWelcomeBlocks(
+            nextState.viewingChannelId,
+            nextState.customStyle,
+            nextState.defaultMessageCount
+          ),
+          metadata: buildThreadStateMetadata(nextState),
+        });
+
+        // Update cache
+        setCachedThreadState({
+          threadKey,
+          stateMessageTs: welcomeMessageTs,
+          state: nextState,
+        });
+
+        logger.info(
+          `Updated default message count to ${newCount} for thread ${assistantChannelId}:${threadTs}`
+        );
+      } catch (error) {
+        logger.error('Failed to handle message count selection:', error);
+      }
+    }
+  );
 }

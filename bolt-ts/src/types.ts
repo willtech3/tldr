@@ -62,4 +62,6 @@ export interface ThreadContext {
   viewingChannelId: string | null;
   /** Custom style prompt for this thread */
   customStyle: string | null;
+  /** Default message count for summarization (null = use system default of 50) */
+  defaultMessageCount: number | null;
 }

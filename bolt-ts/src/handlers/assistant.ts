@@ -97,6 +97,7 @@ export function createAssistant(config: AppConfig): Assistant {
       const initialState: ThreadContext = {
         viewingChannelId: assistantThread.context?.channel_id ?? null,
         customStyle: null,
+        defaultMessageCount: null,
       };
 
       try {
@@ -116,7 +117,11 @@ export function createAssistant(config: AppConfig): Assistant {
         // Post welcome message with channel context
         const welcome = await say({
           text: WELCOME_TEXT,
-          blocks: buildWelcomeBlocks(initialState.viewingChannelId, initialState.customStyle),
+          blocks: buildWelcomeBlocks(
+            initialState.viewingChannelId,
+            initialState.customStyle,
+            initialState.defaultMessageCount
+          ),
           metadata: buildThreadStateMetadata(initialState),
         });
 
@@ -174,6 +179,7 @@ export function createAssistant(config: AppConfig): Assistant {
       const nextState: ThreadContext = {
         viewingChannelId,
         customStyle: cached?.state.customStyle ?? null,
+        defaultMessageCount: cached?.state.defaultMessageCount ?? null,
       };
 
       // Save context using Assistant's built-in context store
@@ -188,7 +194,11 @@ export function createAssistant(config: AppConfig): Assistant {
             channel: channelId,
             thread_ts: threadTs,
             text: WELCOME_TEXT,
-            blocks: buildWelcomeBlocks(nextState.viewingChannelId, nextState.customStyle),
+            blocks: buildWelcomeBlocks(
+              nextState.viewingChannelId,
+              nextState.customStyle,
+              nextState.defaultMessageCount
+            ),
             metadata: buildThreadStateMetadata(nextState),
           });
           if (welcome.ts) {
@@ -207,7 +217,11 @@ export function createAssistant(config: AppConfig): Assistant {
           channel: channelId,
           ts: stateMessageTs,
           text: WELCOME_TEXT,
-          blocks: buildWelcomeBlocks(nextState.viewingChannelId, nextState.customStyle),
+          blocks: buildWelcomeBlocks(
+            nextState.viewingChannelId,
+            nextState.customStyle,
+            nextState.defaultMessageCount
+          ),
           metadata: buildThreadStateMetadata(nextState),
         })
         .then(() => {
@@ -252,7 +266,10 @@ export function createAssistant(config: AppConfig): Assistant {
           return { state: cached.state, stateMessageTs: cached.state_message_ts };
         }
 
-        return { state: { viewingChannelId: null, customStyle: null }, stateMessageTs: null };
+        return {
+          state: { viewingChannelId: null, customStyle: null, defaultMessageCount: null },
+          stateMessageTs: null,
+        };
       };
 
       try {
@@ -290,6 +307,7 @@ export function createAssistant(config: AppConfig): Assistant {
             const nextState: ThreadContext = {
               viewingChannelId: state.viewingChannelId,
               customStyle: intent.instructions,
+              defaultMessageCount: state.defaultMessageCount,
             };
 
             if (stateMessageTs) {
@@ -298,7 +316,11 @@ export function createAssistant(config: AppConfig): Assistant {
                   channel: channelId,
                   ts: stateMessageTs,
                   text: WELCOME_TEXT,
-                  blocks: buildWelcomeBlocks(nextState.viewingChannelId, nextState.customStyle),
+                  blocks: buildWelcomeBlocks(
+                    nextState.viewingChannelId,
+                    nextState.customStyle,
+                    nextState.defaultMessageCount
+                  ),
                   metadata: buildThreadStateMetadata(nextState),
                 })
                 .then(() => {
@@ -312,7 +334,11 @@ export function createAssistant(config: AppConfig): Assistant {
                   channel: channelId,
                   thread_ts: threadTs,
                   text: WELCOME_TEXT,
-                  blocks: buildWelcomeBlocks(nextState.viewingChannelId, nextState.customStyle),
+                  blocks: buildWelcomeBlocks(
+                    nextState.viewingChannelId,
+                    nextState.customStyle,
+                    nextState.defaultMessageCount
+                  ),
                   metadata: buildThreadStateMetadata(nextState),
                 });
                 if (resp.ts) {
@@ -361,6 +387,7 @@ export function createAssistant(config: AppConfig): Assistant {
             const nextState: ThreadContext = {
               viewingChannelId: state.viewingChannelId,
               customStyle: null,
+              defaultMessageCount: state.defaultMessageCount,
             };
 
             if (stateMessageTs) {
@@ -369,7 +396,11 @@ export function createAssistant(config: AppConfig): Assistant {
                   channel: channelId,
                   ts: stateMessageTs,
                   text: WELCOME_TEXT,
-                  blocks: buildWelcomeBlocks(nextState.viewingChannelId, null),
+                  blocks: buildWelcomeBlocks(
+                    nextState.viewingChannelId,
+                    null,
+                    nextState.defaultMessageCount
+                  ),
                   metadata: buildThreadStateMetadata(nextState),
                 })
                 .then(() => {
@@ -383,7 +414,11 @@ export function createAssistant(config: AppConfig): Assistant {
                   channel: channelId,
                   thread_ts: threadTs,
                   text: WELCOME_TEXT,
-                  blocks: buildWelcomeBlocks(nextState.viewingChannelId, null),
+                  blocks: buildWelcomeBlocks(
+                    nextState.viewingChannelId,
+                    null,
+                    nextState.defaultMessageCount
+                  ),
                   metadata: buildThreadStateMetadata(nextState),
                 });
                 if (resp.ts) {
@@ -420,11 +455,17 @@ export function createAssistant(config: AppConfig): Assistant {
             // Use per-run style override if present, otherwise fall back to thread's customStyle
             const effectiveStyle = intent.styleOverride ?? state.customStyle;
 
+            // Determine effective message count:
+            // 1. Explicit count from user command (e.g., "summarize last 100")
+            // 2. Persisted count from dropdown selection
+            // 3. System default of 50
+            const effectiveCount = intent.count ?? state.defaultMessageCount ?? 50;
+
             // Set status using the built-in utility
             await setStatus({
               status: 'Summarizing...',
               loading_messages: buildSummarizeLoadingMessages({
-                messageCount: intent.count ?? 50,
+                messageCount: effectiveCount,
                 hasCustomStyle: effectiveStyle !== null && effectiveStyle.trim().length > 0,
               }),
             });
@@ -438,7 +479,7 @@ export function createAssistant(config: AppConfig): Assistant {
               origin_channel_id: channelId,
               response_url: null,
               text: text.toLowerCase(),
-              message_count: intent.count,
+              message_count: effectiveCount,
               target_channel_id: null,
               custom_prompt: effectiveStyle,
               // AI App UX: always reply in-thread (never post publicly from the worker).

@@ -57,6 +57,9 @@ export function buildThreadStateMetadata(state: ThreadContext): SlackMessageMeta
   if (state.customStyle) {
     payload.custom_style = state.customStyle;
   }
+  if (state.defaultMessageCount !== null && state.defaultMessageCount !== undefined) {
+    payload.default_message_count = state.defaultMessageCount;
+  }
 
   return {
     event_type: TLDR_THREAD_STATE_EVENT_TYPE,
@@ -81,7 +84,11 @@ export function setCachedThreadState(args: {
 }
 
 export function parseThreadContextFromMetadata(eventPayload: unknown): ThreadContext {
-  const defaultState: ThreadContext = { viewingChannelId: null, customStyle: null };
+  const defaultState: ThreadContext = {
+    viewingChannelId: null,
+    customStyle: null,
+    defaultMessageCount: null,
+  };
 
   if (typeof eventPayload !== 'object' || eventPayload === null) {
     return defaultState;
@@ -92,8 +99,10 @@ export function parseThreadContextFromMetadata(eventPayload: unknown): ThreadCon
   const viewingChannelId =
     typeof payload.viewing_channel_id === 'string' ? payload.viewing_channel_id : null;
   const customStyle = typeof payload.custom_style === 'string' ? payload.custom_style : null;
+  const defaultMessageCount =
+    typeof payload.default_message_count === 'number' ? payload.default_message_count : null;
 
-  return { viewingChannelId, customStyle };
+  return { viewingChannelId, customStyle, defaultMessageCount };
 }
 
 export async function findThreadStateMessage(args: {
