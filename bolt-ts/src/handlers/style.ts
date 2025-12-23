@@ -135,10 +135,11 @@ export function registerStyleHandlers(app: App): void {
       }
     }
 
-    // Preserve viewingChannelId from the loaded state
+    // Preserve viewingChannelId and defaultMessageCount from the loaded state
     const nextState: ThreadContext = {
       viewingChannelId: cached?.state.viewingChannelId ?? null,
       customStyle: newStyle,
+      defaultMessageCount: cached?.state.defaultMessageCount ?? null,
     };
 
     // Update the canonical thread state message (or create if truly missing)
@@ -149,7 +150,11 @@ export function registerStyleHandlers(app: App): void {
           channel: assistantChannelId,
           ts: stateMessageTs,
           text: WELCOME_TEXT,
-          blocks: buildWelcomeBlocks(nextState.viewingChannelId, newStyle),
+          blocks: buildWelcomeBlocks(
+            nextState.viewingChannelId,
+            newStyle,
+            nextState.defaultMessageCount
+          ),
           metadata: buildThreadStateMetadata(nextState),
         });
         setCachedThreadState({ threadKey, stateMessageTs, state: nextState });
@@ -163,7 +168,11 @@ export function registerStyleHandlers(app: App): void {
           channel: assistantChannelId,
           thread_ts: assistantThreadTs,
           text: WELCOME_TEXT,
-          blocks: buildWelcomeBlocks(nextState.viewingChannelId, newStyle),
+          blocks: buildWelcomeBlocks(
+            nextState.viewingChannelId,
+            newStyle,
+            nextState.defaultMessageCount
+          ),
           metadata: buildThreadStateMetadata(nextState),
         });
         if (resp.ts) {

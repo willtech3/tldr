@@ -21,7 +21,11 @@ describe('thread_state', () => {
 
   describe('buildThreadStateMetadata', () => {
     it('should include version and omit null fields', () => {
-      const meta = buildThreadStateMetadata({ viewingChannelId: null, customStyle: null });
+      const meta = buildThreadStateMetadata({
+        viewingChannelId: null,
+        customStyle: null,
+        defaultMessageCount: null,
+      });
       expect(meta.event_type).toBe(TLDR_THREAD_STATE_EVENT_TYPE);
       expect(meta.event_payload).toEqual({ v: 1 });
     });
@@ -30,11 +34,24 @@ describe('thread_state', () => {
       const meta = buildThreadStateMetadata({
         viewingChannelId: 'C123',
         customStyle: 'write as a haiku',
+        defaultMessageCount: null,
       });
       expect(meta.event_payload).toEqual({
         v: 1,
         viewing_channel_id: 'C123',
         custom_style: 'write as a haiku',
+      });
+    });
+
+    it('should include default message count when present', () => {
+      const meta = buildThreadStateMetadata({
+        viewingChannelId: null,
+        customStyle: null,
+        defaultMessageCount: 25,
+      });
+      expect(meta.event_payload).toEqual({
+        v: 1,
+        default_message_count: 25,
       });
     });
   });
@@ -44,10 +61,12 @@ describe('thread_state', () => {
       expect(parseThreadContextFromMetadata(null)).toEqual({
         viewingChannelId: null,
         customStyle: null,
+        defaultMessageCount: null,
       });
       expect(parseThreadContextFromMetadata('nope')).toEqual({
         viewingChannelId: null,
         customStyle: null,
+        defaultMessageCount: null,
       });
     });
 
@@ -61,6 +80,20 @@ describe('thread_state', () => {
       ).toEqual({
         viewingChannelId: 'C999',
         customStyle: 'be funny',
+        defaultMessageCount: null,
+      });
+    });
+
+    it('should parse default_message_count when present', () => {
+      expect(
+        parseThreadContextFromMetadata({
+          v: 1,
+          default_message_count: 100,
+        })
+      ).toEqual({
+        viewingChannelId: null,
+        customStyle: null,
+        defaultMessageCount: 100,
       });
     });
 
@@ -69,10 +102,12 @@ describe('thread_state', () => {
         parseThreadContextFromMetadata({
           viewing_channel_id: 123,
           custom_style: { nested: true },
+          default_message_count: 'not a number',
         })
       ).toEqual({
         viewingChannelId: null,
         customStyle: null,
+        defaultMessageCount: null,
       });
     });
   });
@@ -83,7 +118,7 @@ describe('thread_state', () => {
       setCachedThreadState({
         threadKey,
         stateMessageTs: '171.0002',
-        state: { viewingChannelId: 'C1', customStyle: 'x' },
+        state: { viewingChannelId: 'C1', customStyle: 'x', defaultMessageCount: 25 },
       });
 
       type RepliesArgs = Parameters<SlackWebApiClient['conversations']['replies']>[0];
@@ -102,7 +137,7 @@ describe('thread_state', () => {
       expect(result).toEqual({
         thread_key: threadKey,
         state_message_ts: '171.0002',
-        state: { viewingChannelId: 'C1', customStyle: 'x' },
+        state: { viewingChannelId: 'C1', customStyle: 'x', defaultMessageCount: 25 },
       });
       expect(replies).not.toHaveBeenCalled();
     });
@@ -117,7 +152,12 @@ describe('thread_state', () => {
             ts: '170.0002',
             metadata: {
               event_type: TLDR_THREAD_STATE_EVENT_TYPE,
-              event_payload: { v: 1, viewing_channel_id: 'COLD', custom_style: 'old' },
+              event_payload: {
+                v: 1,
+                viewing_channel_id: 'COLD',
+                custom_style: 'old',
+                default_message_count: 10,
+              },
             },
           },
           // Newer state
@@ -125,7 +165,12 @@ describe('thread_state', () => {
             ts: '170.0003',
             metadata: {
               event_type: TLDR_THREAD_STATE_EVENT_TYPE,
-              event_payload: { v: 1, viewing_channel_id: 'CNEW', custom_style: 'new' },
+              event_payload: {
+                v: 1,
+                viewing_channel_id: 'CNEW',
+                custom_style: 'new',
+                default_message_count: 75,
+              },
             },
           },
         ],
@@ -141,7 +186,7 @@ describe('thread_state', () => {
       expect(result).toEqual({
         thread_key: makeThreadKey('D-FIND', '170.0000'),
         state_message_ts: '170.0003',
-        state: { viewingChannelId: 'CNEW', customStyle: 'new' },
+        state: { viewingChannelId: 'CNEW', customStyle: 'new', defaultMessageCount: 75 },
       });
     });
   });
