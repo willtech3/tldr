@@ -329,31 +329,31 @@ Each section below is written as an **execution checklist**. Each PR should keep
 
 ### PR 4 — Rust worker: end-to-end streaming delivery (thread destination only)
 
-- ☐ Add a config flag (e.g., `ENABLE_STREAMING`) in `lambda/src/core/config.rs` to gate streaming.
-- ☐ Wire the flag into deployment:
-  - ☐ `cdk/lib/tldr-stack.ts`: add `ENABLE_STREAMING` (and optionally `STREAM_MIN_APPEND_INTERVAL_MS` / `STREAM_MAX_CHUNK_CHARS`) to `workerEnvironment`.
-  - ☐ `cdk/env.example`: document the new env var(s).
-- ☐ In `lambda/src/worker/handler.rs`, when destination is `Thread` and streaming is enabled:
-  - ☐ Run the “fetch messages → build prompt” path (reuse existing logic).
-    - ☐ Recommended refactor (to avoid duplicating summarization logic): extract the pre-OpenAI prompt construction out of `SlackBot::summarize_messages_with_chatgpt` into a helper that returns:
+- ✅ Add a config flag (e.g., `ENABLE_STREAMING`) in `lambda/src/core/config.rs` to gate streaming.
+- ✅ Wire the flag into deployment:
+  - ✅ `cdk/lib/tldr-stack.ts`: add `ENABLE_STREAMING` (and optionally `STREAM_MIN_APPEND_INTERVAL_MS` / `STREAM_MAX_CHUNK_CHARS`) to `workerEnvironment`.
+  - ✅ `cdk/env.example`: document the new env var(s).
+- ✅ In `lambda/src/worker/handler.rs`, when destination is `Thread` and streaming is enabled:
+  - ✅ Run the "fetch messages → build prompt" path (reuse existing logic).
+    - ✅ Recommended refactor (to avoid duplicating summarization logic): extract the pre-OpenAI prompt construction out of `SlackBot::summarize_messages_with_chatgpt` into a helper that returns:
       - the OpenAI prompt (`Vec<ChatCompletionMessage>`)
-      - `links_shared`, `receipts`, and `has_any_images` (for the existing “safety net” section injection)
-    - ☐ Keep `SlackBot::summarize_messages_with_chatgpt` behavior unchanged for the non-streaming path by calling the helper + `LlmClient::generate_summary` (existing code).
-  - ☐ Start an OpenAI stream; only call `chat.startStream` once the first `response.output_text.delta` arrives (so failures before first output don’t create orphan streaming messages).
-  - ☐ Compute the streamed-message prefix for parity with current output:
+      - `links_shared`, `receipts`, and `has_any_images` (for the existing "safety net" section injection)
+    - ✅ Keep `SlackBot::summarize_messages_with_chatgpt` behavior unchanged for the non-streaming path by calling the helper + `LlmClient::generate_summary` (existing code).
+  - ✅ Start an OpenAI stream; only call `chat.startStream` once the first `response.output_text.delta` arrives (so failures before first output don't create orphan streaming messages).
+  - ✅ Compute the streamed-message prefix for parity with current output:
     - Optional: `_Style: <truncated_style>_\n\n` (use the same truncation behavior as `lambda/src/worker/deliver.rs`)
     - Required: `*Summary from <#<task.channel_id>>*\n\n`
-  - ☐ Call `chat.startStream` with `channel = task.origin_channel_id` and `thread_ts = task.thread_ts`, initializing `markdown_text` with the prefix plus the first delta.
-  - ☐ Append text chunks with the chunking policy above.
-  - ☐ After OpenAI completes, apply the same "safety net" rules currently in `lambda/src/slack/bot.rs` (ensure "Links shared", "Image highlights", "Receipts" exist) and append any missing sections before stopping the stream.
-  - ☐ Stop the stream.
-- ☐ Preserve the existing non-streaming path for non-thread destinations.
-- ☐ Ensure canonical error message behavior on any failure.
+  - ✅ Call `chat.startStream` with `channel = task.origin_channel_id` and `thread_ts = task.thread_ts`, initializing `markdown_text` with the prefix plus the first delta.
+  - ✅ Append text chunks with the chunking policy above.
+  - ✅ After OpenAI completes, apply the same "safety net" rules currently in `lambda/src/slack/bot.rs` (ensure "Links shared", "Image highlights", "Receipts" exist) and append any missing sections before stopping the stream.
+  - ✅ Stop the stream.
+- ✅ Preserve the existing non-streaming path for non-thread destinations.
+- ✅ Ensure canonical error message behavior on any failure.
 
 ### PR 5 — Hardening: rate limits, timeouts, and idempotency
 
 - ☐ Add a streaming-loop timeout (abort OpenAI request and finalize Slack message deterministically).
-- ☐ Add structured logging around `startStream`/`appendStream`/`stopStream` with correlation ids.
+- ✅ Add structured logging around `startStream`/`appendStream`/`stopStream` with correlation ids.
 - ☐ Add best-effort idempotency for SQS retries:
   - ☐ Include correlation_id in Slack message metadata (recommended `event_type: "tldr_summary"`) on the finalized message.
   - ☐ On worker start, check for an existing finalized summary with the same correlation id by calling `conversations.replies` with `include_all_metadata=true` and scanning for `metadata.event_type == "tldr_summary"` and matching `event_payload.correlation_id`.
@@ -367,9 +367,9 @@ Each section below is written as an **execution checklist**. Each PR should keep
 
 ### Unit tests
 
-- ☐ OpenAI SSE parser: extracts `delta` correctly and terminates on `response.completed`.
-- ☐ Slack chunker: never exceeds 12,000 chars per append and respects append interval.
-- ☐ Slack streaming wrapper: parses `ok: false` into error and handles 429 retry/backoff.
+- ✅ OpenAI SSE parser: extracts `delta` correctly and terminates on `response.completed`.
+- ✅ Slack chunker: never exceeds 12,000 chars per append and respects append interval.
+- ✅ Slack streaming wrapper: parses `ok: false` into error and handles 429 retry/backoff.
 
 ### Integration / manual tests (Slack)
 
