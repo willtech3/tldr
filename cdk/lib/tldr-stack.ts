@@ -85,7 +85,6 @@ export class TldrStack extends cdk.Stack {
       SLACK_SIGNING_SECRET: props.slackSigningSecret,
       PROCESSING_QUEUE_URL: processingQueue.queueUrl,
       NODE_OPTIONS: '--enable-source-maps',
-      LOG_LEVEL: process.env.LOG_LEVEL || 'info',
     } as const;
 
     // Environment for the Worker Lambda
