@@ -102,6 +102,10 @@ pub mod worker;
 pub fn setup_logging() {
     use tracing_subscriber::prelude::*;
     let fmt_layer = tracing_subscriber::fmt::layer().json().with_target(true);
+    let filter_layer = tracing_subscriber::EnvFilter::from_default_env();
 
-    tracing_subscriber::registry().with(fmt_layer).init();
+    tracing_subscriber::registry()
+        .with(fmt_layer)
+        .with(filter_layer)
+        .init();
 }
