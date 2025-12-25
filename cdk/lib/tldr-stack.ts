@@ -85,6 +85,7 @@ export class TldrStack extends cdk.Stack {
       SLACK_SIGNING_SECRET: props.slackSigningSecret,
       PROCESSING_QUEUE_URL: processingQueue.queueUrl,
       NODE_OPTIONS: '--enable-source-maps',
+      LOG_LEVEL: process.env.LOG_LEVEL || 'info',
     } as const;
 
     // Environment for the Worker Lambda
@@ -102,6 +103,7 @@ export class TldrStack extends cdk.Stack {
       ...(props.streamMaxChunkChars ? { STREAM_MAX_CHUNK_CHARS: props.streamMaxChunkChars } : {}),
       // ensure no trailing slash to avoid double slashes when composing paths
       API_BASE_URL: api.url.replace(/\/$/, ''),
+      RUST_LOG: process.env.LOG_LEVEL || 'info',
     };
 
     // Create the Bolt TypeScript Lambda for Slack API handling
