@@ -45,8 +45,11 @@ bolt-test:
 cdk-build:
 	cd cdk && npm run --silent build
 
+cdk-lint:
+	cd cdk && npm run lint
+
 # Aggregate: Code Quality (what CI runs on PRs)
-qa: fmt-check check clippy test bolt-build bolt-bundle bolt-lint bolt-test cdk-build
+qa: fmt-check check clippy test bolt-build bolt-bundle bolt-lint bolt-test cdk-build cdk-lint
 	@echo "✅ All code quality checks passed"
 
 # Clean build artifacts and caches
