@@ -107,8 +107,11 @@ jobs:
           npm run build
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
 
-        # Configure AWS credentials for CDK deployment
-      - name: Configure AWS credentials
+        # Configure AWS credentials for CDK deployment.
+        # Prefer short-lived OIDC credentials when AWS_DEPLOY_ROLE_ARN exists.
+      - name: Configure AWS credentials with OIDC
+        id: configure-aws-oidc
+        continue-on-error: true
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
@@ -118,8 +121,18 @@ jobs:
           mask-aws-account-id: true
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
 
+      - name: Configure AWS credentials with access keys
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.configure-aws-oidc.outcome != 'success'
+
       # Deploy with CDK. Runtime secrets are SSM SecureString values; CI only
-      # passes parameter names and assumes a short-lived AWS role through OIDC.
+      # passes parameter names. AWS auth prefers OIDC and falls back to the
+      # existing main-only access-key secrets until the OIDC role is configured.
       - name: Deploy with CDK
         run: |
           cd cdk
