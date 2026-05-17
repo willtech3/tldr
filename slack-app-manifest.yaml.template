@@ -25,7 +25,6 @@ oauth_config:
       - channels:history
       - channels:read
       - chat:write
-      - chat:write.public
       - files:read
       - groups:history
       - groups:read
@@ -50,4 +49,6 @@ settings:
     request_url: "https://YOUR-API-ID.execute-api.YOUR-REGION.amazonaws.com/prod/slack/interactive"
   org_deploy_enabled: true
   socket_mode_enabled: false
+  # This app uses an operator-managed bot token in SSM. Rotate the SSM value
+  # manually until an OAuth token refresh flow is implemented.
   token_rotation_enabled: false

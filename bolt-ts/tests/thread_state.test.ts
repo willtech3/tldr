@@ -74,11 +74,11 @@ describe('thread_state', () => {
       expect(
         parseThreadContextFromMetadata({
           v: 1,
-          viewing_channel_id: 'C999',
+          viewing_channel_id: 'C999999999',
           custom_style: 'be funny',
         })
       ).toEqual({
-        viewingChannelId: 'C999',
+        viewingChannelId: 'C999999999',
         customStyle: 'be funny',
         defaultMessageCount: null,
       });
@@ -118,7 +118,7 @@ describe('thread_state', () => {
       setCachedThreadState({
         threadKey,
         stateMessageTs: '171.0002',
-        state: { viewingChannelId: 'C1', customStyle: 'x', defaultMessageCount: 25 },
+        state: { viewingChannelId: 'C111111111', customStyle: 'x', defaultMessageCount: 25 },
       });
 
       type RepliesArgs = Parameters<SlackWebApiClient['conversations']['replies']>[0];
@@ -137,7 +137,7 @@ describe('thread_state', () => {
       expect(result).toEqual({
         thread_key: threadKey,
         state_message_ts: '171.0002',
-        state: { viewingChannelId: 'C1', customStyle: 'x', defaultMessageCount: 25 },
+        state: { viewingChannelId: 'C111111111', customStyle: 'x', defaultMessageCount: 25 },
       });
       expect(replies).not.toHaveBeenCalled();
     });
@@ -154,7 +154,7 @@ describe('thread_state', () => {
               event_type: TLDR_THREAD_STATE_EVENT_TYPE,
               event_payload: {
                 v: 1,
-                viewing_channel_id: 'COLD',
+                viewing_channel_id: 'C000000000',
                 custom_style: 'old',
                 default_message_count: 10,
               },
@@ -167,7 +167,7 @@ describe('thread_state', () => {
               event_type: TLDR_THREAD_STATE_EVENT_TYPE,
               event_payload: {
                 v: 1,
-                viewing_channel_id: 'CNEW',
+                viewing_channel_id: 'C222222222',
                 custom_style: 'new',
                 default_message_count: 75,
               },
@@ -186,10 +186,9 @@ describe('thread_state', () => {
       expect(result).toEqual({
         thread_key: makeThreadKey('D-FIND', '170.0000'),
         state_message_ts: '170.0003',
-        state: { viewingChannelId: 'CNEW', customStyle: 'new', defaultMessageCount: 75 },
+        state: { viewingChannelId: 'C222222222', customStyle: 'new', defaultMessageCount: 75 },
       });
     });
   });
 });
-
 

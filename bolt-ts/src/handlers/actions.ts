@@ -10,6 +10,14 @@
 
 import { App, BlockAction } from '@slack/bolt';
 import { v4 as uuidv4 } from 'uuid';
+import {
+  checkSummarizeRateLimit,
+  isUserMemberOfChannel,
+  isValidSlackChannelId,
+  normalizeMessageCount,
+  sanitizeGeneratedSlackText,
+  type ConversationsMembersClient,
+} from '../security';
 import { sendToSqs } from '../sqs';
 import type { ProcessingTask, ThreadContext } from '../types';
 import { ACTION_SELECT_MESSAGE_COUNT, buildWelcomeBlocks } from '../blocks';
@@ -65,7 +73,13 @@ export function registerActionHandlers(app: App): void {
       // TypeScript doesn't narrow union types properly here, so we use any after runtime check
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const buttonValue: ShareButtonValue = JSON.parse((action as any).value || '{}');
-      const { sourceChannelId, count, style } = buttonValue;
+      const { sourceChannelId, count: rawCount, style } = buttonValue;
+      const count = normalizeMessageCount(rawCount);
+
+      if (!isValidSlackChannelId(sourceChannelId)) {
+        logger.error('Invalid source channel in share_summary action');
+        return;
+      }
 
       // Get thread context
       const message = 'message' in body ? body.message : null;
@@ -79,8 +93,24 @@ export function registerActionHandlers(app: App): void {
       const assistantChannelId = channel.id;
       const threadTs = message.thread_ts ?? message.ts;
 
+      const userCanReadChannel = await isUserMemberOfChannel({
+        client: client as unknown as ConversationsMembersClient,
+        channelId: sourceChannelId,
+        userId: body.user.id,
+        logger,
+      });
+
+      if (!userCanReadChannel) {
+        await client.chat.postMessage({
+          channel: assistantChannelId,
+          thread_ts: threadTs,
+          text: "I can only share summaries for channels you're a member of.",
+        });
+        return;
+      }
+
       // Extract the summary text from the message
-      const summaryText = message.text || '';
+      const summaryText = sanitizeGeneratedSlackText(message.text || '');
 
       // Build attribution based on style
       let attribution = '';
@@ -128,7 +158,13 @@ export function registerActionHandlers(app: App): void {
       // TypeScript doesn't narrow union types properly here, so we use any after runtime check
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const buttonValue: RerunButtonValue = JSON.parse((action as any).value || '{}');
-      const { channelId, count } = buttonValue;
+      const { channelId, count: rawCount } = buttonValue;
+      const count = normalizeMessageCount(rawCount);
+
+      if (!isValidSlackChannelId(channelId)) {
+        logger.error('Invalid channel in rerun_roast action');
+        return;
+      }
 
       // Get thread context
       const message = 'message' in body ? body.message : null;
@@ -141,6 +177,31 @@ export function registerActionHandlers(app: App): void {
 
       const assistantChannelId = channel.id;
       const threadTs = message.thread_ts ?? message.ts;
+
+      if (!checkSummarizeRateLimit(body.user.id)) {
+        await client.chat.postMessage({
+          channel: assistantChannelId,
+          thread_ts: threadTs,
+          text: 'Please wait a minute before starting more summaries.',
+        });
+        return;
+      }
+
+      const userCanReadChannel = await isUserMemberOfChannel({
+        client: client as unknown as ConversationsMembersClient,
+        channelId,
+        userId: body.user.id,
+        logger,
+      });
+
+      if (!userCanReadChannel) {
+        await client.chat.postMessage({
+          channel: assistantChannelId,
+          thread_ts: threadTs,
+          text: "I can only summarize channels you're a member of.",
+        });
+        return;
+      }
 
       // Post confirmation message
       await client.chat.postMessage({
@@ -191,7 +252,13 @@ export function registerActionHandlers(app: App): void {
       // TypeScript doesn't narrow union types properly here, so we use any after runtime check
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const buttonValue: RerunButtonValue = JSON.parse((action as any).value || '{}');
-      const { channelId, count } = buttonValue;
+      const { channelId, count: rawCount } = buttonValue;
+      const count = normalizeMessageCount(rawCount);
+
+      if (!isValidSlackChannelId(channelId)) {
+        logger.error('Invalid channel in rerun_receipts action');
+        return;
+      }
 
       // Get thread context
       const message = 'message' in body ? body.message : null;
@@ -204,6 +271,31 @@ export function registerActionHandlers(app: App): void {
 
       const assistantChannelId = channel.id;
       const threadTs = message.thread_ts ?? message.ts;
+
+      if (!checkSummarizeRateLimit(body.user.id)) {
+        await client.chat.postMessage({
+          channel: assistantChannelId,
+          thread_ts: threadTs,
+          text: 'Please wait a minute before starting more summaries.',
+        });
+        return;
+      }
+
+      const userCanReadChannel = await isUserMemberOfChannel({
+        client: client as unknown as ConversationsMembersClient,
+        channelId,
+        userId: body.user.id,
+        logger,
+      });
+
+      if (!userCanReadChannel) {
+        await client.chat.postMessage({
+          channel: assistantChannelId,
+          thread_ts: threadTs,
+          text: "I can only summarize channels you're a member of.",
+        });
+        return;
+      }
 
       // Post confirmation message
       await client.chat.postMessage({
@@ -267,11 +359,12 @@ export function registerActionHandlers(app: App): void {
           return;
         }
 
-        const newCount = parseInt(selectedOption.value, 10);
-        if (isNaN(newCount)) {
+        const parsedCount = parseInt(selectedOption.value, 10);
+        if (isNaN(parsedCount)) {
           logger.error('Invalid message count value:', selectedOption.value);
           return;
         }
+        const newCount = normalizeMessageCount(parsedCount);
 
         // Get thread context from the action body
         const message = 'message' in body ? body.message : null;

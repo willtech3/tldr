@@ -23,13 +23,22 @@ if (!accountId) {
   process.exit(1);
 }
 
+function requiredEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    console.error(`ERROR: ${name} is required.`);
+    process.exit(1);
+  }
+  return value;
+}
+
 // Create the stack with environment variables
 new TldrStack(app, 'TldrStack', {
   // Stack configuration
-  slackBotToken: process.env.SLACK_BOT_TOKEN || '',
-  slackSigningSecret: process.env.SLACK_SIGNING_SECRET || '',
-  openaiApiKey: process.env.OPENAI_API_KEY || '',
-  openaiOrgId: process.env.OPENAI_ORG_ID || '',
+  slackBotTokenParameterName: requiredEnv('SLACK_BOT_TOKEN_PARAMETER_NAME'),
+  slackSigningSecretParameterName: requiredEnv('SLACK_SIGNING_SECRET_PARAMETER_NAME'),
+  openaiApiKeyParameterName: requiredEnv('OPENAI_API_KEY_PARAMETER_NAME'),
+  openaiOrgIdParameterName: process.env.OPENAI_ORG_ID_PARAMETER_NAME,
   openaiModel: process.env.OPENAI_MODEL,
   enableStreaming: process.env.ENABLE_STREAMING || 'false',
   streamMinAppendIntervalMs: process.env.STREAM_MIN_APPEND_INTERVAL_MS,

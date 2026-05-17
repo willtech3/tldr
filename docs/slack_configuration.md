@@ -50,21 +50,27 @@ From **Basic Information**:
 From **OAuth & Permissions**:
 - **Bot User OAuth Token**: Starts with `xoxb-`
 
-## Step 4: Configure GitHub Secrets
+## Step 4: Store Runtime Secrets in SSM
 
-Add these secrets to your GitHub repository (Settings → Secrets and variables → Actions):
+Store runtime secrets as SSM SecureString parameters. CDK passes parameter names to Lambda and grants each function read access; it does not put secret values in Lambda environment variables.
 
-### AWS Secrets
-- `AWS_ACCESS_KEY_ID` - IAM user access key
-- `AWS_SECRET_ACCESS_KEY` - IAM user secret key
+```bash
+aws ssm put-parameter --name /tldr/slack/bot-token \
+  --type SecureString --value "xoxb-your-bot-token" --overwrite
+aws ssm put-parameter --name /tldr/slack/signing-secret \
+  --type SecureString --value "your-signing-secret" --overwrite
+aws ssm put-parameter --name /tldr/openai/api-key \
+  --type SecureString --value "your-openai-api-key" --overwrite
+```
 
-### Slack Secrets
-- `SLACK_BOT_TOKEN` - Bot token from Step 3
-- `SLACK_SIGNING_SECRET` - Signing secret from Step 3
+Set these deployment variables in `cdk/.env` or your CI environment:
 
-### OpenAI Secrets
-- `OPENAI_API_KEY` - OpenAI API key
-- `OPENAI_ORG_ID` - Organization ID (optional)
+- `SLACK_BOT_TOKEN_PARAMETER_NAME`
+- `SLACK_SIGNING_SECRET_PARAMETER_NAME`
+- `OPENAI_API_KEY_PARAMETER_NAME`
+- `OPENAI_ORG_ID_PARAMETER_NAME` (optional)
+
+For CI/CD, prefer GitHub OIDC or another short-lived AWS role. The CDK stack no longer creates a broad IAM deployment user or outputs long-lived access keys.
 
 ## Step 5: Deploy Infrastructure
 
@@ -184,17 +190,16 @@ Reference: [Slack Request Verification](https://api.slack.com/authentication/ver
 
 ## Testing Checklist
 
-- [ ] AI App appears in Slack's AI Apps menu
-- [ ] Opening TLDR shows welcome message and suggested prompts
-- [ ] Switching channels updates context
-- [ ] "Summarize" produces a summary in the thread
-- [ ] Custom styles are applied correctly
-- [ ] Error messages display correctly for failures
+- ☐ AI App appears in Slack's AI Apps menu
+- ☐ Opening TLDR shows welcome message and suggested prompts
+- ☐ Switching channels updates context
+- ☐ "Summarize" produces a summary in the thread
+- ☐ Custom styles are applied correctly
+- ☐ Error messages display correctly for failures
 
 ## Related Documentation
 
 - [Slack API: AI Apps](https://api.slack.com/docs/apps/ai)
 - [Slack API: Events](https://api.slack.com/events)
 - [Slack API: Interactivity](https://api.slack.com/interactivity)
-
 

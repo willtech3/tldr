@@ -29,9 +29,11 @@ use tracing::{error, warn};
 use crate::ai::{StreamEvent, StreamingResponse};
 use crate::core::config::AppConfig;
 use crate::core::models::ProcessingTask;
+use crate::core::security::normalize_message_count;
 use crate::errors::SlackError;
 use crate::slack::SlackBot;
 use crate::slack::client::STREAM_MARKDOWN_TEXT_LIMIT;
+use crate::slack::sanitize::sanitize_generated_slack_mrkdwn;
 
 #[must_use]
 fn build_style_prefix(custom_prompt: Option<&str>) -> Option<String> {
@@ -150,8 +152,8 @@ async fn sleep_for_append_interval(last_append_at: Option<Instant>, min_interval
     };
 
     let elapsed = last.elapsed();
-    if elapsed < min_interval {
-        tokio::time::sleep(min_interval - elapsed).await;
+    if let Some(remaining) = min_interval.checked_sub(elapsed) {
+        tokio::time::sleep(remaining).await;
     }
 }
 
@@ -166,6 +168,8 @@ async fn append_one_chunk(
     let Some(chunk) = take_stream_chunk(pending, max_chunk_chars) else {
         return Ok(true);
     };
+
+    let chunk = sanitize_generated_slack_mrkdwn(&chunk);
 
     if slack_bot
         .slack_client()
@@ -329,7 +333,7 @@ async fn fetch_messages_for_task(
     task: &ProcessingTask,
 ) -> Result<Vec<SlackHistoryMessage>, SlackError> {
     let source_channel_id = &task.channel_id;
-    let count = task.message_count.unwrap_or(50);
+    let count = normalize_message_count(task.message_count);
 
     let mut messages = slack_bot
         .slack_client()
@@ -407,7 +411,7 @@ pub async fn stream_summary_to_assistant_thread(
         if stream_response.is_too_large() {
             let mut summary_text = StreamingResponse::too_large_message().to_string();
             SlackBot::apply_safety_net_sections(&mut summary_text, &data);
-            let message = format!("{prefix}{summary_text}");
+            let message = sanitize_generated_slack_mrkdwn(&format!("{prefix}{summary_text}"));
             slack_bot
                 .slack_client()
                 .post_message_in_thread(assistant_channel, thread_ts, &message)
@@ -455,7 +459,8 @@ pub async fn stream_summary_to_assistant_thread(
                             .min(max_chunk_chars);
 
                         if let Some(first_chunk) = take_stream_chunk(&mut pending, max_first) {
-                            let initial_text = format!("{prefix}{first_chunk}");
+                            let initial_text =
+                                sanitize_generated_slack_mrkdwn(&format!("{prefix}{first_chunk}"));
                             let ts = slack_bot
                                 .slack_client()
                                 .start_stream(assistant_channel, thread_ts, Some(&initial_text))
@@ -554,7 +559,7 @@ pub async fn stream_summary_to_assistant_thread(
                 assistant_channel,
                 ts,
                 &task.channel_id,
-                task.message_count.unwrap_or(50),
+                normalize_message_count(task.message_count),
                 task.custom_prompt.as_deref(),
             )
             .await?;

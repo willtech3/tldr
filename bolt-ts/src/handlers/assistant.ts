@@ -16,6 +16,14 @@ import { v4 as uuidv4 } from 'uuid';
 import { buildWelcomeBlocks, buildHelpBlocks, buildStyleConfirmationBlocks } from '../blocks';
 import { parseUserIntent } from '../intent';
 import { buildSummarizeLoadingMessages } from '../loading_messages';
+import {
+  checkSummarizeRateLimit,
+  isUserMemberOfChannel,
+  isValidSlackChannelId,
+  normalizeMessageCount,
+  validateAndSanitizeStyle,
+  type ConversationsMembersClient,
+} from '../security';
 import { sendToSqs } from '../sqs';
 import type { ThreadContext, ProcessingTask } from '../types';
 import {
@@ -285,6 +293,16 @@ export function createAssistant(config: AppConfig): Assistant {
           }
 
           case 'style': {
+            const sanitizedStyle = validateAndSanitizeStyle(intent.instructions);
+            if (!sanitizedStyle.ok) {
+              await client.chat.postMessage({
+                channel: channelId,
+                thread_ts: threadTs,
+                text: sanitizedStyle.reason,
+              });
+              return;
+            }
+
             let { state, stateMessageTs } = getThreadStateFromCache();
 
             // On cache miss, load state from Slack metadata to avoid creating duplicates
@@ -306,7 +324,7 @@ export function createAssistant(config: AppConfig): Assistant {
 
             const nextState: ThreadContext = {
               viewingChannelId: state.viewingChannelId,
-              customStyle: intent.instructions,
+              customStyle: sanitizedStyle.value,
               defaultMessageCount: state.defaultMessageCount,
             };
 
@@ -358,8 +376,8 @@ export function createAssistant(config: AppConfig): Assistant {
             await client.chat.postMessage({
               channel: channelId,
               thread_ts: threadTs,
-              text: 'Style saved for this thread.',
-              blocks: buildStyleConfirmationBlocks(intent.instructions),
+              text: sanitizedStyle.value ? 'Style saved for this thread.' : 'Style cleared.',
+              blocks: buildStyleConfirmationBlocks(sanitizedStyle.value),
             });
             break;
           }
@@ -452,14 +470,61 @@ export function createAssistant(config: AppConfig): Assistant {
               return;
             }
 
+            if (!isValidSlackChannelId(targetChannelId)) {
+              await client.chat.postMessage({
+                channel: channelId,
+                thread_ts: threadTs,
+                text: "I can't summarize that channel identifier.",
+              });
+              return;
+            }
+
+            if (!checkSummarizeRateLimit(userId)) {
+              await client.chat.postMessage({
+                channel: channelId,
+                thread_ts: threadTs,
+                text: 'Please wait a minute before starting more summaries.',
+              });
+              return;
+            }
+
+            const userCanReadChannel = await isUserMemberOfChannel({
+              client: client as unknown as ConversationsMembersClient,
+              channelId: targetChannelId,
+              userId,
+              logger,
+            });
+
+            if (!userCanReadChannel) {
+              await client.chat.postMessage({
+                channel: channelId,
+                thread_ts: threadTs,
+                text: "I can only summarize channels you're a member of.",
+              });
+              return;
+            }
+
             // Use per-run style override if present, otherwise fall back to thread's customStyle
-            const effectiveStyle = intent.styleOverride ?? state.customStyle;
+            const effectiveStyleRaw = intent.styleOverride ?? state.customStyle;
+            const sanitizedStyle = validateAndSanitizeStyle(effectiveStyleRaw);
+            if (!sanitizedStyle.ok) {
+              await client.chat.postMessage({
+                channel: channelId,
+                thread_ts: threadTs,
+                text: sanitizedStyle.reason,
+              });
+              return;
+            }
+            const effectiveStyle = sanitizedStyle.value;
 
             // Determine effective message count:
             // 1. Explicit count from user command (e.g., "summarize last 100")
             // 2. Persisted count from dropdown selection
             // 3. System default of 50
-            const effectiveCount = intent.count ?? state.defaultMessageCount ?? 50;
+            const effectiveCount = normalizeMessageCount(
+              intent.count,
+              normalizeMessageCount(state.defaultMessageCount)
+            );
 
             // Set status using the built-in utility
             await setStatus({

@@ -47,6 +47,19 @@ struct PermalinkResponse {
     error: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ConversationsMembersResponse {
+    ok: bool,
+    members: Option<Vec<String>>,
+    response_metadata: Option<ResponseMetadata>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResponseMetadata {
+    next_cursor: Option<String>,
+}
+
 /// Response from Slack streaming API methods (`chat.startStream`, `chat.appendStream`, `chat.stopStream`).
 #[derive(Debug, Clone, Deserialize)]
 pub struct StreamResponse {
@@ -266,6 +279,102 @@ impl SlackClient {
             Ok(messages)
         })
         .await
+    }
+
+    /// Returns whether `user_id` is a member of `channel_id`.
+    ///
+    /// This is a defense-in-depth authorization check before the worker reads
+    /// channel history with the bot token.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if Slack returns an unexpected API failure or the
+    /// response cannot be parsed.
+    pub async fn is_user_member_of_channel(
+        &self,
+        channel_id: &str,
+        user_id: &str,
+    ) -> Result<bool, SlackError> {
+        const PAGE_LIMIT: u16 = 1000;
+        const MAX_PAGES: usize = 20;
+
+        let mut cursor: Option<String> = None;
+        for _ in 0..MAX_PAGES {
+            let cursor_for_request = cursor.clone();
+            let response = self
+                .with_retry(|| {
+                    let cursor = cursor_for_request.clone();
+                    async move {
+                        let mut payload = json!({
+                            "channel": channel_id,
+                            "limit": PAGE_LIMIT,
+                        });
+                        if let Some(cursor) = cursor.filter(|c| !c.is_empty()) {
+                            payload["cursor"] = Value::String(cursor);
+                        }
+
+                        let resp = HTTP_CLIENT
+                            .post("https://slack.com/api/conversations.members")
+                            .bearer_auth(&self.token.token_value.0)
+                            .json(&payload)
+                            .send()
+                            .await
+                            .map_err(|e| {
+                                SlackError::GeneralError(format!("conversations.members HTTP: {e}"))
+                            })?;
+
+                        if !resp.status().is_success() {
+                            return Err(SlackError::ApiError(format!(
+                                "conversations.members HTTP {}",
+                                resp.status()
+                            )));
+                        }
+
+                        let body: ConversationsMembersResponse =
+                            resp.json().await.map_err(|e| {
+                                SlackError::GeneralError(format!(
+                                    "conversations.members parse: {e}"
+                                ))
+                            })?;
+
+                        Ok(body)
+                    }
+                })
+                .await?;
+
+            if !response.ok {
+                let error_code = response.error.unwrap_or_else(|| "unknown".to_string());
+                if matches!(
+                    error_code.as_str(),
+                    "channel_not_found" | "not_in_channel" | "user_not_found"
+                ) {
+                    return Ok(false);
+                }
+                return Err(SlackError::ApiError(format!(
+                    "conversations.members error: {error_code}"
+                )));
+            }
+
+            if response
+                .members
+                .as_ref()
+                .is_some_and(|members| members.iter().any(|member| member == user_id))
+            {
+                return Ok(true);
+            }
+
+            let next_cursor = response
+                .response_metadata
+                .and_then(|metadata| metadata.next_cursor)
+                .unwrap_or_default();
+            if next_cursor.trim().is_empty() {
+                return Ok(false);
+            }
+            cursor = Some(next_cursor);
+        }
+
+        warn!("conversations.members pagination exceeded safety limit");
+        Ok(false)
     }
 
     /// # Errors

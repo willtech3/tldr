@@ -9,10 +9,10 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as path from 'path';
 
 interface TldrStackProps extends cdk.StackProps {
-  slackBotToken: string;
-  slackSigningSecret: string;
-  openaiApiKey: string;
-  openaiOrgId: string;
+  slackBotTokenParameterName: string;
+  slackSigningSecretParameterName: string;
+  openaiApiKeyParameterName: string;
+  openaiOrgIdParameterName?: string;
   openaiModel?: string;
   enableStreaming: string;
   streamMinAppendIntervalMs?: string;
@@ -22,43 +22,6 @@ interface TldrStackProps extends cdk.StackProps {
 export class TldrStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: TldrStackProps) {
     super(scope, id, props);
-
-    // Create a deployment IAM user for GitHub Actions
-    const deploymentUser = new iam.User(this, 'TldrDeploymentUser', {
-      userName: 'tldr-github-actions-deployment-user',
-    });
-
-    // Create access key for the deployment user
-    const accessKey = new iam.CfnAccessKey(this, 'TldrDeploymentUserAccessKey', {
-      userName: deploymentUser.userName,
-    });
-
-    // Add permissions to the deployment user
-    deploymentUser.addManagedPolicy(
-      iam.ManagedPolicy.fromAwsManagedPolicyName('AWSCloudFormationFullAccess')
-    );
-    deploymentUser.addManagedPolicy(
-      iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonS3FullAccess')
-    );
-    deploymentUser.addManagedPolicy(
-      iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonAPIGatewayAdministrator')
-    );
-    deploymentUser.addManagedPolicy(
-      iam.ManagedPolicy.fromAwsManagedPolicyName('AWSLambda_FullAccess')
-    );
-    deploymentUser.addManagedPolicy(
-      iam.ManagedPolicy.fromAwsManagedPolicyName('IAMFullAccess')
-    );
-    deploymentUser.addManagedPolicy(
-      iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSQSFullAccess')
-    );
-    deploymentUser.addManagedPolicy(
-      iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMFullAccess')
-    );
-    // Add Secrets Manager permissions needed for CDK synthesis
-    deploymentUser.addManagedPolicy(
-      iam.ManagedPolicy.fromAwsManagedPolicyName('SecretsManagerReadWrite')
-    );
 
     // Create SQS queue for processing tasks
     const processingQueue = new sqs.Queue(this, 'TldrProcessingQueue', {
@@ -74,25 +37,29 @@ export class TldrStack extends cdk.Stack {
       deployOptions: {
         stageName: 'prod',
         loggingLevel: apigateway.MethodLoggingLevel.INFO,
-        dataTraceEnabled: true,
+        // Do not log request/response bodies; Slack payloads can contain private
+        // workspace data and signature material.
+        dataTraceEnabled: false,
         metricsEnabled: true,
       },
     });
 
     // Environment for the Bolt API Lambda
     const boltApiEnvironment = {
-      SLACK_BOT_TOKEN: props.slackBotToken,
-      SLACK_SIGNING_SECRET: props.slackSigningSecret,
+      SLACK_BOT_TOKEN_PARAMETER_NAME: props.slackBotTokenParameterName,
+      SLACK_SIGNING_SECRET_PARAMETER_NAME: props.slackSigningSecretParameterName,
       PROCESSING_QUEUE_URL: processingQueue.queueUrl,
       NODE_OPTIONS: '--enable-source-maps',
     } as const;
 
     // Environment for the Worker Lambda
     const workerEnvironment = {
-      SLACK_BOT_TOKEN: props.slackBotToken,
-      SLACK_SIGNING_SECRET: props.slackSigningSecret,
-      OPENAI_API_KEY: props.openaiApiKey,
-      OPENAI_ORG_ID: props.openaiOrgId,
+      SLACK_BOT_TOKEN_PARAMETER_NAME: props.slackBotTokenParameterName,
+      SLACK_SIGNING_SECRET_PARAMETER_NAME: props.slackSigningSecretParameterName,
+      OPENAI_API_KEY_PARAMETER_NAME: props.openaiApiKeyParameterName,
+      ...(props.openaiOrgIdParameterName
+        ? { OPENAI_ORG_ID_PARAMETER_NAME: props.openaiOrgIdParameterName }
+        : {}),
       ...(props.openaiModel ? { OPENAI_MODEL: props.openaiModel } : {}),
       PROCESSING_QUEUE_URL: processingQueue.queueUrl,
       ENABLE_STREAMING: props.enableStreaming,
@@ -141,6 +108,15 @@ export class TldrStack extends cdk.Stack {
     // Grant the Bolt API function permission to send messages to the queue
     processingQueue.grantSendMessages(tldrBoltApiFunction);
 
+    this.grantSsmParameterRead(tldrBoltApiFunction, props.slackBotTokenParameterName);
+    this.grantSsmParameterRead(tldrBoltApiFunction, props.slackSigningSecretParameterName);
+    this.grantSsmParameterRead(tldrWorkerFunction, props.slackBotTokenParameterName);
+    this.grantSsmParameterRead(tldrWorkerFunction, props.slackSigningSecretParameterName);
+    this.grantSsmParameterRead(tldrWorkerFunction, props.openaiApiKeyParameterName);
+    if (props.openaiOrgIdParameterName) {
+      this.grantSsmParameterRead(tldrWorkerFunction, props.openaiOrgIdParameterName);
+    }
+
     // Create a Lambda integration for the API Gateway
     const boltIntegration = new apigateway.LambdaIntegration(tldrBoltApiFunction);
 
@@ -174,21 +150,21 @@ export class TldrStack extends cdk.Stack {
       description: 'URL of the SQS processing queue',
     });
 
-    // Output the deployment user ARN
-    new cdk.CfnOutput(this, 'DeploymentUserArn', {
-      value: deploymentUser.userArn,
-      description: 'ARN of the deployment IAM user for GitHub Actions',
+  }
+
+  private grantSsmParameterRead(fn: lambda.Function, parameterName: string): void {
+    const normalizedName = parameterName.replace(/^\//, '');
+    const parameterArn = cdk.Stack.of(this).formatArn({
+      service: 'ssm',
+      resource: 'parameter',
+      resourceName: normalizedName,
     });
 
-    // Output the deployment user access key ID and secret (only for initial bootstrap)
-    new cdk.CfnOutput(this, 'DeploymentUserAccessKeyId', {
-      value: accessKey.ref,
-      description: 'Access Key ID for the deployment IAM user',
-    });
-
-    new cdk.CfnOutput(this, 'DeploymentUserSecretAccessKey', {
-      value: accessKey.attrSecretAccessKey,
-      description: 'Secret Access Key for the deployment IAM user (only shown once during initial deployment)',
-    });
+    fn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['ssm:GetParameter'],
+        resources: [parameterArn],
+      })
+    );
   }
 }

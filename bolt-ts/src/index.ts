@@ -20,6 +20,7 @@ import { createApp } from './app';
 
 // Lazy-initialized receiver (reused across Lambda invocations)
 let receiver: AwsLambdaReceiver | null = null;
+let receiverPromise: Promise<AwsLambdaReceiver> | null = null;
 let config: AppConfig | null = null;
 
 /**
@@ -30,23 +31,30 @@ let config: AppConfig | null = null;
  * events are properly routed to registered handlers. Do NOT call app.start()
  * in Lambda mode - the receiver's toHandler() method handles everything.
  */
-function initialize(): AwsLambdaReceiver {
+async function initialize(): Promise<AwsLambdaReceiver> {
   if (receiver) {
     return receiver;
   }
+  if (receiverPromise) {
+    return receiverPromise;
+  }
 
-  config = loadConfig();
+  receiverPromise = (async (): Promise<AwsLambdaReceiver> => {
+    config = await loadConfig();
 
-  // Create the AWS Lambda receiver first
-  receiver = new AwsLambdaReceiver({
-    signingSecret: config.slackSigningSecret,
-  });
+    // Create the AWS Lambda receiver first
+    receiver = new AwsLambdaReceiver({
+      signingSecret: config.slackSigningSecret,
+    });
 
-  // Create the app with the receiver - this wires up event routing
-  // Note: We don't call app.start() in Lambda mode
-  createApp(config, receiver);
+    // Create the app with the receiver - this wires up event routing
+    // Note: We don't call app.start() in Lambda mode
+    createApp(config, receiver);
 
-  return receiver;
+    return receiver;
+  })();
+
+  return receiverPromise;
 }
 
 /**
@@ -60,7 +68,7 @@ export const handler = async (
   context: unknown,
   callback: AwsCallback
 ): Promise<AwsResponse> => {
-  const awsReceiver = initialize();
+  const awsReceiver = await initialize();
 
   // Get the Lambda handler from the receiver and invoke it
   const boltHandler = awsReceiver.toHandler();

@@ -8,6 +8,11 @@
 
 import type { ThreadContext } from './types';
 import type { MessageMetadata } from '@slack/types';
+import {
+  isValidSlackChannelId,
+  normalizeMessageCount,
+  validateAndSanitizeStyle,
+} from './security';
 
 export const TLDR_THREAD_STATE_EVENT_TYPE = 'tldr_thread_state';
 
@@ -97,10 +102,17 @@ export function parseThreadContextFromMetadata(eventPayload: unknown): ThreadCon
   const payload = eventPayload as Record<string, unknown>;
 
   const viewingChannelId =
-    typeof payload.viewing_channel_id === 'string' ? payload.viewing_channel_id : null;
-  const customStyle = typeof payload.custom_style === 'string' ? payload.custom_style : null;
+    typeof payload.viewing_channel_id === 'string' &&
+    isValidSlackChannelId(payload.viewing_channel_id)
+      ? payload.viewing_channel_id
+      : null;
+  const rawCustomStyle = typeof payload.custom_style === 'string' ? payload.custom_style : null;
+  const sanitizedStyle = validateAndSanitizeStyle(rawCustomStyle);
+  const customStyle = sanitizedStyle.ok ? sanitizedStyle.value : null;
   const defaultMessageCount =
-    typeof payload.default_message_count === 'number' ? payload.default_message_count : null;
+    typeof payload.default_message_count === 'number'
+      ? normalizeMessageCount(payload.default_message_count)
+      : null;
 
   return { viewingChannelId, customStyle, defaultMessageCount };
 }
@@ -151,5 +163,4 @@ export async function findThreadStateMessage(args: {
 
   return null;
 }
-
 

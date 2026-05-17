@@ -15,8 +15,9 @@
     "package": "npm run bundle && cd bundle && zip -r ../function.zip ."
   },
   "dependencies": {
-    "@slack/bolt": "^4.6.0",
     "@aws-sdk/client-sqs": "^3.980.0",
+    "@aws-sdk/client-ssm": "3.980.0",
+    "@slack/bolt": "^4.6.0",
     "uuid": "^11.0.3"
   },
   "devDependencies": {

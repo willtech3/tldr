@@ -6,8 +6,10 @@ use reqwest::Client as HttpClient;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 use tracing::{error, info};
+use url::Url;
 
 use crate::core::models::{Destination, ProcessingTask};
+use crate::core::security::normalize_message_count;
 use crate::errors::SlackError;
 use crate::slack::SlackBot;
 use crate::slack::message_formatter::format_summary_message;
@@ -20,6 +22,14 @@ pub async fn send_response_url(
     message: &str,
     dm_fallback_user: Option<&str>,
 ) -> Result<(), SlackError> {
+    if !is_allowed_slack_response_url(response_url) {
+        error!("Rejected non-Slack response_url");
+        if let Some(user_id) = dm_fallback_user {
+            let _ = slack_bot.slack_client().send_dm(user_id, message).await;
+        }
+        return Ok(());
+    }
+
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     let body = create_ephemeral_payload(message);
@@ -54,6 +64,19 @@ pub async fn send_response_url(
     Ok(())
 }
 
+#[must_use]
+fn is_allowed_slack_response_url(response_url: &str) -> bool {
+    let Ok(parsed) = Url::parse(response_url) else {
+        return false;
+    };
+
+    parsed.scheme() == "https"
+        && matches!(
+            parsed.host_str(),
+            Some("hooks.slack.com" | "hooks.slack-gov.com")
+        )
+}
+
 pub async fn deliver_summary(
     slack_bot: &SlackBot,
     http_client: &HttpClient,
@@ -80,8 +103,9 @@ pub async fn deliver_summary(
 
         // Format message with style header if custom_prompt is set
         let formatted_summary = if let Some(style) = &task.custom_prompt {
-            let truncated_style = if style.len() > 60 {
-                format!("{}...", &style[..57])
+            let truncated_style = if style.chars().count() > 60 {
+                let head: String = style.chars().take(57).collect();
+                format!("{head}...")
             } else {
                 style.clone()
             };
@@ -93,7 +117,7 @@ pub async fn deliver_summary(
         // Build action buttons for thread summaries
         let action_buttons = build_summary_action_buttons(
             source_channel_id,
-            task.message_count.unwrap_or(50),
+            normalize_message_count(task.message_count),
             task.custom_prompt.as_deref(),
         );
 
@@ -381,4 +405,25 @@ pub(crate) fn build_summary_action_buttons(
         "type": "actions",
         "elements": button_elements
     }])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_allowed_slack_response_url;
+
+    #[test]
+    fn allows_only_slack_response_urls() {
+        assert!(is_allowed_slack_response_url(
+            "https://hooks.slack.com/actions/T000/B000/secret"
+        ));
+        assert!(is_allowed_slack_response_url(
+            "https://hooks.slack-gov.com/actions/T000/B000/secret"
+        ));
+        assert!(!is_allowed_slack_response_url(
+            "http://hooks.slack.com/actions/T000/B000/secret"
+        ));
+        assert!(!is_allowed_slack_response_url(
+            "https://example.com/actions/T000/B000/secret"
+        ));
+    }
 }

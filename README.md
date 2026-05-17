@@ -103,16 +103,18 @@ After the stack is live, update your Slack app manifest with the API Gateway URL
 
 ## 🔐 Configuration
 
-Environment variables (set in Lambda or GitHub secrets):
+Deployment variables:
 
 | Variable | Purpose |
 |----------|---------|
-| `SLACK_BOT_TOKEN` | Bot OAuth token (starts with `xoxb-…`) |
-| `SLACK_SIGNING_SECRET` | Verifies Slack requests |
-| `OPENAI_API_KEY` | Access token for the OpenAI API |
-| `OPENAI_ORG_ID` | Optional, sets OpenAI-Organization header |
+| `SLACK_BOT_TOKEN_PARAMETER_NAME` | SSM SecureString parameter containing the bot OAuth token |
+| `SLACK_SIGNING_SECRET_PARAMETER_NAME` | SSM SecureString parameter containing the Slack signing secret |
+| `OPENAI_API_KEY_PARAMETER_NAME` | SSM SecureString parameter containing the OpenAI API key |
+| `OPENAI_ORG_ID_PARAMETER_NAME` | Optional SSM parameter containing the OpenAI organization ID |
 | `OPENAI_MODEL` | Optional, override model (defaults to `gpt-5.2`) |
 | `PROCESSING_QUEUE_URL` | URL of the SQS queue |
+
+For local-only runs, the Lambdas still accept direct `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `OPENAI_API_KEY`, and `OPENAI_ORG_ID` values.
 
 ---
 

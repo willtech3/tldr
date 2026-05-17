@@ -1,6 +1,7 @@
 // Keep function focused; consider splitting if it grows significantly.
 use crate::core::config::AppConfig;
 use crate::core::models::ProcessingTask;
+use crate::core::security::normalize_message_count;
 use crate::errors::SlackError;
 use crate::slack::SlackBot;
 
@@ -20,7 +21,7 @@ pub async fn summarize_task(
     let source_channel_id = &task.channel_id;
 
     // Determine retrieval mode: always last N for now (defaulting to 50 if not specified)
-    let count = task.message_count.unwrap_or(50);
+    let count = normalize_message_count(task.message_count);
     let mut messages = slack_bot
         .slack_client()
         .get_recent_messages(source_channel_id, count)
