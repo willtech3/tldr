@@ -113,6 +113,7 @@ Deployment variables:
 | `OPENAI_ORG_ID_PARAMETER_NAME` | Optional SSM parameter containing the OpenAI organization ID |
 | `OPENAI_MODEL` | Optional, override model (defaults to `gpt-5.2`) |
 | `PROCESSING_QUEUE_URL` | URL of the SQS queue |
+| `AWS_ACCOUNT_ID` | AWS account ID used by CDK deployment |
 
 For local-only runs, the Lambdas still accept direct `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `OPENAI_API_KEY`, and `OPENAI_ORG_ID` values.
 

@@ -20,12 +20,14 @@ Runs code quality checks only:
 - Linting with Clippy (`-D warnings`)
 - Test suite execution
 
-#### Main Branch Push or Manual Dispatch
+#### Main Branch Push or Manual Dispatch on `main`
 Executes full deployment:
 1. Docker-based Lambda build
 2. CDK TypeScript compilation
 3. AWS deployment with CDK
 4. Outputs API Gateway URL for Slack manifest updates
+
+Manual dispatches are gated to the `main` ref so branch code cannot obtain deployment credentials.
 
 ## Local Development
 
@@ -66,14 +68,14 @@ Note: The Bolt.js API Lambda is built separately via `npm run build` in the `bol
 
 The build process:
 - Uses stable Rust toolchain
-- Cross-compiles for AWS Lambda runtime using Zig
+- Cross-compiles a static `x86_64-unknown-linux-musl` binary for AWS Lambda
 - Ensures compatibility with Amazon Linux 2 environment
 
 ### Docker Build Process
 
 The Dockerfile:
-- Base: Amazon Linux 2 (matches Lambda runtime exactly)
-- Installs Zig for cross-compilation
+- Uses digest-pinned official Rust, Node.js, and Amazon Linux images
+- Installs the musl toolchain for static Rust cross-compilation
 - Multi-stage build for optimized artifacts
 - Outputs both bootstrap binaries and zip archives
 
@@ -104,8 +106,9 @@ Required deployment variables:
 - `SLACK_SIGNING_SECRET_PARAMETER_NAME`
 - `OPENAI_API_KEY_PARAMETER_NAME`
 - `OPENAI_ORG_ID_PARAMETER_NAME` (optional)
+- `AWS_ACCOUNT_ID`
 
-Store Slack and OpenAI secrets as SSM SecureString parameters before deployment. Prefer short-lived AWS credentials such as GitHub OIDC for CI/CD instead of long-lived access keys.
+Store Slack and OpenAI secrets as SSM SecureString parameters before deployment. CI/CD uses a GitHub OIDC role via the `AWS_DEPLOY_ROLE_ARN` secret instead of long-lived AWS access keys.
 
 ## Troubleshooting
 
@@ -117,7 +120,7 @@ Store Slack and OpenAI secrets as SSM SecureString parameters before deployment.
 
 ### Deployment Issues
 
-1. **AWS credentials**: Verify GitHub secrets are properly configured
+1. **AWS credentials**: Verify `AWS_DEPLOY_ROLE_ARN` and `AWS_ACCOUNT_ID` are configured for GitHub Actions
 2. **CDK errors**: Ensure `cdk/` dependencies are up to date with `npm ci`
 3. **Lambda size**: Check artifact sizes don't exceed Lambda limits
 
@@ -138,4 +141,3 @@ cargo lambda invoke --data-ascii '{"Records":[]}'
 - `slack_configuration.md` - Slack application configuration
 - `README.md` - Project overview and setup
 - `.github/workflows/deploy.yml` - CI/CD pipeline source
-

@@ -106,6 +106,14 @@ export function isValidSlackChannelId(channelId: string | null | undefined): cha
   return /^[A-Z][A-Z0-9]{8,}$/.test(channelId);
 }
 
+export function isValidSlackTimestamp(timestamp: string | null | undefined): timestamp is string {
+  if (!timestamp) {
+    return false;
+  }
+
+  return /^\d{10,}\.\d{6}$/.test(timestamp);
+}
+
 export function checkSummarizeRateLimit(userId: string, now = Date.now()): boolean {
   const bucket = rateLimitBuckets.get(userId);
   if (!bucket || now - bucket.windowStartedAt >= RATE_LIMIT_WINDOW_MS) {
