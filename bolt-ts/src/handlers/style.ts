@@ -26,7 +26,13 @@ import {
   type SlackWebApiClient,
 } from '../thread_state';
 import type { ThreadContext } from '../types';
-import { validateAndSanitizeStyle } from '../security';
+import {
+  isUserMemberOfChannel,
+  isValidSlackChannelId,
+  isValidSlackTimestamp,
+  validateAndSanitizeStyle,
+  type ConversationsMembersClient,
+} from '../security';
 
 const WELCOME_TEXT = 'Welcome to TLDR';
 
@@ -101,7 +107,7 @@ export function registerStyleHandlers(app: App): void {
   });
 
   // Handle style modal submission
-  app.view(MODAL_CALLBACK_SET_STYLE, async ({ ack, view, client, logger }) => {
+  app.view(MODAL_CALLBACK_SET_STYLE, async ({ ack, body, view, client, logger }) => {
     // Acknowledge immediately
     await ack();
 
@@ -115,6 +121,32 @@ export function registerStyleHandlers(app: App): void {
     }
 
     const { assistantChannelId, assistantThreadTs } = privateMetadata;
+
+    if (
+      !isValidSlackChannelId(assistantChannelId) ||
+      !isValidSlackTimestamp(assistantThreadTs)
+    ) {
+      logger.warn('Rejected style modal submission with invalid thread metadata', {
+        assistantChannelId,
+        assistantThreadTs,
+      });
+      return;
+    }
+
+    const requesterIsMember = await isUserMemberOfChannel({
+      client: client as unknown as ConversationsMembersClient,
+      channelId: assistantChannelId,
+      userId: body.user.id,
+      logger,
+    });
+
+    if (!requesterIsMember) {
+      logger.warn('Rejected style modal submission for non-member user', {
+        assistantChannelId,
+        userId: body.user.id,
+      });
+      return;
+    }
 
     // Extract the style value from the submission
     const styleInput = view.state.values[INPUT_BLOCK_STYLE]?.[INPUT_ACTION_STYLE];

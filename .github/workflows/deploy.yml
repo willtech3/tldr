@@ -7,6 +7,10 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  id-token: write
+
 env:
   CARGO_TERM_COLOR: always
   AWS_REGION: us-east-2  # Change to your preferred region
@@ -15,15 +19,15 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       # Set up Docker Buildx
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
       # Cache Docker layers
       - name: Cache Docker layers
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
           key: ${{ runner.os }}-buildx-${{ github.sha }}
@@ -32,12 +36,9 @@ jobs:
 
       # Rust code linting (PR only)
       - name: Set up Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
-          toolchain: stable
           components: rustfmt, clippy
-          override: true
         if: github.event_name == 'pull_request'
 
       # Perform code formatting check
@@ -63,7 +64,7 @@ jobs:
         run: |
           chmod +x build-local.sh
           ./build-local.sh
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
 
       # Extract built Lambda artifacts from the container (only for deployments)
       - name: Extract Lambda artifacts
@@ -78,80 +79,68 @@ jobs:
           ls -l lambda/target/lambda/tldr-bolt-api/function.zip || (echo 'Bolt API function.zip not found!' && exit 1)
           echo '--- Verifying Worker Lambda artifact ---'
           ls -l lambda/target/lambda/tldr-worker/function.zip || (echo 'Worker function.zip not found!' && exit 1)
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
 
       # Skip the cache move step since we're not using docker/build-push-action
       # The move cache step is needed only when using docker/build-push-action with cache-to
 
       # Setup Node.js (only for deployments)
       - name: Set up Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: './cdk/package-lock.json'
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
 
       # Install CDK dependencies (only for deployments)
       - name: Install CDK dependencies
         run: |
           cd cdk
           npm ci
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
 
       # Build CDK TypeScript (only for deployments)
       - name: Build CDK TypeScript
         run: |
           cd cdk
           npm run build
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
 
         # Configure AWS credentials for CDK deployment
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v1
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          role-session-name: GithubActionsSession
+          role-session-name: tldr-github-actions
           role-duration-seconds: 3600
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+          mask-aws-account-id: true
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
 
-      # Deploy with CDK (ensuring environment variables are properly defined and accessed)
+      # Deploy with CDK. Runtime secrets are SSM SecureString values; CI only
+      # passes parameter names and assumes a short-lived AWS role through OIDC.
       - name: Deploy with CDK
         run: |
           cd cdk
-          # Create a secure cdk context file with secrets
-          cat > cdk.context.json << 'EOF'
-          {
-            "slackBotTokenSecretName": "SlackBotToken",
-            "slackSigningSecretSecretName": "SlackSigningSecret",
-            "openAiApiKeySecretName": "OpenAiApiKey"
-          }
-          EOF
           npm run cdk deploy -- --require-approval never --outputs-file cdk-outputs.json
-          rm cdk.context.json
           
           # Display API Gateway URL from CDK outputs for manual Slack manifest update
           echo "📌 API Gateway URL for Slack manifest:"
           python3 -c "import json; data = json.load(open('cdk-outputs.json')); print(data['TldrStack']['ApiGatewayUrl'])"
           echo "ℹ️  Update your Slack app manifest with this URL at api.slack.com/apps"
         env:
-          SLACK_BOT_TOKEN:      ${{ secrets.SLACK_BOT_TOKEN }}
-          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
-          OPENAI_API_KEY:       ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_ORG_ID:        ${{ secrets.OPENAI_ORG_ID }}
-          # Slack OAuth credentials required at synth/runtime
-          SLACK_CLIENT_ID:      ${{ secrets.SLACK_CLIENT_ID }}
-          SLACK_CLIENT_SECRET:  ${{ secrets.SLACK_CLIENT_SECRET }}
-          # Optional explicit redirect; otherwise derived from headers in code
-          SLACK_REDIRECT_URL:   ${{ secrets.SLACK_REDIRECT_URL }}
+          SLACK_BOT_TOKEN_PARAMETER_NAME:      ${{ vars.SLACK_BOT_TOKEN_PARAMETER_NAME || '/tldr/slack/bot-token' }}
+          SLACK_SIGNING_SECRET_PARAMETER_NAME: ${{ vars.SLACK_SIGNING_SECRET_PARAMETER_NAME || '/tldr/slack/signing-secret' }}
+          OPENAI_API_KEY_PARAMETER_NAME:       ${{ vars.OPENAI_API_KEY_PARAMETER_NAME || '/tldr/openai/api-key' }}
+          OPENAI_ORG_ID_PARAMETER_NAME:        ${{ vars.OPENAI_ORG_ID_PARAMETER_NAME }}
+          OPENAI_MODEL:                        ${{ vars.OPENAI_MODEL }}
           # Ensure region/account for CDK
           CDK_DEFAULT_REGION:   ${{ env.AWS_REGION }}
+          AWS_ACCOUNT_ID:       ${{ vars.AWS_ACCOUNT_ID }}
           # Enable streaming responses in assistant threads
           ENABLE_STREAMING:     'true'
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
 
       # Slack manifest updates must be done manually
       # See SLACK_APP_SETUP.md for instructions
-

@@ -1,6 +1,7 @@
 import {
   checkSummarizeRateLimit,
   isUserMemberOfChannel,
+  isValidSlackTimestamp,
   normalizeMessageCount,
   resetRateLimitForTests,
   sanitizeGeneratedSlackText,
@@ -39,6 +40,13 @@ describe('security helpers', () => {
     expect(sanitizeGeneratedSlackText('Ping <!channel> and <@U123ABC456>')).toBe(
       'Ping `<!channel>` and `<@U123ABC456>`'
     );
+  });
+
+  it('validates Slack timestamps from trusted metadata boundaries', () => {
+    expect(isValidSlackTimestamp('1714501234.000200')).toBe(true);
+    expect(isValidSlackTimestamp('1714501234')).toBe(false);
+    expect(isValidSlackTimestamp('1714501234.2')).toBe(false);
+    expect(isValidSlackTimestamp('not-a-ts')).toBe(false);
   });
 
   it('checks paginated Slack channel membership', async () => {

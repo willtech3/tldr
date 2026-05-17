@@ -70,11 +70,11 @@ Set these deployment variables in `cdk/.env` or your CI environment:
 - `OPENAI_API_KEY_PARAMETER_NAME`
 - `OPENAI_ORG_ID_PARAMETER_NAME` (optional)
 
-For CI/CD, prefer GitHub OIDC or another short-lived AWS role. The CDK stack no longer creates a broad IAM deployment user or outputs long-lived access keys.
+For CI/CD, configure the `AWS_DEPLOY_ROLE_ARN` GitHub secret for a GitHub OIDC role and set `AWS_ACCOUNT_ID` as a repository variable. The CDK stack no longer creates a broad IAM deployment user or outputs long-lived access keys.
 
 ## Step 5: Deploy Infrastructure
 
-Push to main branch or manually trigger GitHub Actions:
+Push to the main branch or manually trigger GitHub Actions from the main ref:
 ```bash
 git push origin main
 # Or trigger manually in GitHub Actions UI
@@ -202,4 +202,3 @@ Reference: [Slack Request Verification](https://api.slack.com/authentication/ver
 - [Slack API: AI Apps](https://api.slack.com/docs/apps/ai)
 - [Slack API: Events](https://api.slack.com/events)
 - [Slack API: Interactivity](https://api.slack.com/interactivity)
-
