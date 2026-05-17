@@ -113,14 +113,14 @@ Commits should only be made after this succeeds locally.
 ## Environment Variables
 
 ### Bolt API Lambda
-- `SLACK_BOT_TOKEN` - Bot OAuth token (xoxb-...)
-- `SLACK_SIGNING_SECRET` - Request verification
+- `SLACK_BOT_TOKEN_PARAMETER_NAME` - SSM SecureString parameter for bot OAuth token
+- `SLACK_SIGNING_SECRET_PARAMETER_NAME` - SSM SecureString parameter for request verification
 - `PROCESSING_QUEUE_URL` - SQS queue URL (set by CDK)
 
 ### Worker Lambda
 - All of the above, plus:
-- `OPENAI_API_KEY` - ChatGPT access
-- `OPENAI_ORG_ID` - Optional organization ID
+- `OPENAI_API_KEY_PARAMETER_NAME` - SSM SecureString parameter for OpenAI API access
+- `OPENAI_ORG_ID_PARAMETER_NAME` - Optional SSM parameter for organization ID
 
 ## Testing Approach
 

@@ -95,17 +95,17 @@ AWS CDK handles:
 - Lambda function deployment
 - SQS queue setup
 - IAM permissions
-- Environment variable injection from secrets
+- Runtime secret access through SSM SecureString parameter names
 
 ## Environment Variables
 
-Required secrets in GitHub Actions:
-- `AWS_ACCESS_KEY_ID`
-- `AWS_SECRET_ACCESS_KEY`
-- `SLACK_BOT_TOKEN`
-- `SLACK_SIGNING_SECRET`
-- `OPENAI_API_KEY`
-- `OPENAI_ORG_ID` (optional)
+Required deployment variables:
+- `SLACK_BOT_TOKEN_PARAMETER_NAME`
+- `SLACK_SIGNING_SECRET_PARAMETER_NAME`
+- `OPENAI_API_KEY_PARAMETER_NAME`
+- `OPENAI_ORG_ID_PARAMETER_NAME` (optional)
+
+Store Slack and OpenAI secrets as SSM SecureString parameters before deployment. Prefer short-lived AWS credentials such as GitHub OIDC for CI/CD instead of long-lived access keys.
 
 ## Troubleshooting
 
@@ -138,5 +138,4 @@ cargo lambda invoke --data-ascii '{"Records":[]}'
 - `slack_configuration.md` - Slack application configuration
 - `README.md` - Project overview and setup
 - `.github/workflows/deploy.yml` - CI/CD pipeline source
-
 

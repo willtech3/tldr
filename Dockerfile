@@ -19,8 +19,9 @@ ENV OPENSSL_DIR=/usr
 # Update Cargo.toml to use vendored OpenSSL
 RUN sed -i 's/openssl = .*/openssl = { version = "0.10", features = ["vendored"] }/' Cargo.toml || echo "OpenSSL dependency not found in Cargo.toml"
 
-# Add build argument for debug logs
-ARG ENABLE_DEBUG_LOGS=true
+# Add build argument for debug logs. Default is off so production-style local
+# builds do not compile prompt logging by accident.
+ARG ENABLE_DEBUG_LOGS=false
 
 # Build only the Rust Worker Lambda (API Lambda is now TypeScript)
 RUN if [ "$ENABLE_DEBUG_LOGS" = "true" ]; then \

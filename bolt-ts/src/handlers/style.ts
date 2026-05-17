@@ -26,6 +26,7 @@ import {
   type SlackWebApiClient,
 } from '../thread_state';
 import type { ThreadContext } from '../types';
+import { validateAndSanitizeStyle } from '../security';
 
 const WELCOME_TEXT = 'Welcome to TLDR';
 
@@ -117,7 +118,20 @@ export function registerStyleHandlers(app: App): void {
 
     // Extract the style value from the submission
     const styleInput = view.state.values[INPUT_BLOCK_STYLE]?.[INPUT_ACTION_STYLE];
-    const newStyle = styleInput?.value?.trim() || null;
+    const styleValidation = validateAndSanitizeStyle(styleInput?.value ?? null);
+    if (!styleValidation.ok) {
+      try {
+        await client.chat.postMessage({
+          channel: assistantChannelId,
+          thread_ts: assistantThreadTs,
+          text: styleValidation.reason,
+        });
+      } catch (error) {
+        logger.error('Failed to post style validation error:', error);
+      }
+      return;
+    }
+    const newStyle = styleValidation.value;
 
     const threadKey = makeThreadKey(assistantChannelId, assistantThreadTs);
 

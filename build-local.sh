@@ -28,7 +28,7 @@ if [ "$DEBUG_LOGS" = true ]; then
   BUILD_ARGS="--build-arg ENABLE_DEBUG_LOGS=true"
 else
   echo "🔒 Debug logs disabled - prompts will be masked in logs"
-  BUILD_ARGS=""
+  BUILD_ARGS="--build-arg ENABLE_DEBUG_LOGS=false"
 fi
 
 # Build the Docker image with verbosity for debugging

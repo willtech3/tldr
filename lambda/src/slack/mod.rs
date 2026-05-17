@@ -3,6 +3,7 @@
 pub mod bot;
 pub mod client;
 pub mod message_formatter;
+pub mod sanitize;
 
 pub mod response_builder;
 

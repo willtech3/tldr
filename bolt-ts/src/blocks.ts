@@ -6,6 +6,7 @@
 
 import { types } from '@slack/bolt';
 import type { View } from '@slack/types';
+import { normalizeMessageCount } from './security';
 
 type KnownBlock = types.KnownBlock;
 
@@ -32,7 +33,7 @@ export function buildWelcomeBlocks(
   defaultMessageCount?: number | null
 ): KnownBlock[] {
   // Determine effective message count for the dropdown
-  const effectiveCount = defaultMessageCount ?? 50;
+  const effectiveCount = normalizeMessageCount(defaultMessageCount);
 
   const blocks: KnownBlock[] = [
     {
@@ -301,4 +302,3 @@ export function buildStyleConfirmationBlocks(style: string | null): KnownBlock[]
     },
   ];
 }
-
