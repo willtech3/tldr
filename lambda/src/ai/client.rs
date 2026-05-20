@@ -268,7 +268,7 @@ Never invent information; only use links and receipts from the input."
         prompt: Vec<ChatCompletionMessage>,
     ) -> Result<String, SlackError> {
         #[cfg(feature = "debug-logs")]
-        info!("Using ChatGPT prompt:\n{:?}", prompt);
+        debug!("Using ChatGPT prompt:\n{:?}", prompt);
 
         #[cfg(not(feature = "debug-logs"))]
         info!(
@@ -560,7 +560,7 @@ Never invent information; only use links and receipts from the input."
         prompt: Vec<ChatCompletionMessage>,
     ) -> Result<StreamingResponse, SlackError> {
         #[cfg(feature = "debug-logs")]
-        info!("Using ChatGPT streaming prompt:\n{:?}", prompt);
+        debug!("Using ChatGPT streaming prompt:\n{:?}", prompt);
 
         #[cfg(not(feature = "debug-logs"))]
         info!(

@@ -1,6 +1,9 @@
 use std::env;
+use tokio::sync::OnceCell;
 
 use crate::slack::client::STREAM_MARKDOWN_TEXT_LIMIT;
+
+static APP_CONFIG_CACHE: OnceCell<AppConfig> = OnceCell::const_new();
 
 /// Default chunk size for streaming appends. Set below the Slack limit to allow
 /// headroom for prefix text and to balance latency vs. API call frequency.
@@ -177,5 +180,16 @@ impl AppConfig {
             stream_max_chunk_chars,
             stream_min_append_interval_ms,
         })
+    }
+
+    /// Retrieves the loaded configuration, caching it after the first successful load.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string when required environment variables are missing.
+    pub async fn from_env_cached() -> Result<&'static Self, String> {
+        APP_CONFIG_CACHE
+            .get_or_try_init(|| async { Self::from_env().await })
+            .await
     }
 }

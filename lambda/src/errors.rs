@@ -1,5 +1,3 @@
-use openai_api_rs::v1::error::APIError;
-use slack_morphism::errors::SlackClientError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -23,18 +21,6 @@ pub enum SlackError {
     GeneralError(String),
 }
 
-impl From<SlackClientError> for SlackError {
-    fn from(error: SlackClientError) -> Self {
-        SlackError::ApiError(error.to_string())
-    }
-}
-
-impl From<reqwest::Error> for SlackError {
-    fn from(error: reqwest::Error) -> Self {
-        SlackError::HttpError(error.to_string())
-    }
-}
-
 impl From<anyhow::Error> for SlackError {
     fn from(error: anyhow::Error) -> Self {
         SlackError::ApiError(error.to_string())
@@ -51,8 +37,14 @@ where
     }
 }
 
-impl From<APIError> for SlackError {
-    fn from(error: APIError) -> Self {
-        SlackError::OpenAIError(format!("OpenAI API error: {error}"))
+impl From<slack_morphism::errors::SlackClientError> for SlackError {
+    fn from(error: slack_morphism::errors::SlackClientError) -> Self {
+        SlackError::ApiError(error.to_string())
+    }
+}
+
+impl From<reqwest::Error> for SlackError {
+    fn from(error: reqwest::Error) -> Self {
+        SlackError::HttpError(error.to_string())
     }
 }

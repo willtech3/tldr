@@ -1,11 +1,11 @@
 use super::client::SlackClient;
 use crate::ai::LlmClient;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use futures::future::join_all;
 use openai_api_rs::v1::chat_completion::{
     self as chat_completion, ChatCompletionMessage, Content, ContentType, ImageUrl, ImageUrlType,
     MessageRole,
 };
-use openssl::base64;
 use serde_json::Value;
 use slack_morphism::{SlackFile, SlackHistoryMessage};
 use std::collections::{HashMap, HashSet};
@@ -436,7 +436,7 @@ impl SlackBot {
                             .await
                         {
                             Ok(bytes) => {
-                                let b64 = base64::encode_block(&bytes);
+                                let b64 = STANDARD.encode(&bytes);
                                 let data_url = format!("data:{canon};base64,{b64}");
                                 imgs.push(ImageUrl {
                                     r#type: ContentType::image_url,
