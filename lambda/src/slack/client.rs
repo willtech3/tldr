@@ -1394,23 +1394,25 @@ mod image_download_tests {
 
     #[test]
     fn test_base64_data_url_construction() {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
         // Test that Base64 encoding + data URL format is correct
         let bytes: &[u8] = b"test image bytes";
-        let b64 = openssl::base64::encode_block(bytes);
+        let b64 = STANDARD.encode(bytes);
         let data_url = format!("data:image/png;base64,{b64}");
 
         // Verify the data URL format
         assert!(data_url.starts_with("data:image/png;base64,"));
 
         // Verify the Base64 is valid and decodes back to original
-        let decoded = openssl::base64::decode_block(&b64).unwrap();
+        let decoded = STANDARD.decode(&b64).unwrap();
         assert_eq!(decoded, bytes);
     }
 
     #[test]
     fn test_base64_encoding_various_mime_types() {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
         let bytes: &[u8] = b"PNG image data";
-        let b64 = openssl::base64::encode_block(bytes);
+        let b64 = STANDARD.encode(bytes);
 
         // Test various MIME types used by OpenAI
         for mime in ["image/png", "image/jpeg", "image/gif", "image/webp"] {
@@ -1421,15 +1423,16 @@ mod image_download_tests {
 
     #[test]
     fn test_base64_encoding_handles_binary_data() {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
         // Test that binary data (all byte values) encodes correctly
         let bytes: Vec<u8> = (0u8..=255).collect();
-        let b64 = openssl::base64::encode_block(&bytes);
+        let b64 = STANDARD.encode(&bytes);
 
         // Should not panic and should produce valid Base64
         assert!(!b64.is_empty());
 
         // Should decode back correctly
-        let decoded = openssl::base64::decode_block(&b64).unwrap();
+        let decoded = STANDARD.decode(&b64).unwrap();
         assert_eq!(decoded, bytes);
     }
 

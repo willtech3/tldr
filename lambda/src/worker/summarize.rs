@@ -28,17 +28,8 @@ pub async fn summarize_task(
         .await?;
 
     let is_public_or_visible = task.visible || task.dest_public_post;
-    if let (true, Ok(bot_id)) = (
-        is_public_or_visible,
-        slack_bot.slack_client().get_bot_user_id().await,
-    ) {
-        messages.retain(|msg| {
-            if let Some(user_id) = &msg.sender.user {
-                user_id.0 != bot_id
-            } else {
-                true
-            }
-        });
+    if is_public_or_visible && let Ok(bot_id) = slack_bot.slack_client().get_bot_user_id().await {
+        crate::utils::filters::filter_bot_messages(&mut messages, &bot_id);
     }
 
     if messages.is_empty() {

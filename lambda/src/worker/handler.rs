@@ -18,7 +18,7 @@ use crate::slack::sanitize::sanitize_generated_slack_mrkdwn;
 /// Returns an error when configuration loading fails, the SQS payload cannot be
 /// parsed, or downstream delivery operations fail.
 pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
-    let config = AppConfig::from_env().await.map_err(|e| {
+    let config = AppConfig::from_env_cached().await.map_err(|e| {
         error!("Config error: {}", e);
         Error::from(e)
     })?;
@@ -37,8 +37,8 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
         return Ok(());
     }
 
-    let mut slack_bot = SlackBot::new(&config)
-        .map_err(|e| Error::from(format!("Failed to initialize bot: {e}")))?;
+    let mut slack_bot =
+        SlackBot::new(config).map_err(|e| Error::from(format!("Failed to initialize bot: {e}")))?;
     let http_client = HttpClient::new();
 
     if !requester_can_read_source_channel(&slack_bot, &task).await {
@@ -57,7 +57,7 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
         && task.thread_ts.is_some()
     {
         if let Err(e) =
-            streaming::stream_summary_to_assistant_thread(&mut slack_bot, &config, &task).await
+            streaming::stream_summary_to_assistant_thread(&mut slack_bot, config, &task).await
         {
             error!(
                 event = "tldr_streaming_failed",
@@ -69,7 +69,7 @@ pub async fn function_handler(event: LambdaEvent<Value>) -> Result<(), Error> {
         return Ok(());
     }
 
-    match summarize::summarize_task(&mut slack_bot, &config, &task).await {
+    match summarize::summarize_task(&mut slack_bot, config, &task).await {
         Ok(SummarizeResult::Summary { text }) => {
             let sanitized_text = sanitize_generated_slack_mrkdwn(&text);
             deliver::deliver_summary(

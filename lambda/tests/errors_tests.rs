@@ -39,14 +39,4 @@ fn test_slack_error_from_conversions() {
         SlackError::ApiError(msg) => assert!(msg.contains("test error")),
         _ => panic!("Unexpected error type"),
     }
-
-    // We can't easily test reqwest::Error directly, but we can verify
-    // that the From<reqwest::Error> trait is implemented by checking
-    // that our conversion function compiles
-    #[allow(unused)]
-    #[allow(clippy::items_after_statements)]
-    fn _check_reqwest_conversion(err: reqwest::Error) -> SlackError {
-        // This function is never called, it just verifies the conversion exists
-        SlackError::from(err)
-    }
 }

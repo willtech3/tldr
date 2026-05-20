@@ -27,3 +27,14 @@ pub fn filter_user_messages(
         })
         .collect()
 }
+
+/// Removes messages sent by the given bot user.
+pub fn filter_bot_messages(messages: &mut Vec<SlackHistoryMessage>, bot_id: &str) {
+    messages.retain(|msg| {
+        if let Some(user_id) = &msg.sender.user {
+            user_id.0 != bot_id
+        } else {
+            true
+        }
+    });
+}
