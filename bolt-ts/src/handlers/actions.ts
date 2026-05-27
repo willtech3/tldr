@@ -1,11 +1,8 @@
 /**
- * Action handlers for interactive summary buttons.
+ * Action handlers for the interactive buttons that appear under a summary.
  *
- * Handles:
- * - Share summary to source channel
- * - Rerun summary with Roast style
- * - Rerun summary with Receipts style
- * - Message count selection dropdown
+ * Handlers ACK immediately, then either repost a message (Share) or kick off a
+ * fresh summarisation inline (Roast, Receipts, message-count selector).
  */
 
 import { App, BlockAction } from '@slack/bolt';
@@ -18,8 +15,7 @@ import {
   sanitizeGeneratedSlackText,
   type ConversationsMembersClient,
 } from '../security';
-import { sendToSqs } from '../sqs';
-import type { ProcessingTask, ThreadContext } from '../types';
+import type { ThreadContext } from '../types';
 import { ACTION_SELECT_MESSAGE_COUNT, buildWelcomeBlocks } from '../blocks';
 import {
   buildThreadStateMetadata,
@@ -29,10 +25,9 @@ import {
   setCachedThreadState,
   type SlackWebApiClient,
 } from '../thread_state';
+import type { AppConfig } from '../config';
+import { runSummarization } from '../worker/summarize';
 
-/**
- * Button value metadata for Share action.
- */
 interface ShareButtonValue {
   action: 'share_summary';
   sourceChannelId: string;
@@ -40,67 +35,46 @@ interface ShareButtonValue {
   style: string | null;
 }
 
-/**
- * Button value metadata for Rerun actions.
- */
 interface RerunButtonValue {
   action: 'rerun_roast' | 'rerun_receipts';
   channelId: string;
   count: number;
 }
 
-/**
- * Register action handlers for interactive summary buttons.
- *
- * @param app - The Bolt app instance
- */
-export function registerActionHandlers(app: App): void {
-  const queueUrl = process.env.PROCESSING_QUEUE_URL;
-  if (!queueUrl) {
-    throw new Error('PROCESSING_QUEUE_URL environment variable is required');
-  }
+const ROAST_STYLE =
+  'Write in a hyper-critical, sarcastic, and roasting tone. Point out inefficiencies, poor decisions, and ridiculous behavior. Be funny but brutal.';
+const RECEIPTS_STYLE =
+  'Focus on finding contradictions, broken promises, and receipts. Point out when someone said they would do something and did not, or when people contradicted themselves. Be specific with timestamps and quotes.';
 
-  // Handle "Share to channel" button
+export function registerActionHandlers(app: App, config: AppConfig): void {
   app.action<BlockAction>('share_summary', async ({ ack, body, action, client, logger }) => {
     await ack();
-
     try {
       if (!action || typeof action !== 'object' || !('type' in action) || action.type !== 'button') {
-        logger.error('Invalid action payload for share_summary');
         return;
       }
-
-      // TypeScript doesn't narrow union types properly here, so we use any after runtime check
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const buttonValue: ShareButtonValue = JSON.parse((action as any).value || '{}');
       const { sourceChannelId, count: rawCount, style } = buttonValue;
       const count = normalizeMessageCount(rawCount);
-
       if (!isValidSlackChannelId(sourceChannelId)) {
-        logger.error('Invalid source channel in share_summary action');
         return;
       }
-
-      // Get thread context
       const message = 'message' in body ? body.message : null;
       const channel = 'channel' in body ? body.channel : null;
-
       if (!message || !channel) {
-        logger.error('Could not extract message or channel from action body');
         return;
       }
-
       const assistantChannelId = channel.id;
       const threadTs = message.thread_ts ?? message.ts;
 
-      const userCanReadChannel = await isUserMemberOfChannel({
+      const canRead = await isUserMemberOfChannel({
         client: client as unknown as ConversationsMembersClient,
         channelId: sourceChannelId,
         userId: body.user.id,
         logger,
       });
-
-      if (!userCanReadChannel) {
+      if (!canRead) {
         await client.chat.postMessage({
           channel: assistantChannelId,
           thread_ts: threadTs,
@@ -109,292 +83,68 @@ export function registerActionHandlers(app: App): void {
         return;
       }
 
-      // Extract the summary text from the message
       const summaryText = sanitizeGeneratedSlackText(message.text || '');
-
-      // Build attribution based on style
-      let attribution = '';
-      if (style?.toLowerCase().includes('roast')) {
-        attribution = `<@${body.user.id}> chose violence and asked TLDR to roast the last ${count} messages:`;
-      } else if (style?.toLowerCase().includes('receipt')) {
-        attribution = `<@${body.user.id}> asked TLDR to pull receipts from the last ${count} messages:`;
-      } else {
-        attribution = `<@${body.user.id}> asked TLDR to summarize the last ${count} messages:`;
-      }
-
-      const sharedMessage = `${attribution}\n\n${summaryText}`;
-
-      // Post to source channel
+      const attribution = buildShareAttribution(body.user.id, count, style);
       await client.chat.postMessage({
         channel: sourceChannelId,
-        text: sharedMessage,
+        text: `${attribution}\n\n${summaryText}`,
       });
-
-      // Confirm in thread
       await client.chat.postMessage({
         channel: assistantChannelId,
         thread_ts: threadTs,
         text: `✅ Shared to <#${sourceChannelId}>`,
       });
-
-      logger.info(
-        `Shared summary to channel ${sourceChannelId} from thread ${assistantChannelId}:${threadTs}`
-      );
     } catch (error) {
       logger.error('Failed to handle share_summary action:', error);
     }
   });
 
-  // Handle "Roast This" button
-  app.action<BlockAction>('rerun_roast', async ({ ack, body, action, client, logger }) => {
-    await ack();
+  app.action<BlockAction>('rerun_roast', async (args) =>
+    handleRerun({ ...args, config, style: ROAST_STYLE, label: '🔥 Running roast mode...' })
+  );
 
-    try {
-      if (!action || typeof action !== 'object' || !('type' in action) || action.type !== 'button') {
-        logger.error('Invalid action payload for rerun_roast');
-        return;
-      }
+  app.action<BlockAction>('rerun_receipts', async (args) =>
+    handleRerun({ ...args, config, style: RECEIPTS_STYLE, label: '📜 Pulling receipts...' })
+  );
 
-      // TypeScript doesn't narrow union types properly here, so we use any after runtime check
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const buttonValue: RerunButtonValue = JSON.parse((action as any).value || '{}');
-      const { channelId, count: rawCount } = buttonValue;
-      const count = normalizeMessageCount(rawCount);
-
-      if (!isValidSlackChannelId(channelId)) {
-        logger.error('Invalid channel in rerun_roast action');
-        return;
-      }
-
-      // Get thread context
-      const message = 'message' in body ? body.message : null;
-      const channel = 'channel' in body ? body.channel : null;
-
-      if (!message || !channel) {
-        logger.error('Could not extract message or channel from action body');
-        return;
-      }
-
-      const assistantChannelId = channel.id;
-      const threadTs = message.thread_ts ?? message.ts;
-
-      if (!checkSummarizeRateLimit(body.user.id)) {
-        await client.chat.postMessage({
-          channel: assistantChannelId,
-          thread_ts: threadTs,
-          text: 'Please wait a minute before starting more summaries.',
-        });
-        return;
-      }
-
-      const userCanReadChannel = await isUserMemberOfChannel({
-        client: client as unknown as ConversationsMembersClient,
-        channelId,
-        userId: body.user.id,
-        logger,
-      });
-
-      if (!userCanReadChannel) {
-        await client.chat.postMessage({
-          channel: assistantChannelId,
-          thread_ts: threadTs,
-          text: "I can only summarize channels you're a member of.",
-        });
-        return;
-      }
-
-      // Post confirmation message
-      await client.chat.postMessage({
-        channel: assistantChannelId,
-        thread_ts: threadTs,
-        text: '🔥 Running roast mode...',
-      });
-
-      // Enqueue summarization task with roast style
-      const task: ProcessingTask = {
-        correlation_id: uuidv4(),
-        user_id: body.user.id,
-        channel_id: channelId,
-        thread_ts: threadTs,
-        origin_channel_id: assistantChannelId,
-        response_url: null,
-        text: `summarize last ${count}`,
-        message_count: count,
-        target_channel_id: null,
-        custom_prompt:
-          'Write in a hyper-critical, sarcastic, and roasting tone. Point out inefficiencies, poor decisions, and ridiculous behavior. Be funny but brutal.',
-        visible: false,
-        destination: 'Thread',
-        dest_dm: false,
-        dest_public_post: false,
-      };
-
-      await sendToSqs(task, queueUrl);
-
-      logger.info(
-        `Enqueued roast summary for channel ${channelId} in thread ${assistantChannelId}:${threadTs}`
-      );
-    } catch (error) {
-      logger.error('Failed to handle rerun_roast action:', error);
-    }
-  });
-
-  // Handle "Pull Receipts" button
-  app.action<BlockAction>('rerun_receipts', async ({ ack, body, action, client, logger }) => {
-    await ack();
-
-    try {
-      if (!action || typeof action !== 'object' || !('type' in action) || action.type !== 'button') {
-        logger.error('Invalid action payload for rerun_receipts');
-        return;
-      }
-
-      // TypeScript doesn't narrow union types properly here, so we use any after runtime check
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const buttonValue: RerunButtonValue = JSON.parse((action as any).value || '{}');
-      const { channelId, count: rawCount } = buttonValue;
-      const count = normalizeMessageCount(rawCount);
-
-      if (!isValidSlackChannelId(channelId)) {
-        logger.error('Invalid channel in rerun_receipts action');
-        return;
-      }
-
-      // Get thread context
-      const message = 'message' in body ? body.message : null;
-      const channel = 'channel' in body ? body.channel : null;
-
-      if (!message || !channel) {
-        logger.error('Could not extract message or channel from action body');
-        return;
-      }
-
-      const assistantChannelId = channel.id;
-      const threadTs = message.thread_ts ?? message.ts;
-
-      if (!checkSummarizeRateLimit(body.user.id)) {
-        await client.chat.postMessage({
-          channel: assistantChannelId,
-          thread_ts: threadTs,
-          text: 'Please wait a minute before starting more summaries.',
-        });
-        return;
-      }
-
-      const userCanReadChannel = await isUserMemberOfChannel({
-        client: client as unknown as ConversationsMembersClient,
-        channelId,
-        userId: body.user.id,
-        logger,
-      });
-
-      if (!userCanReadChannel) {
-        await client.chat.postMessage({
-          channel: assistantChannelId,
-          thread_ts: threadTs,
-          text: "I can only summarize channels you're a member of.",
-        });
-        return;
-      }
-
-      // Post confirmation message
-      await client.chat.postMessage({
-        channel: assistantChannelId,
-        thread_ts: threadTs,
-        text: '📜 Pulling receipts...',
-      });
-
-      // Enqueue summarization task with receipts style
-      const task: ProcessingTask = {
-        correlation_id: uuidv4(),
-        user_id: body.user.id,
-        channel_id: channelId,
-        thread_ts: threadTs,
-        origin_channel_id: assistantChannelId,
-        response_url: null,
-        text: `summarize last ${count}`,
-        message_count: count,
-        target_channel_id: null,
-        custom_prompt:
-          'Focus on finding contradictions, broken promises, and receipts. Point out when someone said they would do something and did not, or when people contradicted themselves. Be specific with timestamps and quotes.',
-        visible: false,
-        destination: 'Thread',
-        dest_dm: false,
-        dest_public_post: false,
-      };
-
-      await sendToSqs(task, queueUrl);
-
-      logger.info(
-        `Enqueued receipts summary for channel ${channelId} in thread ${assistantChannelId}:${threadTs}`
-      );
-    } catch (error) {
-      logger.error('Failed to handle rerun_receipts action:', error);
-    }
-  });
-
-  // Handle message count dropdown selection
   app.action<BlockAction>(
     ACTION_SELECT_MESSAGE_COUNT,
     async ({ ack, body, action, client, logger }) => {
       await ack();
-
       try {
-        // Validate action is a static_select
-        if (
-          !action ||
-          typeof action !== 'object' ||
-          !('type' in action) ||
-          action.type !== 'static_select'
-        ) {
-          logger.error('Invalid action payload for message count selection');
+        if (!action || typeof action !== 'object' || !('type' in action) || action.type !== 'static_select') {
           return;
         }
-
-        // Extract selected value
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const selectedOption = (action as any).selected_option;
         if (!selectedOption || typeof selectedOption.value !== 'string') {
-          logger.error('No selected option in message count action');
           return;
         }
-
-        const parsedCount = parseInt(selectedOption.value, 10);
-        if (isNaN(parsedCount)) {
-          logger.error('Invalid message count value:', selectedOption.value);
+        const parsed = Number.parseInt(selectedOption.value, 10);
+        if (Number.isNaN(parsed)) {
           return;
         }
-        const newCount = normalizeMessageCount(parsedCount);
+        const newCount = normalizeMessageCount(parsed);
 
-        // Get thread context from the action body
         const message = 'message' in body ? body.message : null;
         const channel = 'channel' in body ? body.channel : null;
-
         if (!message || !channel) {
-          logger.error('Could not extract message or channel from action body');
           return;
         }
-
         const assistantChannelId = channel.id;
-        // The dropdown is in the welcome message, which is at the root of the thread.
-        // body.message.ts is the welcome message timestamp.
-        // body.message.thread_ts would be the thread root (should be same for root message).
         const welcomeMessageTs = message.ts;
         const threadTs = message.thread_ts ?? message.ts;
         const threadKey = makeThreadKey(assistantChannelId, threadTs);
 
-        // Load current thread state
         let currentState: ThreadContext = {
           viewingChannelId: null,
           customStyle: null,
           defaultMessageCount: null,
         };
-
         const cached = getCachedThreadState(threadKey);
         if (cached) {
           currentState = cached.state;
         } else {
-          // Try loading from Slack metadata
           try {
             const loaded = await findThreadStateMessage({
               client: client as unknown as SlackWebApiClient,
@@ -409,13 +159,8 @@ export function registerActionHandlers(app: App): void {
           }
         }
 
-        // Update state with new message count
-        const nextState: ThreadContext = {
-          ...currentState,
-          defaultMessageCount: newCount,
-        };
+        const nextState: ThreadContext = { ...currentState, defaultMessageCount: newCount };
 
-        // Persist to welcome message metadata via chat.update
         await client.chat.update({
           channel: assistantChannelId,
           ts: welcomeMessageTs,
@@ -427,20 +172,101 @@ export function registerActionHandlers(app: App): void {
           ),
           metadata: buildThreadStateMetadata(nextState),
         });
-
-        // Update cache
         setCachedThreadState({
           threadKey,
           stateMessageTs: welcomeMessageTs,
           state: nextState,
         });
-
-        logger.info(
-          `Updated default message count to ${newCount} for thread ${assistantChannelId}:${threadTs}`
-        );
       } catch (error) {
         logger.error('Failed to handle message count selection:', error);
       }
     }
   );
+}
+
+function buildShareAttribution(userId: string, count: number, style: string | null): string {
+  const lower = style?.toLowerCase() ?? '';
+  if (lower.includes('roast')) {
+    return `<@${userId}> chose violence and asked TLDR to roast the last ${count} messages:`;
+  }
+  if (lower.includes('receipt')) {
+    return `<@${userId}> asked TLDR to pull receipts from the last ${count} messages:`;
+  }
+  return `<@${userId}> asked TLDR to summarize the last ${count} messages:`;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type RerunArgs = any & {
+  config: AppConfig;
+  style: string;
+  label: string;
+};
+
+async function handleRerun(args: RerunArgs): Promise<void> {
+  const { ack, body, action, client, logger, config, style, label } = args;
+  await ack();
+  try {
+    if (!action || typeof action !== 'object' || !('type' in action) || action.type !== 'button') {
+      return;
+    }
+    const buttonValue: RerunButtonValue = JSON.parse(action.value || '{}');
+    const { channelId, count: rawCount } = buttonValue;
+    const count = normalizeMessageCount(rawCount);
+    if (!isValidSlackChannelId(channelId)) {
+      return;
+    }
+    const message = 'message' in body ? body.message : null;
+    const channel = 'channel' in body ? body.channel : null;
+    if (!message || !channel) {
+      return;
+    }
+    const assistantChannelId = channel.id;
+    const threadTs = message.thread_ts ?? message.ts;
+
+    if (!checkSummarizeRateLimit(body.user.id)) {
+      await client.chat.postMessage({
+        channel: assistantChannelId,
+        thread_ts: threadTs,
+        text: 'Please wait a minute before starting more summaries.',
+      });
+      return;
+    }
+
+    const canRead = await isUserMemberOfChannel({
+      client: client as unknown as ConversationsMembersClient,
+      channelId,
+      userId: body.user.id,
+      logger,
+    });
+    if (!canRead) {
+      await client.chat.postMessage({
+        channel: assistantChannelId,
+        thread_ts: threadTs,
+        text: "I can only summarize channels you're a member of.",
+      });
+      return;
+    }
+
+    await client.chat.postMessage({
+      channel: assistantChannelId,
+      thread_ts: threadTs,
+      text: label,
+    });
+
+    await runSummarization({
+      config,
+      client,
+      request: {
+        correlationId: uuidv4(),
+        userId: body.user.id,
+        channelId,
+        originChannelId: assistantChannelId,
+        threadTs,
+        messageCount: count,
+        customStyle: style,
+      },
+    });
+  } catch (error) {
+    logger.error('Failed to handle rerun action:', error);
+  }
 }

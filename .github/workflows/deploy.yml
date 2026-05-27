@@ -2,9 +2,9 @@ name: Deploy Slack Message Summarizer
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -12,8 +12,7 @@ permissions:
   id-token: write
 
 env:
-  CARGO_TERM_COLOR: always
-  AWS_REGION: us-east-2  # Change to your preferred region
+  AWS_REGION: us-east-2
 
 jobs:
   build-and-deploy:
@@ -21,94 +20,51 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Set up Docker Buildx
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # Cache Docker layers
-      - name: Cache Docker layers
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
-
-      # Rust code linting (PR only)
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-        if: github.event_name == 'pull_request'
-
-      # Perform code formatting check
-      - name: Check code formatting
-        working-directory: ./lambda
-        run: cargo fmt -- --check
-        if: github.event_name == 'pull_request'
-
-      # Run Clippy lints
-      - name: Run Clippy lints
-        working-directory: ./lambda
-        run: cargo clippy -- -D warnings
-        if: github.event_name == 'pull_request'
-
-      # Run Rust tests
-      - name: Run Rust tests
-        working-directory: ./lambda
-        run: cargo test --all-features
-        if: github.event_name == 'pull_request'
-
-      # Build Lambda functions using Docker (only for deployments)
-      - name: Build Lambda Functions
-        run: |
-          chmod +x build-local.sh
-          ./build-local.sh
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-
-      # Extract built Lambda artifacts from the container (only for deployments)
-      - name: Extract Lambda artifacts
-        run: |
-          mkdir -p lambda/target/lambda/tldr-bolt-api
-          mkdir -p lambda/target/lambda/tldr-worker
-          docker create --name lambda-builder tldr-lambda-builder:latest
-          docker cp lambda-builder:/tldr-bolt-api.zip lambda/target/lambda/tldr-bolt-api/function.zip
-          docker cp lambda-builder:/tldr-worker.zip lambda/target/lambda/tldr-worker/function.zip
-          docker rm lambda-builder
-          echo '--- Verifying Bolt API Lambda artifact ---'
-          ls -l lambda/target/lambda/tldr-bolt-api/function.zip || (echo 'Bolt API function.zip not found!' && exit 1)
-          echo '--- Verifying Worker Lambda artifact ---'
-          ls -l lambda/target/lambda/tldr-worker/function.zip || (echo 'Worker function.zip not found!' && exit 1)
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-
-      # Skip the cache move step since we're not using docker/build-push-action
-      # The move cache step is needed only when using docker/build-push-action with cache-to
-
-      # Setup Node.js (only for deployments)
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: './cdk/package-lock.json'
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+          cache-dependency-path: |
+            ./bolt-ts/package-lock.json
+            ./cdk/package-lock.json
 
-      # Install CDK dependencies (only for deployments)
+      # ---- Bolt Lambda (TypeScript) ----
+      - name: Install Bolt dependencies
+        working-directory: ./bolt-ts
+        run: npm ci
+
+      - name: Lint Bolt Lambda
+        working-directory: ./bolt-ts
+        run: npm run lint
+
+      - name: Build Bolt Lambda
+        working-directory: ./bolt-ts
+        run: npm run build
+
+      - name: Test Bolt Lambda
+        working-directory: ./bolt-ts
+        run: npm test
+
+      # ---- CDK ----
       - name: Install CDK dependencies
-        run: |
-          cd cdk
-          npm ci
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        working-directory: ./cdk
+        run: npm ci
 
-      # Build CDK TypeScript (only for deployments)
-      - name: Build CDK TypeScript
-        run: |
-          cd cdk
-          npm run build
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+      - name: Lint CDK
+        working-directory: ./cdk
+        run: npm run lint
 
-        # Configure AWS credentials for CDK deployment.
-        # Prefer short-lived OIDC credentials when AWS_DEPLOY_ROLE_ARN exists.
+      - name: Build CDK
+        working-directory: ./cdk
+        run: npm run build
+
+      # ---- Package + Deploy (main only) ----
+      - name: Package Bolt Lambda bundle
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        working-directory: ./bolt-ts
+        run: npm run bundle
+
       - name: Configure AWS credentials with OIDC
         id: configure-aws-oidc
         continue-on-error: true
@@ -130,30 +86,20 @@ jobs:
           mask-aws-account-id: true
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.configure-aws-oidc.outcome != 'success'
 
-      # Deploy with CDK. Runtime secrets are SSM SecureString values; CI only
-      # passes parameter names. AWS auth prefers OIDC and falls back to the
-      # existing main-only access-key secrets until the OIDC role is configured.
       - name: Deploy with CDK
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        working-directory: ./cdk
         run: |
-          cd cdk
           npm run cdk deploy -- --require-approval never --outputs-file cdk-outputs.json
-          
-          # Display API Gateway URL from CDK outputs for manual Slack manifest update
           echo "📌 API Gateway URL for Slack manifest:"
           python3 -c "import json; data = json.load(open('cdk-outputs.json')); print(data['TldrStack']['ApiGatewayUrl'])"
           echo "ℹ️  Update your Slack app manifest with this URL at api.slack.com/apps"
         env:
           SLACK_BOT_TOKEN_PARAMETER_NAME:      ${{ vars.SLACK_BOT_TOKEN_PARAMETER_NAME || '/tldr/slack/bot-token' }}
           SLACK_SIGNING_SECRET_PARAMETER_NAME: ${{ vars.SLACK_SIGNING_SECRET_PARAMETER_NAME || '/tldr/slack/signing-secret' }}
-          OPENAI_API_KEY_PARAMETER_NAME:       ${{ vars.OPENAI_API_KEY_PARAMETER_NAME || '/tldr/openai/api-key' }}
-          OPENAI_ORG_ID_PARAMETER_NAME:        ${{ vars.OPENAI_ORG_ID_PARAMETER_NAME }}
-          OPENAI_MODEL:                        ${{ vars.OPENAI_MODEL }}
-          # Ensure region/account for CDK
-          CDK_DEFAULT_REGION:   ${{ env.AWS_REGION }}
-          AWS_ACCOUNT_ID:       ${{ vars.AWS_ACCOUNT_ID }}
-          # Enable streaming responses in assistant threads
-          ENABLE_STREAMING:     'true'
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-
-      # Slack manifest updates must be done manually
-      # See SLACK_APP_SETUP.md for instructions
+          ANTHROPIC_API_KEY_PARAMETER_NAME:    ${{ vars.ANTHROPIC_API_KEY_PARAMETER_NAME || '/tldr/anthropic/api-key' }}
+          ANTHROPIC_MODEL:                     ${{ vars.ANTHROPIC_MODEL }}
+          ANTHROPIC_MAX_OUTPUT_TOKENS:         ${{ vars.ANTHROPIC_MAX_OUTPUT_TOKENS }}
+          CDK_DEFAULT_REGION:                  ${{ env.AWS_REGION }}
+          AWS_ACCOUNT_ID:                      ${{ vars.AWS_ACCOUNT_ID }}
+          ENABLE_STREAMING:                    'true'

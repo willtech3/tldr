@@ -1,7 +1,13 @@
 /**
- * Block Kit builders for Slack UI components.
+ * Block Kit builders for the TLDR assistant surface.
  *
- * These functions generate Block Kit JSON for various UI elements.
+ * UI design notes:
+ *  - The welcome message doubles as the canonical thread-state message —
+ *    metadata on it persists viewingChannelId / customStyle / defaultMessageCount.
+ *  - Dropdown and the "Set style" button are the primary controls, so they
+ *    sit immediately under the intro with a divider above them.
+ *  - Slack's contextual status (suggested prompts, setStatus) is handled in
+ *    the Assistant middleware, not in the welcome blocks.
  */
 
 import { types } from '@slack/bolt';
@@ -10,50 +16,41 @@ import { normalizeMessageCount } from './security';
 
 type KnownBlock = types.KnownBlock;
 
-// Action IDs for interactive components
 export const ACTION_OPEN_STYLE_MODAL = 'open_style_modal';
 export const ACTION_SELECT_MESSAGE_COUNT = 'select_message_count';
 export const MODAL_CALLBACK_SET_STYLE = 'set_style_modal';
 export const INPUT_BLOCK_STYLE = 'style_input_block';
 export const INPUT_ACTION_STYLE = 'style_input_action';
 
-/** Preset message count options for the dropdown */
 export const MESSAGE_COUNT_OPTIONS = [5, 10, 15, 20, 25, 30, 40, 50, 75, 100, 150, 200, 300, 500];
 
 /**
- * Build welcome message blocks shown when assistant thread starts.
- *
- * @param viewingChannelId - Optional channel ID the user is currently viewing
- * @param activeStyle - Optional active style to display
- * @param defaultMessageCount - Optional default message count (defaults to 50)
+ * Welcome blocks shown at the top of every assistant thread. Doubles as the
+ * canonical thread-state message — its metadata persists viewingChannelId /
+ * customStyle / defaultMessageCount across cold starts.
  */
 export function buildWelcomeBlocks(
   viewingChannelId?: string | null,
   activeStyle?: string | null,
   defaultMessageCount?: number | null
 ): KnownBlock[] {
-  // Determine effective message count for the dropdown
   const effectiveCount = normalizeMessageCount(defaultMessageCount);
-
   const blocks: KnownBlock[] = [
     {
       type: 'section',
       text: {
         type: 'mrkdwn',
         text:
-          "👋 Hi! I'm TLDR. I can summarize the channel you're currently viewing.\n\n" +
-          '*Quick start:*\n' +
-          '• Click a suggested prompt below\n' +
-          '• Or type `help` to see all commands\n' +
-          '• Just type `summarize` to get started',
+          "👋 *Hi! I'm TLDR.* I summarize the channel you're currently viewing.\n\n" +
+          'Pick a suggested prompt below, type `summarize`, or `help` for the full command list.',
       },
     },
-    // Message count dropdown
+    { type: 'divider' },
     {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: '📊 *Messages:*',
+        text: '📊 *How many messages to summarize?*',
       },
       accessory: {
         type: 'static_select',
@@ -70,7 +67,6 @@ export function buildWelcomeBlocks(
     },
   ];
 
-  // Show current channel context so users know what will be summarized
   if (viewingChannelId) {
     blocks.push({
       type: 'context',
@@ -81,9 +77,18 @@ export function buildWelcomeBlocks(
         },
       ],
     });
+  } else {
+    blocks.push({
+      type: 'context',
+      elements: [
+        {
+          type: 'mrkdwn',
+          text: '📍 _Open a channel in Slack to enable one-tap summaries._',
+        },
+      ],
+    });
   }
 
-  // Show active style if set
   if (activeStyle) {
     blocks.push({
       type: 'context',
@@ -96,17 +101,12 @@ export function buildWelcomeBlocks(
     });
   }
 
-  // Add "Set style" button
   blocks.push({
     type: 'actions',
     elements: [
       {
         type: 'button',
-        text: {
-          type: 'plain_text',
-          text: '🎨 Set style',
-          emoji: true,
-        },
+        text: { type: 'plain_text', text: '🎨 Set style', emoji: true },
         action_id: ACTION_OPEN_STYLE_MODAL,
       },
     ],
@@ -115,9 +115,6 @@ export function buildWelcomeBlocks(
   return blocks;
 }
 
-/**
- * Truncate style text for display (max 100 chars).
- */
 function truncateStyle(style: string): string {
   if (style.length <= 100) {
     return style;
@@ -125,57 +122,47 @@ function truncateStyle(style: string): string {
   return style.substring(0, 97) + '...';
 }
 
-/**
- * Build help message blocks.
- */
+/** Help blocks shown when the user types `help` / `?` / "what can you do". */
 export function buildHelpBlocks(): KnownBlock[] {
   return [
     {
       type: 'header',
-      text: { type: 'plain_text', text: 'TLDR Bot Commands', emoji: true },
+      text: { type: 'plain_text', text: 'TLDR — Command Reference', emoji: true },
     },
     {
       type: 'section',
       text: {
         type: 'mrkdwn',
         text:
-          '*Summarize:*\n' +
-          "• `summarize` - Summarize the last 50 messages in the channel you're viewing\n" +
-          '• `summarize last N` - Summarize the last N messages (e.g., `summarize last 100`)\n' +
-          "• `summarize with style: <instructions>` - One-time style override (doesn't persist)",
+          '*🧾 Summarize the channel you\'re viewing*\n' +
+          '• `summarize` — last 50 messages (or your chosen default).\n' +
+          '• `summarize last 100` — explicit count.\n' +
+          '• `summarize <#C123|general>` — pick a different channel.\n' +
+          '• `summarize with style: write as a haiku` — one-off style override.',
       },
     },
+    { type: 'divider' },
     {
       type: 'section',
       text: {
         type: 'mrkdwn',
         text:
-          '*Style:*\n' +
-          '• Click the "🎨 Set style" button to open the style editor\n' +
-          '• `style: <instructions>` - Set a custom style for this assistant thread\n' +
-          '• `clear style` - Remove the current style',
+          '*🎨 Persistent style for this thread*\n' +
+          '• Click *🎨 Set style* in the welcome message for a multi-line editor.\n' +
+          '• Or type `style: be hyper-critical and roast everyone`.\n' +
+          '• `clear style` to remove it.',
       },
     },
+    { type: 'divider' },
     {
       type: 'section',
       text: {
         type: 'mrkdwn',
         text:
-          '*Notes:*\n' +
-          '• TLDR automatically tracks your current channel as you navigate Slack\n' +
-          '• You can also mention a channel (e.g., `summarize <#C123|general>`) to override context\n' +
-          '• Styles persist for this thread only — each new thread starts fresh',
-      },
-    },
-    {
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text:
-          '*Tips:*\n' +
-          '• Summaries appear in this assistant thread\n' +
-          '• Make styles specific (e.g., "funny, short, and include receipts")\n' +
-          '• Use per-run override for one-off style requests',
+          '*⚡ Tips*\n' +
+          '• Each summary comes with *Share*, *Roast*, and *Receipts* buttons.\n' +
+          '• Styles only apply to this thread — start a new one to reset.\n' +
+          '• I can only summarize channels *you* are a member of.',
       },
     },
     {
@@ -183,28 +170,18 @@ export function buildHelpBlocks(): KnownBlock[] {
       elements: [
         {
           type: 'mrkdwn',
-          text: 'Try one of the suggested prompts below or type your own command!',
+          text: '💡 Try one of the suggested prompts above, or just type `summarize`.',
         },
       ],
     },
   ];
 }
 
-/**
- * Private data passed through modal submission.
- * Stored in the modal's private_metadata field as JSON.
- */
 export interface StyleModalPrivateMetadata {
   assistantChannelId: string;
   assistantThreadTs: string;
 }
 
-/**
- * Build the "Set style" modal view.
- *
- * @param currentStyle - The current style (if any) to pre-fill
- * @param privateMetadata - Data to pass through to submission handler
- */
 export function buildStyleModal(
   currentStyle: string | null,
   privateMetadata: StyleModalPrivateMetadata
@@ -213,27 +190,18 @@ export function buildStyleModal(
     type: 'modal',
     callback_id: MODAL_CALLBACK_SET_STYLE,
     private_metadata: JSON.stringify(privateMetadata),
-    title: {
-      type: 'plain_text',
-      text: 'Set Summary Style',
-      emoji: true,
-    },
-    submit: {
-      type: 'plain_text',
-      text: 'Save',
-      emoji: true,
-    },
-    close: {
-      type: 'plain_text',
-      text: 'Cancel',
-      emoji: true,
-    },
+    title: { type: 'plain_text', text: 'Set Summary Style', emoji: true },
+    submit: { type: 'plain_text', text: 'Save', emoji: true },
+    close: { type: 'plain_text', text: 'Cancel', emoji: true },
     blocks: [
       {
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: 'Customize how TLDR writes summaries for this thread. Leave empty to use the default style.',
+          text:
+            'Customize how TLDR writes summaries for this thread.\n' +
+            'Examples: _Write as a haiku_, _Be extremely concise_, _Roast everyone mercilessly_.\n' +
+            'Leave empty to use the default style.',
         },
       },
       {
@@ -244,41 +212,29 @@ export function buildStyleModal(
           type: 'plain_text_input',
           action_id: INPUT_ACTION_STYLE,
           multiline: true,
-          max_length: 800,
+          max_length: 4000,
           placeholder: {
             type: 'plain_text',
             text: 'e.g., "Write as a haiku" or "Be extremely concise and funny"',
           },
           initial_value: currentStyle ?? undefined,
         },
-        label: {
-          type: 'plain_text',
-          text: 'Custom Style Instructions',
-          emoji: true,
-        },
+        label: { type: 'plain_text', text: 'Custom Style Instructions', emoji: true },
         hint: {
           type: 'plain_text',
-          text: 'This style will apply to all summaries in this thread.',
+          text: 'Applied to every summary in this thread (up to 4 000 chars).',
         },
       },
     ],
   };
 }
 
-/**
- * Build style confirmation blocks shown after style is saved.
- *
- * @param style - The style that was saved (null if cleared)
- */
 export function buildStyleConfirmationBlocks(style: string | null): KnownBlock[] {
   if (!style) {
     return [
       {
         type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: '✅ Style cleared. Summaries will use the default style.',
-        },
+        text: { type: 'mrkdwn', text: '✅ Style cleared. Summaries will use the default style.' },
       },
     ];
   }
@@ -286,18 +242,12 @@ export function buildStyleConfirmationBlocks(style: string | null): KnownBlock[]
   return [
     {
       type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: '✅ *Style saved for this thread.*',
-      },
+      text: { type: 'mrkdwn', text: '✅ *Style saved for this thread.*' },
     },
     {
       type: 'context',
       elements: [
-        {
-          type: 'mrkdwn',
-          text: `🎨 Active style: ${truncateStyle(style)}`,
-        },
+        { type: 'mrkdwn', text: `🎨 Active style: ${truncateStyle(style)}` },
       ],
     },
   ];

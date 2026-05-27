@@ -8,7 +8,12 @@
 export const DEFAULT_MESSAGE_COUNT = 50;
 export const MIN_MESSAGE_COUNT = 1;
 export const MAX_MESSAGE_COUNT = 500;
-export const MAX_CUSTOM_STYLE_LENGTH = 800;
+/**
+ * Cap on user-supplied custom style. Modern models comfortably handle longer
+ * style guidance; we keep this aligned with the prompt builder's internal cap
+ * so the Slack input modal `max_length` and the LLM-side truncation agree.
+ */
+export const MAX_CUSTOM_STYLE_LENGTH = 4000;
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 5;

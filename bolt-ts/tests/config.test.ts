@@ -2,74 +2,106 @@
  * Tests for configuration loading.
  */
 
-import { loadConfig } from '../src/config';
+import { loadConfig, resetConfigCacheForTests } from '../src/config';
 
 describe('loadConfig', () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
-    // Reset environment before each test
     process.env = { ...originalEnv };
+    resetConfigCacheForTests();
   });
 
   afterAll(() => {
-    // Restore original environment
     process.env = originalEnv;
   });
 
-  it('should load config from environment variables', async () => {
+  it('loads required values from plain env vars', async () => {
     process.env.SLACK_BOT_TOKEN = 'xoxb-test-token';
     process.env.SLACK_SIGNING_SECRET = 'test-secret';
-    process.env.PROCESSING_QUEUE_URL = 'https://sqs.us-east-1.amazonaws.com/123/queue';
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
+    delete process.env.SLACK_BOT_TOKEN_PARAMETER_NAME;
+    delete process.env.SLACK_SIGNING_SECRET_PARAMETER_NAME;
+    delete process.env.ANTHROPIC_API_KEY_PARAMETER_NAME;
 
     const config = await loadConfig();
 
     expect(config.slackBotToken).toBe('xoxb-test-token');
     expect(config.slackSigningSecret).toBe('test-secret');
-    expect(config.processingQueueUrl).toBe('https://sqs.us-east-1.amazonaws.com/123/queue');
+    expect(config.anthropicApiKey).toBe('sk-ant-test');
+    expect(config.anthropicModel).toBe('claude-sonnet-4-6');
+    expect(config.anthropicMaxOutputTokens).toBeGreaterThan(0);
+    expect(config.enableStreaming).toBe(true);
+    expect(config.streamMaxChunkChars).toBeGreaterThan(0);
+    expect(config.streamMinAppendIntervalMs).toBeGreaterThan(0);
   });
 
-  it('should throw error when SLACK_BOT_TOKEN is missing', async () => {
+  it('honours ANTHROPIC_MODEL override', async () => {
+    process.env.SLACK_BOT_TOKEN = 'x';
+    process.env.SLACK_SIGNING_SECRET = 'y';
+    process.env.ANTHROPIC_API_KEY = 'sk-ant';
+    process.env.ANTHROPIC_MODEL = 'claude-opus-4-7';
+    const config = await loadConfig();
+    expect(config.anthropicModel).toBe('claude-opus-4-7');
+  });
+
+  it('honours ANTHROPIC_MAX_OUTPUT_TOKENS override and caps at 64000', async () => {
+    process.env.SLACK_BOT_TOKEN = 'x';
+    process.env.SLACK_SIGNING_SECRET = 'y';
+    process.env.ANTHROPIC_API_KEY = 'sk-ant';
+    process.env.ANTHROPIC_MAX_OUTPUT_TOKENS = '999999';
+    const config = await loadConfig();
+    expect(config.anthropicMaxOutputTokens).toBe(64_000);
+  });
+
+  it('parses ENABLE_STREAMING as boolean', async () => {
+    process.env.SLACK_BOT_TOKEN = 'x';
+    process.env.SLACK_SIGNING_SECRET = 'y';
+    process.env.ANTHROPIC_API_KEY = 'sk-ant';
+    process.env.ENABLE_STREAMING = '0';
+    let config = await loadConfig();
+    expect(config.enableStreaming).toBe(false);
+
+    resetConfigCacheForTests();
+    process.env.ENABLE_STREAMING = 'yes';
+    config = await loadConfig();
+    expect(config.enableStreaming).toBe(true);
+  });
+
+  it('throws when SLACK_BOT_TOKEN is missing', async () => {
     delete process.env.SLACK_BOT_TOKEN;
     delete process.env.SLACK_BOT_TOKEN_PARAMETER_NAME;
-    process.env.SLACK_SIGNING_SECRET = 'test-secret';
-    process.env.PROCESSING_QUEUE_URL = 'https://sqs.test/queue';
-
-    await expect(loadConfig()).rejects.toThrow(
-      'Missing required environment variables: SLACK_BOT_TOKEN or SLACK_BOT_TOKEN_PARAMETER_NAME'
-    );
+    process.env.SLACK_SIGNING_SECRET = 'y';
+    process.env.ANTHROPIC_API_KEY = 'sk-ant';
+    await expect(loadConfig()).rejects.toThrow(/SLACK_BOT_TOKEN/);
   });
 
-  it('should throw error when SLACK_SIGNING_SECRET is missing', async () => {
-    process.env.SLACK_BOT_TOKEN = 'xoxb-test-token';
-    delete process.env.SLACK_SIGNING_SECRET;
-    delete process.env.SLACK_SIGNING_SECRET_PARAMETER_NAME;
-    process.env.PROCESSING_QUEUE_URL = 'https://sqs.test/queue';
-
-    await expect(loadConfig()).rejects.toThrow(
-      'Missing required environment variables: SLACK_SIGNING_SECRET or SLACK_SIGNING_SECRET_PARAMETER_NAME'
-    );
+  it('throws when ANTHROPIC_API_KEY is missing', async () => {
+    process.env.SLACK_BOT_TOKEN = 'x';
+    process.env.SLACK_SIGNING_SECRET = 'y';
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY_PARAMETER_NAME;
+    await expect(loadConfig()).rejects.toThrow(/ANTHROPIC_API_KEY/);
   });
 
-  it('should throw error when PROCESSING_QUEUE_URL is missing', async () => {
-    process.env.SLACK_BOT_TOKEN = 'xoxb-test-token';
-    process.env.SLACK_SIGNING_SECRET = 'test-secret';
-    delete process.env.PROCESSING_QUEUE_URL;
-
-    await expect(loadConfig()).rejects.toThrow(
-      'Missing required environment variables: PROCESSING_QUEUE_URL'
-    );
-  });
-
-  it('should list all missing sensitive variables when multiple are missing', async () => {
+  it('lists all missing variables in a single error', async () => {
     delete process.env.SLACK_BOT_TOKEN;
     delete process.env.SLACK_BOT_TOKEN_PARAMETER_NAME;
     delete process.env.SLACK_SIGNING_SECRET;
     delete process.env.SLACK_SIGNING_SECRET_PARAMETER_NAME;
-    process.env.PROCESSING_QUEUE_URL = 'https://sqs.test/queue';
-
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY_PARAMETER_NAME;
     await expect(loadConfig()).rejects.toThrow(
-      'Missing required environment variables: SLACK_BOT_TOKEN or SLACK_BOT_TOKEN_PARAMETER_NAME, SLACK_SIGNING_SECRET or SLACK_SIGNING_SECRET_PARAMETER_NAME'
+      /SLACK_BOT_TOKEN.*SLACK_SIGNING_SECRET.*ANTHROPIC_API_KEY/
     );
+  });
+
+  it('caps streamMaxChunkChars at the documented Slack limit', async () => {
+    process.env.SLACK_BOT_TOKEN = 'x';
+    process.env.SLACK_SIGNING_SECRET = 'y';
+    process.env.ANTHROPIC_API_KEY = 'sk-ant';
+    process.env.STREAM_MAX_CHUNK_CHARS = '99999';
+    const config = await loadConfig();
+    expect(config.streamMaxChunkChars).toBeLessThanOrEqual(12000);
   });
 });

@@ -1,4 +1,12 @@
-## Streaming Responses to Slack (Implementation Spec)
+## Streaming Responses to Slack (Implementation Spec — historical)
+
+> **Status:** Historical. The streaming pipeline described here has shipped and
+> has since been ported off the Rust worker. The implementation now lives in
+> [`bolt-ts/src/worker/streaming.ts`](../bolt-ts/src/worker/streaming.ts) with
+> the SSE parser in [`bolt-ts/src/ai/sse.ts`](../bolt-ts/src/ai/sse.ts) and the
+> OpenAI Responses client in [`bolt-ts/src/ai/openai.ts`](../bolt-ts/src/ai/openai.ts).
+> The architecture references to "Bolt TS → SQS → Rust Worker" below describe
+> the previous shape and are retained for context.
 
 This document is a **fully-specified, agent-implementable plan** to add **real-time text streaming** for TLDR’s AI summaries in Slack **AI App assistant threads**.
 
