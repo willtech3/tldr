@@ -2,17 +2,11 @@
 set -euo pipefail
 
 # Purpose: Prepare a non-interactive environment for CI/agents (Codex/Jules)
-# - Installs just, Rust toolchain components, Node 18+ deps for CDK
-# - Warms caches and ensures `just qa` can run end-to-end
+# - Installs `just`
+# - Installs Node 20+ deps for the Bolt Lambda and CDK
+# - Warms npm caches so `just qa` runs end-to-end
 
 echo "[agent-setup] Starting environment bootstrap"
-
-unameOut="$(uname -s)"
-case "${unameOut}" in
-    Linux*)   platform=linux;;
-    Darwin*)  platform=darwin;;
-    *)        platform=unknown;;
-esac
 
 has_cmd() { command -v "$1" >/dev/null 2>&1; }
 
@@ -33,61 +27,27 @@ else
   echo "[agent-setup] 'just' already present"
 fi
 
-# 2) Rust toolchain
-if ! has_cmd rustc; then
-  echo "[agent-setup] Installing Rust toolchain via rustup (non-interactive)"
-  curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
-  export PATH="$HOME/.cargo/bin:$PATH"
-else
-  echo "[agent-setup] Rust toolchain detected: $(rustc --version)"
-fi
-
-# Ensure components
-rustup component add rustfmt clippy || true
-
-# 3) cargo-lambda (optional for local runs)
-if ! has_cmd cargo-lambda; then
-  echo "[agent-setup] Installing cargo-lambda (optional)"
-  cargo install cargo-lambda || true
-fi
-
-# 4) Node & npm dependencies for CDK and Bolt TypeScript
+# 2) Node & npm dependencies for the Bolt Lambda + CDK
 if has_cmd node && has_cmd npm; then
   echo "[agent-setup] Node: $(node -v)  npm: $(npm -v)"
+  for project in cdk bolt-ts; do
+    if [ -d "$project" ]; then
+      pushd "$project" >/dev/null
+      echo "[agent-setup] Installing $project dependencies"
+      if [ -f package-lock.json ]; then
+        npm ci --silent || npm install --silent
+      else
+        npm install --silent
+      fi
+      popd >/dev/null
+    fi
+  done
+  # Warm the CDK build so subsequent runs are fast.
   if [ -d "cdk" ]; then
-    pushd cdk >/dev/null
-    # Use ci if lockfile is present, else fall back to install
-    if [ -f package-lock.json ]; then
-      npm ci --silent || npm install --silent
-    else
-      npm install --silent
-    fi
-    npm run --silent build || true
-    popd >/dev/null
-  fi
-  if [ -d "bolt-ts" ]; then
-    pushd bolt-ts >/dev/null
-    echo "[agent-setup] Installing Bolt TypeScript dependencies"
-    if [ -f package-lock.json ]; then
-      npm ci --silent || npm install --silent
-    else
-      npm install --silent
-    fi
-    popd >/dev/null
+    (cd cdk && npm run --silent build || true)
   fi
 else
-  echo "[agent-setup] Node/npm not found. Install Node 18+ to enable CDK and Bolt builds."
-fi
-
-# 5) Warm Rust caches
-if [ -d "lambda" ]; then
-  pushd lambda >/dev/null
-  echo "[agent-setup] Warming Cargo caches (check + fmt)"
-  cargo fmt --all || true
-  cargo check || true
-  popd >/dev/null
+  echo "[agent-setup] Node/npm not found. Install Node 20+ to enable Bolt and CDK builds."
 fi
 
 echo "[agent-setup] Done. You can now run ./scripts/agent-run-qa.sh"
-
-

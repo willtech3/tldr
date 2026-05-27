@@ -4,13 +4,12 @@ import * as cdk from 'aws-cdk-lib';
 import { TldrStack } from '../lib/tldr-stack';
 import * as dotenv from 'dotenv';
 
-// Load environment variables from .env file
 dotenv.config();
 
 const app = new cdk.App();
 
-// Get AWS account ID from various sources
-const accountId = app.node.tryGetContext('account') ||
+const accountId =
+  app.node.tryGetContext('account') ||
   process.env.AWS_ACCOUNT_ID ||
   process.env.CDK_DEFAULT_ACCOUNT;
 
@@ -32,18 +31,15 @@ function requiredEnv(name: string): string {
   return value;
 }
 
-// Create the stack with environment variables
 new TldrStack(app, 'TldrStack', {
-  // Stack configuration
   slackBotTokenParameterName: requiredEnv('SLACK_BOT_TOKEN_PARAMETER_NAME'),
   slackSigningSecretParameterName: requiredEnv('SLACK_SIGNING_SECRET_PARAMETER_NAME'),
-  openaiApiKeyParameterName: requiredEnv('OPENAI_API_KEY_PARAMETER_NAME'),
-  openaiOrgIdParameterName: process.env.OPENAI_ORG_ID_PARAMETER_NAME,
-  openaiModel: process.env.OPENAI_MODEL,
-  enableStreaming: process.env.ENABLE_STREAMING || 'false',
+  anthropicApiKeyParameterName: requiredEnv('ANTHROPIC_API_KEY_PARAMETER_NAME'),
+  anthropicModel: process.env.ANTHROPIC_MODEL,
+  anthropicMaxOutputTokens: process.env.ANTHROPIC_MAX_OUTPUT_TOKENS,
+  enableStreaming: process.env.ENABLE_STREAMING || 'true',
   streamMinAppendIntervalMs: process.env.STREAM_MIN_APPEND_INTERVAL_MS,
   streamMaxChunkChars: process.env.STREAM_MAX_CHUNK_CHARS,
-  // Add basic environment configuration
   env: {
     account: accountId,
     region: process.env.CDK_DEFAULT_REGION || 'us-east-2',

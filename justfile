@@ -6,23 +6,6 @@ set shell := ["bash", "-euxo", "pipefail", "-c"]
 # Default target runs the full code quality suite
 default: qa
 
-# --- Rust (lambda/) ---
-
-fmt:
-	cd lambda && cargo fmt
-
-fmt-check:
-	cd lambda && cargo fmt --all -- --check
-
-clippy:
-	cd lambda && cargo clippy --all-targets -- -D warnings -W clippy::pedantic
-
-check:
-	cd lambda && cargo check
-
-test:
-	cd lambda && cargo test --all-features
-
 # --- Bolt TypeScript (bolt-ts/) ---
 
 bolt-install:
@@ -49,18 +32,14 @@ cdk-lint:
 	cd cdk && npm run lint
 
 # Aggregate: Code Quality (what CI runs on PRs)
-qa: fmt-check check clippy test bolt-build bolt-bundle bolt-lint bolt-test cdk-build cdk-lint
+qa: bolt-build bolt-bundle bolt-lint bolt-test cdk-build cdk-lint
 	@echo "✅ All code quality checks passed"
 
 # Clean build artifacts and caches
 clean:
-	cd lambda && cargo clean
 	cd cdk && rm -rf node_modules dist cdk.out .tsbuildinfo
-	cd bolt-ts && rm -rf node_modules dist coverage
-	rm -rf lambda/target
-	rm -rf lambda/.cargo
+	cd bolt-ts && rm -rf node_modules dist bundle coverage
 
 	find . -name "*.orig" -type f -delete
 	find . -name ".DS_Store" -type f -delete
 	@echo "🧹 Cleaned build artifacts and caches"
-

@@ -7,10 +7,10 @@ TLDR is a serverless Slack bot that turns a wall of unread messages into a conci
 ## ✨ Key Features
 
 - **AI App Experience** – Native Slack AI App split-view integration with suggested prompts and context tracking.
-- **AI-Generated Summaries** – Uses OpenAI (GPT-5.2 by default) to distill channel messages into digestible summaries.
+- **AI-Generated Summaries** – Uses Anthropic Claude Sonnet 4.6 to distill channel messages into digestible summaries.
 - **Custom Styles** – Make summaries funny, formal, or fit your friend group's vibe.
-- **Hybrid Architecture** – TypeScript Bolt.js for Slack events + Rust worker for fast async processing.
-- **Built for Speed** – Instant acknowledgement with async summarization for snappy UX.
+- **Single TypeScript Service** – One Bolt.js Lambda hosts the Slack event surface *and* the streaming summarizer.
+- **Streaming Replies** – Summaries stream into the assistant thread token-by-token via Slack's `chat.startStream` / `chat.appendStream` / `chat.stopStream` APIs.
 
 ---
 
@@ -30,23 +30,21 @@ That's it! TLDR automatically tracks which channel you're viewing and summarizes
 
 ---
 
-## 🏗️ High-Level Architecture
+## 🏗️ Architecture
 
 ```
-┌─────────┐    ┌────────────────┐   SQS   ┌──────────────┐    ┌────────────────────┐
-│  Slack  │───►│ Bolt.js Lambda │──Queue─►│ Rust Worker  │───►│ OpenAI Responses API│
-└─────────┘    │  (TypeScript)  │         │   Lambda     │    └────────────────────┘
-               └────────────────┘         └──────┬───────┘
-                                                 │
-                                                 ▼
-                                         ┌───────────────┐
-                                         │ Assistant     │
-                                         │ Thread Reply  │
-                                         └───────────────┘
+┌─────────┐    ┌────────────────────────────────────────┐    ┌──────────────────────┐
+│  Slack  │───►│ Single Bolt.js Lambda (TypeScript)     │───►│ Anthropic Messages   │
+└─────────┘    │  • Slack signature verification        │    │ API (streaming, SSE) │
+               │  • Intent parsing + safety checks      │    └────────┬─────────────┘
+               │  • Inline Anthropic streaming summary  │             │
+               │  • chat.startStream/appendStream/stop  │◄────────────┘
+               └────────────────────────────────────────┘
 ```
 
-1. **Bolt.js Lambda** (`bolt-ts/`) – Handles all Slack events, interactions, home tab, and message parsing. Enqueues summarization jobs to SQS.
-2. **Rust Worker Lambda** (`lambda/`) – Fetches channel messages, calls OpenAI, posts summary to the assistant thread.
+A single Node.js Lambda hosts the entire app. Bolt internally ACKs Slack events;
+the handler streams the Anthropic Claude response (Sonnet 4.6 by default)
+straight into the assistant thread via Slack's `chat.*Stream` APIs.
 
 ---
 
@@ -54,10 +52,9 @@ That's it! TLDR automatically tracks which channel you're viewing and summarizes
 
 ### Prerequisites
 
-- Node.js 18+ & npm (for Bolt.js and CDK)
-- Rust (stable) with `cargo-lambda` for local Lambda builds
-- AWS CLI with a profile that can deploy Lambda + SQS
-- A Slack workspace (paid plan required for AI Apps) & OpenAI API key
+- Node.js 20+ & npm
+- AWS CLI with a profile that can deploy Lambda + API Gateway
+- A Slack workspace (paid plan required for AI Apps) & an Anthropic API key
 
 ### Steps
 
@@ -68,32 +65,31 @@ $ git clone https://github.com/your-org/tldr.git && cd tldr
 # 2. Configure environment
 $ cp cdk/env.example cdk/.env   # then edit the values
 
-# 3. Install Bolt.js dependencies
-$ cd bolt-ts && npm install && cd ..
+# 3. Install dependencies for both projects
+$ (cd bolt-ts && npm install)
+$ (cd cdk && npm install)
 
-# 4. Build & test the Rust worker
-$ cd lambda && cargo test && cd ..
-
-# 5. Run quality checks
+# 4. Run the full quality gate
 $ just qa
 ```
+
+`just qa` runs: `bolt-build`, `bolt-bundle`, `bolt-lint`, `bolt-test`,
+`cdk-build`, `cdk-lint`.
 
 ---
 
 ## ☁️ Deployment (AWS CDK)
 
-The **`cdk/`** folder contains an AWS CDK stack that provisions:
+The **`cdk/`** folder provisions:
 
-- API Gateway endpoint
-- Lambda functions (Bolt.js API + Rust Worker)
-- SQS queue
-- IAM roles & CloudWatch logs
-
-Deploy in one command:
+- API Gateway endpoint (`/slack/events`, `/slack/interactive`)
+- One Node.js Lambda (`tldr-bolt`) — 1 GB memory, 15 min timeout
+- IAM role with least-privilege SSM read for the configured parameters
+- CloudWatch log group with 1-week retention
 
 ```bash
 $ cd cdk
-$ npm install             # first time only
+$ npm install
 $ npm run deploy
 ```
 
@@ -107,37 +103,39 @@ Deployment variables:
 
 | Variable | Purpose |
 |----------|---------|
-| `SLACK_BOT_TOKEN_PARAMETER_NAME` | SSM SecureString parameter containing the bot OAuth token |
-| `SLACK_SIGNING_SECRET_PARAMETER_NAME` | SSM SecureString parameter containing the Slack signing secret |
-| `OPENAI_API_KEY_PARAMETER_NAME` | SSM SecureString parameter containing the OpenAI API key |
-| `OPENAI_ORG_ID_PARAMETER_NAME` | Optional SSM parameter containing the OpenAI organization ID |
-| `OPENAI_MODEL` | Optional, override model (defaults to `gpt-5.2`) |
-| `PROCESSING_QUEUE_URL` | URL of the SQS queue |
+| `SLACK_BOT_TOKEN_PARAMETER_NAME` | SSM SecureString parameter for the bot OAuth token |
+| `SLACK_SIGNING_SECRET_PARAMETER_NAME` | SSM SecureString parameter for the Slack signing secret |
+| `ANTHROPIC_API_KEY_PARAMETER_NAME` | SSM SecureString parameter for the Anthropic API key |
+| `ANTHROPIC_MODEL` | Optional override (defaults to `claude-sonnet-4-6`) |
+| `ANTHROPIC_MAX_OUTPUT_TOKENS` | Optional output cap (default 16 000, max 64 000) |
+| `ENABLE_STREAMING` | `true` to stream summaries into the thread (recommended, default) |
+| `STREAM_MAX_CHUNK_CHARS` | Per-append chunk size for `chat.appendStream` (default 8 000, max 12 000) |
+| `STREAM_MIN_APPEND_INTERVAL_MS` | Floor between appends to respect rate limits (default 500 ms) |
 | `AWS_ACCOUNT_ID` | AWS account ID used by CDK deployment |
 
-For local-only runs, the Lambdas still accept direct `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `OPENAI_API_KEY`, and `OPENAI_ORG_ID` values.
+For local-only runs the Lambda also accepts direct `SLACK_BOT_TOKEN`,
+`SLACK_SIGNING_SECRET`, and `ANTHROPIC_API_KEY` env vars.
 
 ---
 
 ## 🗂️ Project Layout
 
 ```
-├─ bolt-ts/         # TypeScript Bolt.js app (Slack API Lambda)
+├─ bolt-ts/         # The single Bolt.js Lambda (TypeScript)
 │   ├─ src/
-│   │   ├─ index.ts         # Lambda entrypoint
-│   │   ├─ app.ts           # Bolt app configuration
-│   │   ├─ handlers/        # Event & action handlers
-│   │   ├─ blocks.ts        # Slack Block Kit builders
-│   │   └─ intent.ts        # Natural language command parser
-│   └─ package.json
-├─ lambda/          # Rust crate (Worker Lambda)
-│   ├─ src/
-│   │   ├─ bin/
-│   │   │   └─ worker.rs    # Worker Lambda entrypoint
-│   │   ├─ ai/              # OpenAI integration
-│   │   ├─ slack/           # Slack API client
-│   │   └─ worker/          # Summarization logic
-│   └─ Cargo.toml
+│   │   ├─ index.ts          # Lambda entry point
+│   │   ├─ app.ts            # Bolt app wiring
+│   │   ├─ config.ts         # Env + SSM loader (cached)
+│   │   ├─ blocks.ts         # Block Kit builders (welcome, help, style modal)
+│   │   ├─ intent.ts         # Natural-language command parser
+│   │   ├─ loading_messages.ts
+│   │   ├─ security.ts       # Rate limit, membership check, style validation
+│   │   ├─ thread_state.ts   # Persists state via Slack message metadata
+│   │   ├─ handlers/         # Assistant, style, and action handlers
+│   │   ├─ slack/            # Web client wrappers, streaming helpers, sanitiser
+│   │   ├─ ai/               # Anthropic Messages client + XML-structured prompt + image helpers
+│   │   └─ worker/           # Inline summarisation, chunking, link extraction
+│   └─ tests/                # Jest tests for every module above
 ├─ cdk/             # AWS CDK stack (TypeScript)
 ├─ docs/            # Additional documentation
 └─ README.md
@@ -156,11 +154,9 @@ For local-only runs, the Lambdas still accept direct `SLACK_BOT_TOKEN`, `SLACK_S
 
 ## 🤝 Contributing
 
-1. Make sure `cargo check` and `cargo clippy -- -D warnings` pass for Rust.
-2. Run `npm run lint` in `bolt-ts/` for TypeScript.
-3. Run `just qa` before committing.
-4. Add unit tests for new functionality.
-5. Open a PR – GitHub Actions will run the full test & lint suite.
+1. Run `just qa` before committing (build + lint + tests for both `bolt-ts/` and `cdk/`).
+2. Add or update Jest tests for new functionality — TDD is the project default.
+3. Open a PR; GitHub Actions runs the same `just qa` gate.
 
 ---
 

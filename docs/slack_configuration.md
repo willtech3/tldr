@@ -15,7 +15,7 @@ TLDR uses the **AI App split-view** interface as its primary (and only) user sur
   - Events: `https://{api-gateway}/slack/events`
   - Interactivity: `https://{api-gateway}/slack/interactive`
 
-> **Note:** In the current Rust API Lambda stack, Slack interactivity is handled at `/slack/interactive` and Events API at `/slack/events` (see `cdk/lib/tldr-stack.ts`). In the Bolt.js rewrite, it’s also valid (and often simpler) to point **both** Event Subscriptions and Interactivity to the same Bolt handler endpoint (commonly `/slack/events`), as shown in the manifest example in `docs/ai_app_first_rewrite_bolt_js.md`.
+> **Note:** Slack interactivity is handled at `/slack/interactive` and Events API at `/slack/events` (see `cdk/lib/tldr-stack.ts`). Both routes target the single Bolt Lambda; you may also point both subscriptions at `/slack/events` if you prefer.
 
 ## Step 1: Create Slack App
 
@@ -59,16 +59,16 @@ aws ssm put-parameter --name /tldr/slack/bot-token \
   --type SecureString --value "xoxb-your-bot-token" --overwrite
 aws ssm put-parameter --name /tldr/slack/signing-secret \
   --type SecureString --value "your-signing-secret" --overwrite
-aws ssm put-parameter --name /tldr/openai/api-key \
-  --type SecureString --value "your-openai-api-key" --overwrite
+aws ssm put-parameter --name /tldr/anthropic/api-key \
+  --type SecureString --value "sk-ant-your-anthropic-api-key" --overwrite
 ```
 
 Set these deployment variables in `cdk/.env` or your CI environment:
 
 - `SLACK_BOT_TOKEN_PARAMETER_NAME`
 - `SLACK_SIGNING_SECRET_PARAMETER_NAME`
-- `OPENAI_API_KEY_PARAMETER_NAME`
-- `OPENAI_ORG_ID_PARAMETER_NAME` (optional)
+- `ANTHROPIC_API_KEY_PARAMETER_NAME`
+- `ANTHROPIC_MODEL` (optional, default `claude-sonnet-4-6`)
 
 For CI/CD, configure the `AWS_DEPLOY_ROLE_ARN` GitHub secret for a GitHub OIDC role and set `AWS_ACCOUNT_ID` as a repository variable. The CDK stack no longer creates a broad IAM deployment user or outputs long-lived access keys.
 

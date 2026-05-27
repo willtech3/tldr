@@ -1,33 +1,40 @@
 # TLDR Build and Deployment Pipeline
 
-This document explains the build pipeline and deployment process for TLDR's two Lambda functions: the Bolt.js API (TypeScript) and the Rust Worker.
+This document explains the build pipeline and deployment process for TLDR's
+single-service Bolt.js Lambda (TypeScript).
 
 ## Overview
 
-The pipeline uses Docker to create a consistent build environment that accurately replicates the AWS Lambda runtime, ensuring there are no GLIBC compatibility issues or other runtime problems when deployed.
+The pipeline builds the Bolt Lambda bundle via `esbuild` and deploys with AWS
+CDK. There is no Rust toolchain, no Docker build step, and no SQS queue — the
+previous two-Lambda architecture has been collapsed into a single TypeScript
+service.
 
 ## Primary Deployment Method: CI/CD
 
-**Important**: Deployments are primarily handled through GitHub Actions CI/CD. Manual/local builds should only be used for debugging or emergency situations.
+**Important**: Deployments are primarily handled through GitHub Actions
+CI/CD. Manual/local builds should only be used for debugging or emergency
+situations.
 
 ### GitHub Actions Workflow
 
-The workflow in `.github/workflows/deploy.yml` handles different scenarios:
+The workflow in `.github/workflows/deploy.yml` runs:
 
 #### Pull Requests
-Runs code quality checks only:
-- Code formatting with `rustfmt`
-- Linting with Clippy (`-D warnings`)
-- Test suite execution
+Runs the full code quality gate:
+- ESLint for `bolt-ts/` and `cdk/`
+- TypeScript builds (`tsc`)
+- Jest unit tests
 
 #### Main Branch Push or Manual Dispatch on `main`
-Executes full deployment:
-1. Docker-based Lambda build
-2. CDK TypeScript compilation
-3. AWS deployment with CDK
-4. Outputs API Gateway URL for Slack manifest updates
+Executes the deployment:
+1. Bundles the Bolt Lambda (`npm run bundle`)
+2. Builds the CDK app
+3. Deploys with `cdk deploy --require-approval never`
+4. Outputs the API Gateway URL for the Slack manifest
 
-Manual dispatches are gated to the `main` ref so branch code cannot obtain deployment credentials.
+Manual dispatches are gated to the `main` ref so branch code cannot obtain
+deployment credentials.
 
 ## Local Development
 
@@ -40,104 +47,92 @@ just qa
 ```
 
 This executes:
-- Rust: `cargo fmt --check`, `cargo clippy` with strict warnings, `cargo test`
-- Bolt.js: `npm run build`, `npm run lint`, `npm test`
-- CDK: TypeScript build
+- Bolt: `npm run build`, `npm run bundle`, `npm run lint`, `npm test`
+- CDK: `npm run build`, `npm run lint`
 
-### Local Build (Debugging Only)
-
-To build Lambda functions locally for debugging:
+### Building the Bundle
 
 ```bash
-./build-local.sh
-# With debug logging enabled (shows full prompts):
-./build-local.sh --debug-logs
+cd bolt-ts
+npm run bundle  # produces bolt-ts/bundle/index.js
 ```
 
-This script:
-1. Builds a Docker image with necessary tools and dependencies
-2. Compiles the Rust Worker Lambda
-3. Extracts artifacts (bootstrap binary and function.zip)
-4. Places them in expected locations for CDK deployment
-
-Note: The Bolt.js API Lambda is built separately via `npm run build` in the `bolt-ts/` directory.
+`npm run package` additionally zips the bundle for ad-hoc uploads.
 
 ## Technical Details
 
-### Rust Configuration
+### Runtime
 
-The build process:
-- Uses stable Rust toolchain
-- Cross-compiles a static `x86_64-unknown-linux-musl` binary for AWS Lambda
-- Ensures compatibility with Amazon Linux 2 environment
-
-### Docker Build Process
-
-The Dockerfile:
-- Uses digest-pinned official Rust, Node.js, and Amazon Linux images
-- Installs the musl toolchain for static Rust cross-compilation
-- Multi-stage build for optimized artifacts
-- Outputs both bootstrap binaries and zip archives
+The Lambda uses the `nodejs20.x` runtime, 1 GB memory, and a 15-minute timeout.
+The 15-minute timeout is the ceiling for Anthropic streaming work. Bolt's
+`AwsLambdaReceiver` ACKs the Slack event quickly, then the handler streams the
+Anthropic response straight into the assistant thread.
 
 ### Build Artifacts
 
 After building, artifacts are placed in:
 
-**Rust Worker Lambda:**
-- `lambda/target/lambda/tldr-worker/bootstrap` - Worker Lambda binary
-- `lambda/target/lambda/tldr-worker/function.zip` - Worker Lambda package
+- `bolt-ts/bundle/index.js` — esbuild output (bundled CJS for Node 20)
+- `bolt-ts/function.zip` — produced by `npm run package` (optional, for manual uploads)
 
-**Bolt.js API Lambda:**
-- `bolt-ts/bundle/index.js` - Bundled TypeScript/JavaScript
+CDK reads from `bolt-ts/bundle/` when synthesising the stack.
 
 ### CDK Deployment
 
 AWS CDK handles:
-- API Gateway configuration
-- Lambda function deployment
-- SQS queue setup
-- IAM permissions
-- Runtime secret access through SSM SecureString parameter names
+- API Gateway configuration (`/slack/events`, `/slack/interactive`)
+- The single Lambda function (`tldr-bolt`)
+- IAM permissions (SSM read for the four configured parameters)
+- CloudWatch log group with one-week retention
+- Runtime secret access via SSM SecureString parameter names
 
 ## Environment Variables
 
 Required deployment variables:
 - `SLACK_BOT_TOKEN_PARAMETER_NAME`
 - `SLACK_SIGNING_SECRET_PARAMETER_NAME`
-- `OPENAI_API_KEY_PARAMETER_NAME`
-- `OPENAI_ORG_ID_PARAMETER_NAME` (optional)
+- `ANTHROPIC_API_KEY_PARAMETER_NAME`
 - `AWS_ACCOUNT_ID`
 
-Store Slack and OpenAI secrets as SSM SecureString parameters before deployment. CI/CD uses a GitHub OIDC role via the `AWS_DEPLOY_ROLE_ARN` secret instead of long-lived AWS access keys.
+Optional tuning:
+- `ANTHROPIC_MODEL` — overrides the default model (defaults to `claude-sonnet-4-6`)
+- `ANTHROPIC_MAX_OUTPUT_TOKENS` — overrides the default 16 000 (cap 64 000)
+- `ENABLE_STREAMING` — `true` (default) to stream summaries into the thread
+- `STREAM_MAX_CHUNK_CHARS` — per-append chunk size (max 12 000, default 8 000)
+- `STREAM_MIN_APPEND_INTERVAL_MS` — floor between `chat.appendStream` calls (default 500)
+
+Store Slack and Anthropic secrets as SSM SecureString parameters before
+deployment. CI/CD uses a GitHub OIDC role via the `AWS_DEPLOY_ROLE_ARN` secret
+where available, falling back to long-lived access keys otherwise.
 
 ## Troubleshooting
 
 ### Build Issues
 
-1. **Docker not running**: Ensure Docker Desktop is started
-2. **Compilation errors**: Run `just qa` locally first
-3. **Missing dependencies**: Check Cargo.toml for version conflicts
+1. **Type errors**: run `just bolt-build` and `just cdk-build` for fast feedback.
+2. **Lint errors**: run `just bolt-lint` / `just cdk-lint`.
+3. **Test failures**: run `just bolt-test` — the Jest suite is fast (~1 second).
 
 ### Deployment Issues
 
-1. **AWS credentials**: Verify `AWS_DEPLOY_ROLE_ARN` and `AWS_ACCOUNT_ID` are configured for GitHub Actions
-2. **CDK errors**: Ensure `cdk/` dependencies are up to date with `npm ci`
-3. **Lambda size**: Check artifact sizes don't exceed Lambda limits
+1. **AWS credentials**: verify `AWS_DEPLOY_ROLE_ARN` and `AWS_ACCOUNT_ID` are configured in GitHub Actions.
+2. **CDK errors**: ensure `cdk/` dependencies are up to date with `npm ci`.
+3. **Lambda size**: the esbuild bundle is small (~6 MB); if it ever exceeds Lambda limits, audit recent dependency additions.
 
 ### Local Testing
 
-For local Lambda testing without deployment:
+For local Lambda testing without deployment, use `aws-lambda-ric` or AWS SAM
+with the bundled `bolt-ts/bundle/index.js`:
 
 ```bash
-cd lambda
-cargo lambda build --release
-cargo lambda watch  # Starts local server on :9000
-# In another terminal, invoke with an SQS event payload:
-cargo lambda invoke --data-ascii '{"Records":[]}'
+cd bolt-ts && npm run bundle
+# Invoke with a Slack-shaped API Gateway event payload using SAM or
+# aws-lambda-ric — the Bolt receiver validates Slack signatures via
+# SLACK_SIGNING_SECRET.
 ```
 
 ## Related Documentation
 
-- `slack_configuration.md` - Slack application configuration
-- `README.md` - Project overview and setup
-- `.github/workflows/deploy.yml` - CI/CD pipeline source
+- `slack_configuration.md` — Slack application configuration
+- `README.md` — Project overview and setup
+- `.github/workflows/deploy.yml` — CI/CD pipeline source

@@ -1,64 +1,45 @@
 ###############################################################################
-# .windsurfrules — idiomatic-Rust starter kit (Rust 2024 edition)
-# Put this file in the project root or paste it into
-#  Settings ▸ “Set Workspace AI Rules” ▸ “Edit rules”
-# Size: < 6 000 chars  (workspace limit) — keep it lean!
+# .cursorrules — TLDR (single-service TypeScript Slack AI App)
 ###############################################################################
 
 <language>
-1. Primary language is **Rust**, edition = `2024`, tool-chain = `stable`.
-2. Assume `cargo` workspace layout; use `cargo new`/`cargo add` for examples.
-3. Prefer *safe* Rust; use `unsafe` **only** with an explicit justification.
+1. Primary language is TypeScript (Node 20+); the runtime is AWS Lambda.
+2. CDK app (`cdk/`) is also TypeScript and is deployed via `npm run deploy`.
 
 <code_style>
-4. Format every snippet with `rustfmt --edition 2024` default settings.
-5. Follow *snake_case* for items, *PascalCase* for types & traits, per API-guidelines  [oai_citation:2‡Rust Language](https://rust-lang.github.io/api-guidelines/naming.html?utm_source=chatgpt.com).
-6. Show `use` statements that group paths and avoid `*` glob imports.
+3. Strict TypeScript everywhere. No `any` unless explicitly justified.
+4. Use `KnownBlock` / `Button` from `@slack/types` for Block Kit.
+5. Match existing import style: group third-party then local; never glob-import.
+6. Prefer Bolt's `WebClient` (`@slack/web-api`) over hand-rolled HTTP. Use
+   `client.apiCall()` only for endpoints not yet exposed in the typed surface.
 
 <linting>
-7. Compile with `RUSTFLAGS="-Dwarnings"` and `cargo clippy --all-targets -- -D warnings -W clippy::pedantic`.
-8. Avoid `unwrap()/expect()` in examples unless it is **guaranteed** safe; show `?` propagation instead.
-
-<paradigms>
-9. Demonstrate ownership & borrowing clearly: pass `&T`/`&mut T` where possible; move only when required.
-10. Return `Result<T, E>` or `Option<T>` from functions instead of panicking.
-11. Prefer iterator & adaptor style (`map`, `filter`, `collect::<Vec<_>>()`) to indexed `for` loops.
+7. Must pass `npm run lint` (ESLint with strict TS rules).
+8. Tests live under `bolt-ts/tests/` and mirror `bolt-ts/src/`; one test file per
+   module. TDD is the default.
 
 <error_handling>
-12. Create domain errors with an `enum` and implement `std::error::Error + Display`.
-13. Bubble errors upward with `thiserror` or `anyhow` as appropriate; examples should compile if the crate is added.
+9. Surface Anthropic / Slack errors via the canonical failure message and clean
+   up partial Slack streaming messages — see `worker/streaming.ts`.
+10. Never log secrets (Slack bot token, Anthropic API key) or full prompt bodies.
 
-<tests_docs>
-14. Provide `#[cfg(test)] mod tests` with at least one `#[test]` per public API surface.
-15. Add doc-comment examples (`///`) that compile with `cargo test --doc`.
-
-<project_structure>
-16. Organise crates:
-    • `/src/lib.rs`  – library logic  
-    • `/src/bin/*.rs` – binaries (if any)  
-    • `/examples/` – runnable examples  
-17. Keep modules ≤ 400 lines; split when they grow larger.
-
-<communication>
-18. When user asks “why?”, supply a short explanation *before* code.
-19. When user asks for optimisation, show a benchmark stub with `criterion` but keep the focus on readability first.
-20. Reply to beginner questions in plain English; avoid jargon or explain it inline the first time it appears.
+<architecture>
+11. The repo is a single-service Slack app. Long-running summarisation happens
+    inline within the Bolt `userMessage` handler — there is no SQS, no second
+    Lambda. Anyone proposing to reintroduce a queue must justify it.
+12. Bolt internally ACKs Slack events; we rely on Bolt's built-in retry
+    deduplication via `event_id` for idempotency.
 
 <dependencies>
-21. Default to std-only; introduce external crates only when the standard library is insufficient, mentioning why.
-22. Prefer widely used crates (`serde`, `tokio`, `reqwest`, `thiserror`); flag experimental crates clearly.
+13. Default to the existing dependency set: `@anthropic-ai/sdk`, `@slack/bolt`,
+    `@slack/web-api`, `@slack/types`, `@aws-sdk/client-ssm`, `uuid`. Add new
+    dependencies only when standard library + existing deps can't reasonably
+    solve the problem.
 
-<tooling>
-23. Suggest `cargo check` for quick feedback loops.
-24. Mention `cargo expand` when explaining macro output.
-25. Encourage `cargo doc --open` for API exploration.
+<tests_docs>
+14. Add Jest tests for new functionality.
+15. Update `CLAUDE.md` and `README.md` when behaviour shifts in a user-visible
+    way.
 
-# Pre-commit Code Quality
-- Always run `just qa` before committing. This performs:
-  - Rust formatting check: `cargo fmt --all -- --check`
-  - Rust linting: `cargo clippy --all-targets -- -D warnings -W clippy::pedantic`
-  - Rust tests: `cargo test --all-features`
-  - CDK TypeScript build: `cd cdk && npm run build`
-- Do not commit if any of the above fail.
-
-# End of file – keep new rules above this line.
+# Pre-commit
+- Run `just qa` before committing. CI runs the same gate.
