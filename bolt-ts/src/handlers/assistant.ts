@@ -47,7 +47,7 @@ const DEFAULT_PROMPTS: Array<{ title: string; message: string }> = [
   {
     title: '🔥 Choose Violence',
     message:
-      'summarize with style: be hyper-critical, sarcastic, and roast everyone mercilessly. call out bad takes and dumb ideas.',
+      'summarize with style: maximum chaos mode — be theatrically funny, dramatic, and roast everyone with surgical precision. make it actually funny, not just mean. start every bullet with a verdict emoji: 🔥 hot take, 💀 self-own, 🤡 clown moment, 📉 L taken, 🎯 surprisingly valid, 🚨 red flag, 🍿 drama unfolding, 🧠 galaxy brain, ⚰️ buried by their own argument. in the Summary section, tag each named person with one verdict emoji after their name. end the Summary with a one-line "🏆 MVP: <person>" and "🪦 casualty: <person>" awards. mock-outrage, dramatic gasps, and absurdist commentary encouraged. keep all four sections, real links, and real receipts intact.',
   },
   { title: '📋 Just the Facts', message: 'summarize' },
   {
