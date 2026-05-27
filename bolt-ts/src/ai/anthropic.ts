@@ -80,6 +80,11 @@ export class LlmClient {
       const response = await this.client.messages.create({
         model: this.model,
         max_tokens: this.maxOutputTokens,
+        // Anthropic's current best practice for Sonnet 4.6: adaptive thinking.
+        // The model decides when and how much to think; budget_tokens is
+        // deprecated on this family. Thinking blocks are emitted separately
+        // from text blocks, so our text-only consumer is unaffected.
+        thinking: { type: 'adaptive' },
         system: prompt.system,
         messages: [
           {
@@ -107,6 +112,7 @@ export class LlmClient {
       stream = this.client.messages.stream({
         model: this.model,
         max_tokens: this.maxOutputTokens,
+        thinking: { type: 'adaptive' },
         system: prompt.system,
         messages: [
           {
@@ -176,8 +182,10 @@ async function* consumeStream(
       if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
         yield { kind: 'text_delta', delta: event.delta.text };
       }
-      // We intentionally ignore other deltas (input_json_delta, thinking_delta,
-      // citations_delta) — they don't apply to summarisation.
+      // We intentionally ignore non-text deltas: thinking_delta and
+      // signature_delta arrive when adaptive thinking is on; input_json_delta
+      // and citations_delta belong to tool use / citations features we don't
+      // use here. Slack should only see the final user-facing summary text.
     }
     // Surfacing finalMessage() so that any deferred error on the stream is
     // raised here as a thrown exception (handled in the outer catch).
