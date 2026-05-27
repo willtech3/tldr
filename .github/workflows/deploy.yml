@@ -91,8 +91,15 @@ jobs:
       # secrets on every deploy so SSM and GH-secrets-as-source-of-truth never
       # drift, and so a freshly-added/rotated secret takes effect on the next
       # Lambda cold start without manual `aws ssm put-parameter` calls.
+      #
+      # `continue-on-error: true` so a missing `ssm:PutParameter` permission on
+      # the deploy role does not block the CDK deploy itself. If this step
+      # fails, populate SSM manually (`aws ssm put-parameter --overwrite
+      # --type SecureString --name <name> --value <secret>`) and the next
+      # Lambda cold start will pick it up.
       - name: Sync secrets to SSM
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        continue-on-error: true
         env:
           SLACK_BOT_TOKEN:                     ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_SIGNING_SECRET:                ${{ secrets.SLACK_SIGNING_SECRET }}
