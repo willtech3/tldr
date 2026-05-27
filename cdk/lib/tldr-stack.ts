@@ -23,22 +23,25 @@ interface TldrStackProps extends cdk.StackProps {
  * One Node.js Lambda hosts Bolt + the inline summarisation worker. The Lambda
  * streams Anthropic Claude responses straight into the Slack assistant thread
  * via `chat.startStream` / `chat.appendStream` / `chat.stopStream`.
+ *
+ * Dependency-graph note: the Lambda intentionally does NOT reference
+ * `api.url` (which would create a Lambda → API Gateway edge). API Gateway
+ * methods reference the Lambda via integrations and auto-generated invoke
+ * permissions; the Lambda only knows about its own log group.
  */
 export class TldrStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: TldrStackProps) {
     super(scope, id, props);
 
-    const api = new apigateway.RestApi(this, 'TldrApi', {
-      restApiName: 'Tldr API',
-      description: 'API for Tldr Slack bot integration',
-      deployOptions: {
-        stageName: 'prod',
-        loggingLevel: apigateway.MethodLoggingLevel.INFO,
-        // Never log payload bodies — they contain workspace data and Slack
-        // signature material.
-        dataTraceEnabled: false,
-        metricsEnabled: true,
-      },
+    const functionName = 'tldr-bolt';
+
+    // Explicit log group avoids the deprecated `logRetention` custom resource,
+    // which would otherwise drag a helper Lambda into the dependency graph and
+    // contribute to the prior circular-dependency failure.
+    const logGroup = new logs.LogGroup(this, 'TldrBoltFunctionLogGroup', {
+      logGroupName: `/aws/lambda/${functionName}`,
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
     const environment = {
@@ -56,7 +59,6 @@ export class TldrStack extends cdk.Stack {
       ...(props.streamMaxChunkChars
         ? { STREAM_MAX_CHUNK_CHARS: props.streamMaxChunkChars }
         : {}),
-      API_BASE_URL: api.url.replace(/\/$/, ''),
       NODE_OPTIONS: '--enable-source-maps',
     } as const;
 
@@ -68,15 +70,28 @@ export class TldrStack extends cdk.Stack {
       handler: 'index.handler',
       code: lambda.Code.fromAsset(path.join(__dirname, '../../bolt-ts/bundle')),
       environment,
-      functionName: 'tldr-bolt',
+      functionName,
       timeout: cdk.Duration.minutes(15),
       memorySize: 1024,
-      logRetention: logs.RetentionDays.ONE_WEEK,
+      logGroup,
     });
 
     this.grantSsmParameterRead(tldrFunction, props.slackBotTokenParameterName);
     this.grantSsmParameterRead(tldrFunction, props.slackSigningSecretParameterName);
     this.grantSsmParameterRead(tldrFunction, props.anthropicApiKeyParameterName);
+
+    const api = new apigateway.RestApi(this, 'TldrApi', {
+      restApiName: 'Tldr API',
+      description: 'API for Tldr Slack bot integration',
+      deployOptions: {
+        stageName: 'prod',
+        loggingLevel: apigateway.MethodLoggingLevel.INFO,
+        // Never log payload bodies — they contain workspace data and Slack
+        // signature material.
+        dataTraceEnabled: false,
+        metricsEnabled: true,
+      },
+    });
 
     const boltIntegration = new apigateway.LambdaIntegration(tldrFunction);
 
