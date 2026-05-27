@@ -86,6 +86,38 @@ jobs:
           mask-aws-account-id: true
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.configure-aws-oidc.outcome != 'success'
 
+      # The runtime Lambda reads bot token, signing secret, and Anthropic API
+      # key from SSM SecureString parameters. Sync them from GitHub Actions
+      # secrets on every deploy so SSM and GH-secrets-as-source-of-truth never
+      # drift, and so a freshly-added/rotated secret takes effect on the next
+      # Lambda cold start without manual `aws ssm put-parameter` calls.
+      - name: Sync secrets to SSM
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          SLACK_BOT_TOKEN:                     ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_SIGNING_SECRET:                ${{ secrets.SLACK_SIGNING_SECRET }}
+          ANTHROPIC_API_KEY:                   ${{ secrets.ANTHROPIC_API_KEY }}
+          SLACK_BOT_TOKEN_PARAMETER_NAME:      ${{ vars.SLACK_BOT_TOKEN_PARAMETER_NAME || '/tldr/slack/bot-token' }}
+          SLACK_SIGNING_SECRET_PARAMETER_NAME: ${{ vars.SLACK_SIGNING_SECRET_PARAMETER_NAME || '/tldr/slack/signing-secret' }}
+          ANTHROPIC_API_KEY_PARAMETER_NAME:    ${{ vars.ANTHROPIC_API_KEY_PARAMETER_NAME || '/tldr/anthropic/api-key' }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "${SLACK_BOT_TOKEN:-}" ]      || missing+=("SLACK_BOT_TOKEN")
+          [ -n "${SLACK_SIGNING_SECRET:-}" ] || missing+=("SLACK_SIGNING_SECRET")
+          [ -n "${ANTHROPIC_API_KEY:-}" ]    || missing+=("ANTHROPIC_API_KEY")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing required GitHub Actions secrets: ${missing[*]}"
+            exit 1
+          fi
+          aws ssm put-parameter --overwrite --type SecureString \
+            --name "$SLACK_BOT_TOKEN_PARAMETER_NAME"      --value "$SLACK_BOT_TOKEN" >/dev/null
+          aws ssm put-parameter --overwrite --type SecureString \
+            --name "$SLACK_SIGNING_SECRET_PARAMETER_NAME" --value "$SLACK_SIGNING_SECRET" >/dev/null
+          aws ssm put-parameter --overwrite --type SecureString \
+            --name "$ANTHROPIC_API_KEY_PARAMETER_NAME"    --value "$ANTHROPIC_API_KEY" >/dev/null
+          echo "Synced SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, ANTHROPIC_API_KEY to SSM."
+
       - name: Deploy with CDK
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         working-directory: ./cdk
