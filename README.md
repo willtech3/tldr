@@ -53,6 +53,7 @@ straight into the assistant thread via Slack's `chat.*Stream` APIs.
 ### Prerequisites
 
 - Node.js 20+ & npm
+- Terraform ≥ 1.10
 - AWS CLI with a profile that can deploy Lambda + API Gateway
 - A Slack workspace (paid plan required for AI Apps) & an Anthropic API key
 
@@ -63,34 +64,45 @@ straight into the assistant thread via Slack's `chat.*Stream` APIs.
 $ git clone https://github.com/your-org/tldr.git && cd tldr
 
 # 2. Configure environment
-$ cp cdk/env.example cdk/.env   # then edit the values
+$ cp terraform/terraform.tfvars.example terraform/terraform.tfvars   # then edit the values
 
-# 3. Install dependencies for both projects
+# 3. Install dependencies (Bolt Lambda) and Terraform
 $ (cd bolt-ts && npm install)
-$ (cd cdk && npm install)
+$ brew install terraform   # or https://developer.hashicorp.com/terraform/install
 
 # 4. Run the full quality gate
 $ just qa
 ```
 
 `just qa` runs: `bolt-build`, `bolt-bundle`, `bolt-lint`, `bolt-test`,
-`cdk-build`, `cdk-lint`.
+`tf-fmt`, `tf-validate`.
 
 ---
 
-## ☁️ Deployment (AWS CDK)
+## ☁️ Deployment (Terraform)
 
-The **`cdk/`** folder provisions:
+The **`terraform/`** folder provisions:
 
 - API Gateway endpoint (`/slack/events`, `/slack/interactive`)
 - One Node.js Lambda (`tldr-bolt`) — 1 GB memory, 15 min timeout
 - IAM role with least-privilege SSM read for the configured parameters
 - CloudWatch log group with 1-week retention
+- Account-level API Gateway CloudWatch Logs role (for stage access logging)
+
+Deploys normally run in CI (`.github/workflows/deploy.yml`). To deploy locally —
+after the one-time S3 state-bucket bootstrap described in
+[`terraform/README.md`](terraform/README.md):
 
 ```bash
-$ cd cdk
-$ npm install
-$ npm run deploy
+$ (cd bolt-ts && npm run bundle)         # build the Lambda deployment package
+$ cd terraform
+$ terraform init \
+    -backend-config="bucket=<your-tfstate-bucket>" \
+    -backend-config="key=tldr/terraform.tfstate" \
+    -backend-config="region=us-east-2" \
+    -backend-config="use_lockfile=true"
+$ terraform apply
+$ terraform output -raw api_gateway_url  # paste into the Slack app manifest
 ```
 
 After the stack is live, update your Slack app manifest with the API Gateway URL.
@@ -111,7 +123,7 @@ Deployment variables:
 | `ENABLE_STREAMING` | `true` to stream summaries into the thread (recommended, default) |
 | `STREAM_MAX_CHUNK_CHARS` | Per-append chunk size for `chat.appendStream` (default 8 000, max 12 000) |
 | `STREAM_MIN_APPEND_INTERVAL_MS` | Floor between appends to respect rate limits (default 500 ms) |
-| `AWS_ACCOUNT_ID` | AWS account ID used by CDK deployment |
+| `AWS_ACCOUNT_ID` | Optional. If set, Terraform refuses to apply against any other AWS account |
 
 For local-only runs the Lambda also accepts direct `SLACK_BOT_TOKEN`,
 `SLACK_SIGNING_SECRET`, and `ANTHROPIC_API_KEY` env vars.
@@ -136,7 +148,7 @@ For local-only runs the Lambda also accepts direct `SLACK_BOT_TOKEN`,
 │   │   ├─ ai/               # Anthropic Messages client + XML-structured prompt + image helpers
 │   │   └─ worker/           # Inline summarisation, chunking, link extraction
 │   └─ tests/                # Jest tests for every module above
-├─ cdk/             # AWS CDK stack (TypeScript)
+├─ terraform/       # Infrastructure as code (Terraform)
 ├─ docs/            # Additional documentation
 └─ README.md
 ```
@@ -154,7 +166,7 @@ For local-only runs the Lambda also accepts direct `SLACK_BOT_TOKEN`,
 
 ## 🤝 Contributing
 
-1. Run `just qa` before committing (build + lint + tests for both `bolt-ts/` and `cdk/`).
+1. Run `just qa` before committing (Bolt build + lint + tests, plus Terraform fmt + validate).
 2. Add or update Jest tests for new functionality — TDD is the project default.
 3. Open a PR; GitHub Actions runs the same `just qa` gate.
 
