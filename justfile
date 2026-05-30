@@ -23,22 +23,26 @@ bolt-lint:
 bolt-test:
 	cd bolt-ts && npm test
 
-# --- CDK (TypeScript) ---
+# --- Terraform (terraform/) ---
 
-cdk-build:
-	cd cdk && npm run --silent build
+# Check formatting (non-zero exit if any file needs `terraform fmt`)
+tf-fmt:
+	terraform -chdir=terraform fmt -check -recursive
 
-cdk-lint:
-	cd cdk && npm run lint
+# Offline validation: init without a backend, then validate. No AWS creds or
+# Lambda bundle required (data.archive_file is not evaluated during validate).
+tf-validate:
+	terraform -chdir=terraform init -backend=false -input=false >/dev/null
+	terraform -chdir=terraform validate
 
 # Aggregate: Code Quality (what CI runs on PRs)
-qa: bolt-build bolt-bundle bolt-lint bolt-test cdk-build cdk-lint
+qa: bolt-build bolt-bundle bolt-lint bolt-test tf-fmt tf-validate
 	@echo "✅ All code quality checks passed"
 
 # Clean build artifacts and caches
 clean:
-	cd cdk && rm -rf node_modules dist cdk.out .tsbuildinfo
 	cd bolt-ts && rm -rf node_modules dist bundle coverage
+	rm -rf terraform/.terraform terraform/.terraform-artifacts
 
 	find . -name "*.orig" -type f -delete
 	find . -name ".DS_Store" -type f -delete

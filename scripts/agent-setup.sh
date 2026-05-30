@@ -3,8 +3,8 @@ set -euo pipefail
 
 # Purpose: Prepare a non-interactive environment for CI/agents (Codex/Jules)
 # - Installs `just`
-# - Installs Node 20+ deps for the Bolt Lambda and CDK
-# - Warms npm caches so `just qa` runs end-to-end
+# - Installs Node 20+ deps for the Bolt Lambda
+# - Warms npm + Terraform provider caches so `just qa` runs end-to-end
 
 echo "[agent-setup] Starting environment bootstrap"
 
@@ -27,27 +27,31 @@ else
   echo "[agent-setup] 'just' already present"
 fi
 
-# 2) Node & npm dependencies for the Bolt Lambda + CDK
+# 2) Node & npm dependencies for the Bolt Lambda
 if has_cmd node && has_cmd npm; then
   echo "[agent-setup] Node: $(node -v)  npm: $(npm -v)"
-  for project in cdk bolt-ts; do
-    if [ -d "$project" ]; then
-      pushd "$project" >/dev/null
-      echo "[agent-setup] Installing $project dependencies"
-      if [ -f package-lock.json ]; then
-        npm ci --silent || npm install --silent
-      else
-        npm install --silent
-      fi
-      popd >/dev/null
+  if [ -d "bolt-ts" ]; then
+    pushd "bolt-ts" >/dev/null
+    echo "[agent-setup] Installing bolt-ts dependencies"
+    if [ -f package-lock.json ]; then
+      npm ci --silent || npm install --silent
+    else
+      npm install --silent
     fi
-  done
-  # Warm the CDK build so subsequent runs are fast.
-  if [ -d "cdk" ]; then
-    (cd cdk && npm run --silent build || true)
+    popd >/dev/null
   fi
 else
-  echo "[agent-setup] Node/npm not found. Install Node 20+ to enable Bolt and CDK builds."
+  echo "[agent-setup] Node/npm not found. Install Node 20+ to enable Bolt builds."
+fi
+
+# 3) Terraform (infra). Warm the provider cache so `just tf-validate` is fast.
+if has_cmd terraform; then
+  echo "[agent-setup] Terraform: $(terraform version | head -n1)"
+  if [ -d "terraform" ]; then
+    (cd terraform && terraform init -backend=false -input=false >/dev/null 2>&1 || true)
+  fi
+else
+  echo "[agent-setup] 'terraform' not found. Install Terraform >= 1.10: https://developer.hashicorp.com/terraform/install"
 fi
 
 echo "[agent-setup] Done. You can now run ./scripts/agent-run-qa.sh"

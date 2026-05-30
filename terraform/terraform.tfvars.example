@@ -1,0 +1,28 @@
+# Copy to terraform.tfvars (git-ignored) for local applies, or supply these via
+# TF_VAR_* environment variables in CI. All values shown are the defaults except
+# where noted.
+
+# --- Deployment target ---
+region = "us-east-2"
+# Optional safety guard: only apply against this account. Leave unset to disable.
+# aws_account_id = "123456789012"
+
+# --- SSM SecureString parameter names (the Lambda reads secrets from these) ---
+# Create them once, out of band:
+#   aws ssm put-parameter --name /tldr/slack/bot-token      --type SecureString --value xoxb-...
+#   aws ssm put-parameter --name /tldr/slack/signing-secret --type SecureString --value ...
+#   aws ssm put-parameter --name /tldr/anthropic/api-key    --type SecureString --value sk-ant-...
+slack_bot_token_parameter_name      = "/tldr/slack/bot-token"
+slack_signing_secret_parameter_name = "/tldr/slack/signing-secret"
+anthropic_api_key_parameter_name    = "/tldr/anthropic/api-key"
+
+# --- Optional Anthropic + streaming tuning (empty string = omit the env var) ---
+# anthropic_model               = "claude-sonnet-4-6"
+# anthropic_max_output_tokens   = "16000"
+enable_streaming = "true"
+# stream_max_chunk_chars        = "8000"
+# stream_min_append_interval_ms = "500"
+
+# --- API Gateway ---
+# Set to false if another stack already owns the account-level CloudWatch role.
+# manage_api_gateway_account = true

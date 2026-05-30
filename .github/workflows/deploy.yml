@@ -27,7 +27,6 @@ jobs:
           cache: 'npm'
           cache-dependency-path: |
             ./bolt-ts/package-lock.json
-            ./cdk/package-lock.json
 
       # ---- Bolt Lambda (TypeScript) ----
       - name: Install Bolt dependencies
@@ -46,18 +45,22 @@ jobs:
         working-directory: ./bolt-ts
         run: npm test
 
-      # ---- CDK ----
-      - name: Install CDK dependencies
-        working-directory: ./cdk
-        run: npm ci
+      # ---- Terraform (validation runs on every PR and push; no AWS creds) ----
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.5
+          terraform_wrapper: false
 
-      - name: Lint CDK
-        working-directory: ./cdk
-        run: npm run lint
+      - name: Terraform format check
+        working-directory: ./terraform
+        run: terraform fmt -check -recursive
 
-      - name: Build CDK
-        working-directory: ./cdk
-        run: npm run build
+      - name: Terraform validate
+        working-directory: ./terraform
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
 
       # ---- Package + Deploy (main only) ----
       - name: Package Bolt Lambda bundle
@@ -93,7 +96,7 @@ jobs:
       # Lambda cold start without manual `aws ssm put-parameter` calls.
       #
       # `continue-on-error: true` so a missing `ssm:PutParameter` permission on
-      # the deploy role does not block the CDK deploy itself. If this step
+      # the deploy role does not block the Terraform apply itself. If this step
       # fails, populate SSM manually (`aws ssm put-parameter --overwrite
       # --type SecureString --name <name> --value <secret>`) and the next
       # Lambda cold start will pick it up.
@@ -125,20 +128,36 @@ jobs:
             --name "$ANTHROPIC_API_KEY_PARAMETER_NAME"    --value "$ANTHROPIC_API_KEY" >/dev/null
           echo "Synced SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, ANTHROPIC_API_KEY to SSM."
 
-      - name: Deploy with CDK
+      # Terraform reads inputs from TF_VAR_* env vars. Secrets never flow through
+      # here — only the SSM parameter *names* do; the sync step above puts the
+      # secret *values* into SSM. TF_STATE_BUCKET must point at a pre-created S3
+      # bucket (see terraform/README.md "One-time bootstrap").
+      - name: Deploy with Terraform
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-        working-directory: ./cdk
-        run: |
-          npm run cdk deploy -- --require-approval never --outputs-file cdk-outputs.json
-          echo "📌 API Gateway URL for Slack manifest:"
-          python3 -c "import json; data = json.load(open('cdk-outputs.json')); print(data['TldrStack']['ApiGatewayUrl'])"
-          echo "ℹ️  Update your Slack app manifest with this URL at api.slack.com/apps"
+        working-directory: ./terraform
         env:
-          SLACK_BOT_TOKEN_PARAMETER_NAME:      ${{ vars.SLACK_BOT_TOKEN_PARAMETER_NAME || '/tldr/slack/bot-token' }}
-          SLACK_SIGNING_SECRET_PARAMETER_NAME: ${{ vars.SLACK_SIGNING_SECRET_PARAMETER_NAME || '/tldr/slack/signing-secret' }}
-          ANTHROPIC_API_KEY_PARAMETER_NAME:    ${{ vars.ANTHROPIC_API_KEY_PARAMETER_NAME || '/tldr/anthropic/api-key' }}
-          ANTHROPIC_MODEL:                     ${{ vars.ANTHROPIC_MODEL }}
-          ANTHROPIC_MAX_OUTPUT_TOKENS:         ${{ vars.ANTHROPIC_MAX_OUTPUT_TOKENS }}
-          CDK_DEFAULT_REGION:                  ${{ env.AWS_REGION }}
-          AWS_ACCOUNT_ID:                      ${{ vars.AWS_ACCOUNT_ID }}
-          ENABLE_STREAMING:                    'true'
+          TF_VAR_region:                              ${{ env.AWS_REGION }}
+          TF_VAR_aws_account_id:                      ${{ vars.AWS_ACCOUNT_ID }}
+          TF_VAR_slack_bot_token_parameter_name:      ${{ vars.SLACK_BOT_TOKEN_PARAMETER_NAME || '/tldr/slack/bot-token' }}
+          TF_VAR_slack_signing_secret_parameter_name: ${{ vars.SLACK_SIGNING_SECRET_PARAMETER_NAME || '/tldr/slack/signing-secret' }}
+          TF_VAR_anthropic_api_key_parameter_name:    ${{ vars.ANTHROPIC_API_KEY_PARAMETER_NAME || '/tldr/anthropic/api-key' }}
+          TF_VAR_anthropic_model:                     ${{ vars.ANTHROPIC_MODEL }}
+          TF_VAR_anthropic_max_output_tokens:         ${{ vars.ANTHROPIC_MAX_OUTPUT_TOKENS }}
+          TF_VAR_enable_streaming:                    'true'
+          TF_STATE_BUCKET:                            ${{ vars.TF_STATE_BUCKET }}
+          TF_STATE_KEY:                               ${{ vars.TF_STATE_KEY || 'tldr/terraform.tfstate' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TF_STATE_BUCKET:-}" ]; then
+            echo "::error::Repository variable TF_STATE_BUCKET is not set. Create an S3 state bucket and set the variable (see terraform/README.md)."
+            exit 1
+          fi
+          terraform init -reconfigure -input=false \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${TF_STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="use_lockfile=true"
+          terraform apply -auto-approve -input=false
+          API_URL="$(terraform output -raw api_gateway_url)"
+          echo "📌 API Gateway URL for Slack manifest: ${API_URL}"
+          echo "ℹ️  Update your Slack app manifest with this URL at api.slack.com/apps"
