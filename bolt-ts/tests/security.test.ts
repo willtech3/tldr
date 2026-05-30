@@ -3,14 +3,15 @@ import {
   isUserMemberOfChannel,
   isValidSlackTimestamp,
   normalizeMessageCount,
+  resetMembershipCacheForTests,
   resetRateLimitForTests,
-  sanitizeGeneratedSlackText,
   validateAndSanitizeStyle,
 } from '../src/security';
 
 describe('security helpers', () => {
   afterEach(() => {
     resetRateLimitForTests();
+    resetMembershipCacheForTests();
   });
 
   it('clamps message counts to the supported range', () => {
@@ -34,12 +35,6 @@ describe('security helpers', () => {
     }
     expect(checkSummarizeRateLimit('U123', 1000)).toBe(false);
     expect(checkSummarizeRateLimit('U123', 62_000)).toBe(true);
-  });
-
-  it('sanitizes generated Slack mentions before sharing', () => {
-    expect(sanitizeGeneratedSlackText('Ping <!channel> and <@U123ABC456>')).toBe(
-      'Ping `<!channel>` and `<@U123ABC456>`'
-    );
   });
 
   it('validates Slack timestamps from trusted metadata boundaries', () => {
@@ -74,5 +69,50 @@ describe('security helpers', () => {
 
     expect(allowed).toBe(true);
     expect(client.conversations.members).toHaveBeenCalledTimes(2);
+  });
+
+  it('caches membership within the TTL and re-checks after it expires', async () => {
+    const members = jest
+      .fn()
+      .mockResolvedValue({ members: ['U222'], response_metadata: { next_cursor: '' } });
+    const client = { conversations: { members } };
+    const logger = { warn: jest.fn() };
+    const call = (now: number): Promise<boolean> =>
+      isUserMemberOfChannel({ client, channelId: 'C123456789', userId: 'U222', logger, now });
+
+    expect(await call(1_000)).toBe(true);
+    expect(members).toHaveBeenCalledTimes(1);
+
+    // Within the TTL → served from cache, no extra API call.
+    expect(await call(1_000 + 30_000)).toBe(true);
+    expect(members).toHaveBeenCalledTimes(1);
+
+    // After the TTL → re-checks via the API.
+    expect(await call(1_000 + 61_000)).toBe(true);
+    expect(members).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not cache membership API failures', async () => {
+    const members = jest.fn().mockRejectedValue(new Error('slack down'));
+    const client = { conversations: { members } };
+    const logger = { warn: jest.fn() };
+    const call = (): Promise<boolean> =>
+      isUserMemberOfChannel({ client, channelId: 'C123456789', userId: 'U222', logger, now: 1_000 });
+
+    expect(await call()).toBe(false);
+    expect(await call()).toBe(false);
+    // Both calls hit the API — a transient error is never cached.
+    expect(members).toHaveBeenCalledTimes(2);
+  });
+
+  it('evicts expired rate-limit buckets so the map cannot grow unbounded', () => {
+    // Seed enough distinct users to exceed the tracking threshold at t0.
+    for (let i = 0; i < 10_002; i += 1) {
+      checkSummarizeRateLimit(`U${i}`, 1_000);
+    }
+    // A call well past the window triggers a sweep and still behaves correctly.
+    expect(checkSummarizeRateLimit('Ufresh', 1_000 + 61_000)).toBe(true);
+    // A previously-seen user is allowed again (its expired bucket was swept).
+    expect(checkSummarizeRateLimit('U0', 1_000 + 61_000)).toBe(true);
   });
 });

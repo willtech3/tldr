@@ -209,4 +209,43 @@ describe('runSummarization (streaming)', () => {
     );
     expect(call).toBeDefined();
   });
+
+  it('swallows streaming failures after the user is notified (no duplicate error)', async () => {
+    const messages = [{ ts: '1', user: 'U1', text: 'hello', files: [] }];
+    const { client, spies } = makeWebClient(messages);
+
+    const llm = makeLlm();
+    jest.spyOn(llm, 'generateSummaryStream').mockResolvedValue({
+      kind: 'active',
+      iterator: (async function* () {
+        yield { kind: 'failed', message: 'stream exploded' };
+      })(),
+      cancel: async () => {},
+    });
+
+    // The streaming pipeline surfaces its own canonical failure (replacing the
+    // partial message). runSummarization must resolve — not re-throw — so the
+    // assistant handler's catch doesn't post a *second* identical error.
+    await expect(
+      runSummarization({
+        config: makeConfig({ enableStreaming: true }),
+        client,
+        request: {
+          correlationId: 'cid',
+          userId: 'U1',
+          channelId: 'C1',
+          originChannelId: 'D1',
+          threadTs: '1.0',
+          messageCount: 5,
+          customStyle: null,
+        },
+        llm,
+      })
+    ).resolves.toBeUndefined();
+
+    const canonical = spies.postMessage.mock.calls.filter(
+      (c) => typeof c[0]?.text === 'string' && c[0].text.includes("Sorry, I couldn't")
+    );
+    expect(canonical).toHaveLength(1);
+  });
 });

@@ -17,8 +17,14 @@ export const MAX_CUSTOM_STYLE_LENGTH = 4000;
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 5;
+/** Sweep the rate-limit map once it grows past this many tracked users. */
+const RATE_LIMIT_MAX_TRACKED_USERS = 10_000;
 const MAX_MEMBERSHIP_PAGES = 20;
 const MEMBERSHIP_PAGE_SIZE = 1000;
+/** How long a (channel, user) membership result stays cached. */
+const MEMBERSHIP_CACHE_TTL_MS = 60_000;
+/** Hard cap on cached membership entries; the map is cleared when exceeded. */
+const MEMBERSHIP_CACHE_MAX_ENTRIES = 10_000;
 
 const DISALLOWED_STYLE_PATTERNS = [/system\s*:/i, /assistant\s*:/i, /user\s*:/i, /\{\{/];
 
@@ -27,7 +33,34 @@ interface RateLimitBucket {
   count: number;
 }
 
+/**
+ * Per-(warm-container) request counters. Best-effort: limits are not shared
+ * across concurrently running Lambda instances, and expired buckets are swept
+ * lazily once the map grows past {@link RATE_LIMIT_MAX_TRACKED_USERS}.
+ */
 const rateLimitBuckets = new Map<string, RateLimitBucket>();
+
+interface MembershipCacheEntry {
+  result: boolean;
+  at: number;
+}
+
+/**
+ * Short-TTL cache for channel-membership checks. `conversations.members` can
+ * paginate over thousands of members, so we avoid repeating it for the same
+ * (channel, user) within {@link MEMBERSHIP_CACHE_TTL_MS}. Only definitive
+ * results are cached — transient API errors and pagination-ceiling hits are
+ * not. Per-container, like the rate limiter.
+ */
+const membershipCache = new Map<string, MembershipCacheEntry>();
+
+function rememberMembership(key: string, result: boolean, now: number): boolean {
+  if (membershipCache.size >= MEMBERSHIP_CACHE_MAX_ENTRIES) {
+    membershipCache.clear();
+  }
+  membershipCache.set(key, { result, at: now });
+  return result;
+}
 
 export interface SecurityLogger {
   warn(message: string, ...args: unknown[]): void;
@@ -120,6 +153,16 @@ export function isValidSlackTimestamp(timestamp: string | null | undefined): tim
 }
 
 export function checkSummarizeRateLimit(userId: string, now = Date.now()): boolean {
+  // Opportunistically sweep expired buckets so the per-container map can't grow
+  // without bound across many distinct users on a long-lived warm Lambda.
+  if (rateLimitBuckets.size > RATE_LIMIT_MAX_TRACKED_USERS) {
+    for (const [trackedUser, tracked] of rateLimitBuckets) {
+      if (now - tracked.windowStartedAt >= RATE_LIMIT_WINDOW_MS) {
+        rateLimitBuckets.delete(trackedUser);
+      }
+    }
+  }
+
   const bucket = rateLimitBuckets.get(userId);
   if (!bucket || now - bucket.windowStartedAt >= RATE_LIMIT_WINDOW_MS) {
     rateLimitBuckets.set(userId, { windowStartedAt: now, count: 1 });
@@ -138,11 +181,8 @@ export function resetRateLimitForTests(): void {
   rateLimitBuckets.clear();
 }
 
-export function sanitizeGeneratedSlackText(text: string): string {
-  return text
-    .replace(/<!(channel|here|everyone)>/g, '`$&`')
-    .replace(/<!subteam\^[^>]+>/g, '`$&`')
-    .replace(/<@[UW][A-Z0-9]+>/g, '`$&`');
+export function resetMembershipCacheForTests(): void {
+  membershipCache.clear();
 }
 
 export async function isUserMemberOfChannel(args: {
@@ -150,10 +190,19 @@ export async function isUserMemberOfChannel(args: {
   channelId: string;
   userId: string;
   logger: SecurityLogger;
+  /** Injectable clock for tests. */
+  now?: number;
 }): Promise<boolean> {
   const { client, channelId, userId, logger } = args;
   if (!isValidSlackChannelId(channelId)) {
     return false;
+  }
+
+  const now = args.now ?? Date.now();
+  const cacheKey = `${channelId}:${userId}`;
+  const cached = membershipCache.get(cacheKey);
+  if (cached && now - cached.at < MEMBERSHIP_CACHE_TTL_MS) {
+    return cached.result;
   }
 
   let cursor: string | undefined;
@@ -166,20 +215,22 @@ export async function isUserMemberOfChannel(args: {
       });
 
       if (response.members?.includes(userId)) {
-        return true;
+        return rememberMembership(cacheKey, true, now);
       }
 
       const nextCursor = response.response_metadata?.next_cursor?.trim();
       if (!nextCursor) {
-        return false;
+        return rememberMembership(cacheKey, false, now);
       }
       cursor = nextCursor;
     } catch (error) {
+      // Don't cache transient failures — deny this time, retry next time.
       logger.warn('Failed to verify Slack channel membership before enqueueing work:', error);
       return false;
     }
   }
 
+  // Pagination ceiling reached: treat as "couldn't verify" and don't cache.
   logger.warn('Slack channel membership check exceeded pagination limit');
   return false;
 }

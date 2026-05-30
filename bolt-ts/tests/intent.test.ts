@@ -25,6 +25,15 @@ describe('parseUserIntent', () => {
       const result = parseUserIntent('what can you do');
       expect(result).toEqual({ type: 'help' });
     });
+
+    it('should match "help" as a whole word inside a sentence', () => {
+      expect(parseUserIntent('I need help')).toEqual({ type: 'help' });
+    });
+
+    it('should NOT treat "helpful" as a help request', () => {
+      // Whole-word matching: "helpful" must not trigger the help intent.
+      expect(parseUserIntent('that was helpful')).toEqual({ type: 'unknown' });
+    });
   });
 
   describe('style intent', () => {
@@ -41,6 +50,15 @@ describe('parseUserIntent', () => {
     it('should treat "style:" with no instructions as help', () => {
       const result = parseUserIntent('style:   ');
       expect(result).toEqual({ type: 'help' });
+    });
+
+    it('should keep a style command even when the instructions contain "help"', () => {
+      // Regression: "help" substring must not steal an explicit style command.
+      const result = parseUserIntent('style: be more helpful and explain decisions');
+      expect(result).toEqual({
+        type: 'style',
+        instructions: 'be more helpful and explain decisions',
+      });
     });
   });
 
@@ -78,7 +96,6 @@ describe('parseUserIntent', () => {
         type: 'summarize',
         count: null,
         targetChannel: null,
-        postHere: false,
         styleOverride: null,
       });
     });
@@ -89,7 +106,6 @@ describe('parseUserIntent', () => {
         type: 'summarize',
         count: 50,
         targetChannel: null,
-        postHere: false,
         styleOverride: null,
       });
     });
@@ -100,7 +116,6 @@ describe('parseUserIntent', () => {
         type: 'summarize',
         count: 100,
         targetChannel: null,
-        postHere: false,
         styleOverride: null,
       });
     });
@@ -111,40 +126,37 @@ describe('parseUserIntent', () => {
         type: 'summarize',
         count: null,
         targetChannel: 'C123ABC',
-        postHere: false,
         styleOverride: null,
       });
     });
 
-    it('should recognize "post here" flag', () => {
-      const result = parseUserIntent('summarize post here');
+    it('should summarize a channel whose name contains "help"', () => {
+      // Regression: the help matcher must not pre-empt an explicit summarize.
+      const result = parseUserIntent('summarize <#C99HELP|help-desk>');
       expect(result).toEqual({
         type: 'summarize',
         count: null,
-        targetChannel: null,
-        postHere: true,
+        targetChannel: 'C99HELP',
         styleOverride: null,
       });
     });
 
-    it('should recognize "public" flag', () => {
-      const result = parseUserIntent('summarize public');
+    it('should still summarize when the sentence mentions help in passing', () => {
+      const result = parseUserIntent('summarize last 100 when you can, would really help');
       expect(result).toEqual({
         type: 'summarize',
-        count: null,
+        count: 100,
         targetChannel: null,
-        postHere: true,
         styleOverride: null,
       });
     });
 
-    it('should parse complex command with all options', () => {
-      const result = parseUserIntent('summarize last 25 <#C789XYZ|random> public');
+    it('should parse complex command with count and channel', () => {
+      const result = parseUserIntent('summarize last 25 <#C789XYZ|random>');
       expect(result).toEqual({
         type: 'summarize',
         count: 25,
         targetChannel: 'C789XYZ',
-        postHere: true,
         styleOverride: null,
       });
     });
@@ -155,7 +167,6 @@ describe('parseUserIntent', () => {
         type: 'summarize',
         count: null,
         targetChannel: null,
-        postHere: false,
         styleOverride: 'be funny',
       });
     });
@@ -166,7 +177,6 @@ describe('parseUserIntent', () => {
         type: 'summarize',
         count: 50,
         targetChannel: null,
-        postHere: false,
         styleOverride: 'write as haiku',
       });
     });
@@ -177,7 +187,6 @@ describe('parseUserIntent', () => {
         type: 'summarize',
         count: null,
         targetChannel: null,
-        postHere: false,
         styleOverride: 'extremely concise',
       });
     });
