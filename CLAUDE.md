@@ -23,9 +23,9 @@ just bolt-build    # Type-check + emit dist/
 just bolt-lint     # Run ESLint
 just bolt-test     # Run Jest tests
 
-# CDK
-just cdk-build
-just cdk-lint
+# Terraform (terraform/)
+just tf-fmt       # terraform fmt -check
+just tf-validate  # offline init + validate (no AWS creds)
 ```
 
 ### Build & Deploy
@@ -33,9 +33,13 @@ just cdk-lint
 # Build the Lambda bundle
 cd bolt-ts && npm run bundle
 
-# Deploy via CDK
-cd cdk && npm install && npm run deploy
-npm run diff  # preview
+# Deploy via Terraform (state in S3; see terraform/README.md for bootstrap)
+cd terraform
+terraform init -backend-config="bucket=<tfstate-bucket>" \
+  -backend-config="key=tldr/terraform.tfstate" \
+  -backend-config="region=us-east-2" -backend-config="use_lockfile=true"
+terraform plan   # preview
+terraform apply
 ```
 
 ## Pre-commit Code Quality Rule
@@ -47,7 +51,7 @@ just qa
 ```
 
 This runs (in order): `bolt-build`, `bolt-bundle`, `bolt-lint`, `bolt-test`,
-`cdk-build`, `cdk-lint`. Commits should only be made after this succeeds locally.
+`tf-fmt`, `tf-validate`. Commits should only be made after this succeeds locally.
 
 ## Architecture
 
@@ -123,8 +127,8 @@ For local-only runs the function still accepts direct `SLACK_BOT_TOKEN`,
 ## Deployment Notes
 
 - One Lambda (`tldr-bolt`) using Node.js 20 runtime, 1 GB memory, 15 min timeout.
-- CDK provisions API Gateway, the Lambda, IAM, and CloudWatch logs.
-- GitHub Actions automates PR checks (lint + build + test for `bolt-ts/` and `cdk/`) and main-branch deploys.
+- Terraform (`terraform/`) provisions API Gateway, the Lambda, IAM, and CloudWatch logs; state lives in S3.
+- GitHub Actions automates PR checks (Bolt lint/build/test + `terraform fmt`/`validate`) and main-branch `terraform apply` deploys.
 
 ## Security Considerations
 

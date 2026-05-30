@@ -5,10 +5,11 @@ single-service Bolt.js Lambda (TypeScript).
 
 ## Overview
 
-The pipeline builds the Bolt Lambda bundle via `esbuild` and deploys with AWS
-CDK. There is no Rust toolchain, no Docker build step, and no SQS queue — the
-previous two-Lambda architecture has been collapsed into a single TypeScript
-service.
+The pipeline builds the Bolt Lambda bundle via `esbuild` and deploys with
+Terraform. There is no Rust toolchain, no Docker build step, and no SQS queue —
+the previous two-Lambda architecture has been collapsed into a single TypeScript
+service. Terraform configuration lives in `terraform/` (see
+`terraform/README.md`).
 
 ## Primary Deployment Method: CI/CD
 
@@ -22,16 +23,15 @@ The workflow in `.github/workflows/deploy.yml` runs:
 
 #### Pull Requests
 Runs the full code quality gate:
-- ESLint for `bolt-ts/` and `cdk/`
-- TypeScript builds (`tsc`)
-- Jest unit tests
+- ESLint + TypeScript build (`tsc`) + Jest unit tests for `bolt-ts/`
+- `terraform fmt -check` and `terraform validate` for `terraform/`
 
 #### Main Branch Push or Manual Dispatch on `main`
 Executes the deployment:
 1. Bundles the Bolt Lambda (`npm run bundle`)
-2. Builds the CDK app
-3. Deploys with `cdk deploy --require-approval never`
-4. Outputs the API Gateway URL for the Slack manifest
+2. Syncs Slack/Anthropic secrets into SSM SecureString parameters
+3. `terraform init` against the S3 backend, then `terraform apply -auto-approve`
+4. Prints the API Gateway URL (`terraform output -raw api_gateway_url`) for the Slack manifest
 
 Manual dispatches are gated to the `main` ref so branch code cannot obtain
 deployment credentials.
@@ -48,7 +48,7 @@ just qa
 
 This executes:
 - Bolt: `npm run build`, `npm run bundle`, `npm run lint`, `npm test`
-- CDK: `npm run build`, `npm run lint`
+- Terraform: `terraform fmt -check`, `terraform validate` (offline, no AWS creds)
 
 ### Building the Bundle
 
@@ -75,24 +75,35 @@ After building, artifacts are placed in:
 - `bolt-ts/bundle/index.js` — esbuild output (bundled CJS for Node 20)
 - `bolt-ts/function.zip` — produced by `npm run package` (optional, for manual uploads)
 
-CDK reads from `bolt-ts/bundle/` when synthesising the stack.
+Terraform's `data.archive_file` zips `bolt-ts/bundle/` into the Lambda deployment
+package at apply time.
 
-### CDK Deployment
+### Terraform Deployment
 
-AWS CDK handles:
+Terraform (`terraform/`) handles:
 - API Gateway configuration (`/slack/events`, `/slack/interactive`)
 - The single Lambda function (`tldr-bolt`)
-- IAM permissions (SSM read for the four configured parameters)
+- IAM permissions (SSM read for the three configured parameters)
 - CloudWatch log group with one-week retention
+- Account-level API Gateway CloudWatch Logs role (for stage access logging)
 - Runtime secret access via SSM SecureString parameter names
+
+State is stored in S3 (configured at `terraform init` time). A one-time bucket
+bootstrap is documented in `terraform/README.md`.
 
 ## Environment Variables
 
-Required deployment variables:
+CI deployment variables / secrets:
+- `TF_STATE_BUCKET` (repo variable) — S3 bucket holding Terraform state (required)
+- `TF_STATE_KEY` (repo variable) — state object key (optional, default `tldr/terraform.tfstate`)
+- `SLACK_BOT_TOKEN` / `SLACK_SIGNING_SECRET` / `ANTHROPIC_API_KEY` (secrets) — synced into SSM
+- `AWS_DEPLOY_ROLE_ARN` (secret, OIDC) or `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (secrets)
+
+These map to Terraform inputs (`TF_VAR_*`); see `terraform/variables.tf`:
 - `SLACK_BOT_TOKEN_PARAMETER_NAME`
 - `SLACK_SIGNING_SECRET_PARAMETER_NAME`
 - `ANTHROPIC_API_KEY_PARAMETER_NAME`
-- `AWS_ACCOUNT_ID`
+- `AWS_ACCOUNT_ID` — optional; if set, Terraform refuses to apply against any other account
 
 Optional tuning:
 - `ANTHROPIC_MODEL` — overrides the default model (defaults to `claude-sonnet-4-6`)
@@ -109,15 +120,17 @@ where available, falling back to long-lived access keys otherwise.
 
 ### Build Issues
 
-1. **Type errors**: run `just bolt-build` and `just cdk-build` for fast feedback.
-2. **Lint errors**: run `just bolt-lint` / `just cdk-lint`.
+1. **Type errors**: run `just bolt-build` for fast feedback.
+2. **Lint / format errors**: run `just bolt-lint`; run `just tf-fmt` (then `terraform -chdir=terraform fmt` to fix).
 3. **Test failures**: run `just bolt-test` — the Jest suite is fast (~1 second).
+4. **Terraform config errors**: run `just tf-validate` (offline; no AWS creds needed).
 
 ### Deployment Issues
 
-1. **AWS credentials**: verify `AWS_DEPLOY_ROLE_ARN` and `AWS_ACCOUNT_ID` are configured in GitHub Actions.
-2. **CDK errors**: ensure `cdk/` dependencies are up to date with `npm ci`.
-3. **Lambda size**: the esbuild bundle is small (~6 MB); if it ever exceeds Lambda limits, audit recent dependency additions.
+1. **AWS credentials**: verify `AWS_DEPLOY_ROLE_ARN` (or access keys) are configured in GitHub Actions.
+2. **Missing state bucket**: ensure the `TF_STATE_BUCKET` repo variable points at a real S3 bucket (see `terraform/README.md`).
+3. **Stale routes**: if a new API Gateway route isn't live, confirm it's listed in the `aws_api_gateway_deployment` `triggers` hash so a redeploy fires.
+4. **Lambda size**: the esbuild bundle is small (~6 MB); if it ever exceeds Lambda limits, audit recent dependency additions.
 
 ### Local Testing
 

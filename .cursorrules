@@ -4,7 +4,7 @@
 
 <language>
 1. Primary language is TypeScript (Node 20+); the runtime is AWS Lambda.
-2. CDK app (`cdk/`) is also TypeScript and is deployed via `npm run deploy`.
+2. Infrastructure is Terraform (`terraform/`), deployed via `terraform apply` (CI runs it on merge to main).
 
 <code_style>
 3. Strict TypeScript everywhere. No `any` unless explicitly justified.

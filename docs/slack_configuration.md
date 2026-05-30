@@ -10,12 +10,12 @@ TLDR uses the **AI App split-view** interface as its primary (and only) user sur
 ## Prerequisites
 
 - Slack workspace with admin permissions (paid plan required for AI Apps)
-- Deployed AWS infrastructure (via CDK)
+- Deployed AWS infrastructure (via Terraform)
 - API Gateway endpoints from deployment:
   - Events: `https://{api-gateway}/slack/events`
   - Interactivity: `https://{api-gateway}/slack/interactive`
 
-> **Note:** Slack interactivity is handled at `/slack/interactive` and Events API at `/slack/events` (see `cdk/lib/tldr-stack.ts`). Both routes target the single Bolt Lambda; you may also point both subscriptions at `/slack/events` if you prefer.
+> **Note:** Slack interactivity is handled at `/slack/interactive` and Events API at `/slack/events` (see `terraform/apigateway.tf`). Both routes target the single Bolt Lambda; you may also point both subscriptions at `/slack/events` if you prefer.
 
 ## Step 1: Create Slack App
 
@@ -52,7 +52,7 @@ From **OAuth & Permissions**:
 
 ## Step 4: Store Runtime Secrets in SSM
 
-Store runtime secrets as SSM SecureString parameters. CDK passes parameter names to Lambda and grants each function read access; it does not put secret values in Lambda environment variables.
+Store runtime secrets as SSM SecureString parameters. Terraform passes the parameter *names* to the Lambda and grants it read access; secret values are never placed in Lambda environment variables. (In CI, the deploy workflow also syncs these values into SSM from GitHub Actions secrets on every deploy.)
 
 ```bash
 aws ssm put-parameter --name /tldr/slack/bot-token \
@@ -63,14 +63,14 @@ aws ssm put-parameter --name /tldr/anthropic/api-key \
   --type SecureString --value "sk-ant-your-anthropic-api-key" --overwrite
 ```
 
-Set these deployment variables in `cdk/.env` or your CI environment:
+Set these deployment variables via `terraform/terraform.tfvars` (or `TF_VAR_*` env vars / CI repository variables):
 
 - `SLACK_BOT_TOKEN_PARAMETER_NAME`
 - `SLACK_SIGNING_SECRET_PARAMETER_NAME`
 - `ANTHROPIC_API_KEY_PARAMETER_NAME`
 - `ANTHROPIC_MODEL` (optional, default `claude-sonnet-4-6`)
 
-For CI/CD, configure the `AWS_DEPLOY_ROLE_ARN` GitHub secret for a GitHub OIDC role and set `AWS_ACCOUNT_ID` as a repository variable. The CDK stack no longer creates a broad IAM deployment user or outputs long-lived access keys.
+For CI/CD, configure the `AWS_DEPLOY_ROLE_ARN` GitHub secret for a GitHub OIDC role and set the `TF_STATE_BUCKET` repository variable (the S3 bucket holding Terraform state; see `terraform/README.md`). `AWS_ACCOUNT_ID` is optional — if set, Terraform refuses to apply against any other account.
 
 ## Step 5: Deploy Infrastructure
 
