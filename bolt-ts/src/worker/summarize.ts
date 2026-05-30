@@ -55,20 +55,31 @@ export async function runSummarization(args: RunArgs): Promise<void> {
     });
 
   if (config.enableStreaming) {
-    await streamSummaryToAssistantThread({
-      client,
-      llm,
-      botToken: config.slackBotToken,
-      sourceChannelId: request.channelId,
-      assistantChannelId: request.originChannelId,
-      assistantThreadTs: request.threadTs,
-      messageCount: request.messageCount,
-      customStyle: request.customStyle,
-      correlationId: request.correlationId,
-      streamMaxChunkChars: config.streamMaxChunkChars,
-      streamMinAppendIntervalMs: config.streamMinAppendIntervalMs,
-      fetchImpl: args.fetchImpl,
-    });
+    try {
+      await streamSummaryToAssistantThread({
+        client,
+        llm,
+        botToken: config.slackBotToken,
+        sourceChannelId: request.channelId,
+        assistantChannelId: request.originChannelId,
+        assistantThreadTs: request.threadTs,
+        messageCount: request.messageCount,
+        customStyle: request.customStyle,
+        correlationId: request.correlationId,
+        streamMaxChunkChars: config.streamMaxChunkChars,
+        streamMinAppendIntervalMs: config.streamMinAppendIntervalMs,
+        fetchImpl: args.fetchImpl,
+      });
+    } catch (err) {
+      // streamSummaryToAssistantThread already surfaced a canonical failure to
+      // the user (it owns replacing the partially-streamed message). Log and
+      // swallow here so the caller's own catch doesn't post a *second*
+      // identical failure notice into the thread.
+      console.error('Streaming summarization failed after user was notified', {
+        corr_id: request.correlationId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
     return;
   }
 

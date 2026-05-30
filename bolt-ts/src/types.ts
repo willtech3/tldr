@@ -15,7 +15,6 @@ export type UserIntent =
       type: 'summarize';
       count: number | null;
       targetChannel: string | null;
-      postHere: boolean;
       /** Per-run style override (doesn't persist to thread state). */
       styleOverride: string | null;
     }

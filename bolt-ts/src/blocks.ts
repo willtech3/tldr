@@ -116,10 +116,12 @@ export function buildWelcomeBlocks(
 }
 
 function truncateStyle(style: string): string {
-  if (style.length <= 100) {
+  // Count by Unicode code points so we never split an emoji / surrogate pair.
+  const chars = [...style];
+  if (chars.length <= 100) {
     return style;
   }
-  return style.substring(0, 97) + '...';
+  return chars.slice(0, 97).join('') + '...';
 }
 
 /** Help blocks shown when the user types `help` / `?` / "what can you do". */

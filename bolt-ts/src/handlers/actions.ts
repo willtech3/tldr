@@ -12,9 +12,9 @@ import {
   isUserMemberOfChannel,
   isValidSlackChannelId,
   normalizeMessageCount,
-  sanitizeGeneratedSlackText,
   type ConversationsMembersClient,
 } from '../security';
+import { sanitizeGeneratedSlackMrkdwn } from '../slack/sanitize';
 import type { ThreadContext } from '../types';
 import { ACTION_SELECT_MESSAGE_COUNT, buildWelcomeBlocks } from '../blocks';
 import {
@@ -83,7 +83,7 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
         return;
       }
 
-      const summaryText = sanitizeGeneratedSlackText(message.text || '');
+      const summaryText = sanitizeGeneratedSlackMrkdwn(message.text || '');
       const attribution = buildShareAttribution(body.user.id, count, style);
       await client.chat.postMessage({
         channel: sourceChannelId,

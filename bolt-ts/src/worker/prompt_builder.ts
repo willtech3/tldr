@@ -91,52 +91,7 @@ export async function buildSummarizePromptData(
   }
   const receiptPermalinks = receipts.map((r) => r.permalink);
 
-  const images: ImageBlock[] = [];
-  for (const msg of messages) {
-    if (images.length >= MAX_IMAGES_TOTAL) {
-      break;
-    }
-    for (const file of msg.files) {
-      if (images.length >= MAX_IMAGES_TOTAL) {
-        break;
-      }
-      const url = pickFileDownloadUrl(file);
-      if (!url) {
-        continue;
-      }
-      const mimeHint = file.mimeType ?? '';
-      const canonHint = canonicalizeMime(mimeHint);
-      if (canonHint !== '' && !isAllowedImageMime(canonHint)) {
-        continue;
-      }
-
-      try {
-        const head = await fetchImageHead({ url, botToken: args.botToken, fetchImpl });
-        if (head?.contentType) {
-          const headCanon = canonicalizeMime(head.contentType);
-          if (!headCanon.startsWith('image/') || !isAllowedImageMime(headCanon)) {
-            continue;
-          }
-        }
-        if (head?.contentLength && head.contentLength > INLINE_IMAGE_MAX_BYTES) {
-          continue;
-        }
-        const bytes = await downloadImageBytes({
-          url,
-          botToken: args.botToken,
-          maxBytes: INLINE_IMAGE_MAX_BYTES,
-          fetchImpl,
-        });
-        const finalMime = canonHint || 'image/png';
-        if (!isAllowedImageMime(finalMime)) {
-          continue;
-        }
-        images.push(buildImageBlock(finalMime, bytes));
-      } catch {
-        // Skip individual image failures — non-fatal.
-      }
-    }
-  }
+  const images = await fetchInlineImages(collectImageCandidates(messages), args.botToken, fetchImpl);
 
   const prompt = buildBasePrompt({
     channelName,
@@ -195,6 +150,100 @@ export function applySafetyNetSections(
   }
 
   return out;
+}
+
+interface ImageCandidate {
+  url: string;
+  /** Canonicalised MIME hint from Slack file metadata ('' when unknown). */
+  canonHint: string;
+}
+
+/**
+ * Gather downloadable image candidates from messages, in order, applying only
+ * the cheap MIME-hint pre-filter. The expensive HEAD/GET happen later in
+ * {@link fetchInlineImages}.
+ */
+function collectImageCandidates(messages: RecentMessage[]): ImageCandidate[] {
+  const candidates: ImageCandidate[] = [];
+  for (const msg of messages) {
+    for (const file of msg.files) {
+      const url = pickFileDownloadUrl(file);
+      if (!url) {
+        continue;
+      }
+      const canonHint = canonicalizeMime(file.mimeType ?? '');
+      if (canonHint !== '' && !isAllowedImageMime(canonHint)) {
+        continue;
+      }
+      candidates.push({ url, canonHint });
+    }
+  }
+  return candidates;
+}
+
+/**
+ * Download up to {@link MAX_IMAGES_TOTAL} inline images. Candidates are fetched
+ * in parallel batches (HEAD + GET per image) so a message window with many
+ * attachments doesn't serialise the network round-trips. Order is preserved and
+ * individual failures are skipped; we stop once enough images have succeeded.
+ */
+async function fetchInlineImages(
+  candidates: ImageCandidate[],
+  botToken: string,
+  fetchImpl: typeof fetch
+): Promise<ImageBlock[]> {
+  const images: ImageBlock[] = [];
+  for (
+    let i = 0;
+    i < candidates.length && images.length < MAX_IMAGES_TOTAL;
+    i += MAX_IMAGES_TOTAL
+  ) {
+    const batch = candidates.slice(i, i + MAX_IMAGES_TOTAL);
+    const blocks = await Promise.all(
+      batch.map((candidate) => tryFetchImageBlock(candidate, botToken, fetchImpl))
+    );
+    for (const block of blocks) {
+      if (block && images.length < MAX_IMAGES_TOTAL) {
+        images.push(block);
+      }
+    }
+  }
+  return images;
+}
+
+/** Fetch + validate a single image, returning a content block or null on any
+ *  failure (unsupported type, oversize, network error). */
+async function tryFetchImageBlock(
+  candidate: ImageCandidate,
+  botToken: string,
+  fetchImpl: typeof fetch
+): Promise<ImageBlock | null> {
+  try {
+    const head = await fetchImageHead({ url: candidate.url, botToken, fetchImpl });
+    if (head?.contentType) {
+      const headCanon = canonicalizeMime(head.contentType);
+      if (!headCanon.startsWith('image/') || !isAllowedImageMime(headCanon)) {
+        return null;
+      }
+    }
+    if (head?.contentLength && head.contentLength > INLINE_IMAGE_MAX_BYTES) {
+      return null;
+    }
+    const bytes = await downloadImageBytes({
+      url: candidate.url,
+      botToken,
+      maxBytes: INLINE_IMAGE_MAX_BYTES,
+      fetchImpl,
+    });
+    const finalMime = candidate.canonHint || 'image/png';
+    if (!isAllowedImageMime(finalMime)) {
+      return null;
+    }
+    return buildImageBlock(finalMime, bytes);
+  } catch {
+    // Skip individual image failures — non-fatal.
+    return null;
+  }
 }
 
 async function fetchUserNames(

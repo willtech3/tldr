@@ -129,6 +129,12 @@ export async function streamSummaryToAssistantThread(
       stream,
       streamTs: null,
       logger,
+      // Surface the streamed message ts to this scope the instant it exists, so
+      // a mid-stream failure can replace the partial message instead of
+      // orphaning it and posting a duplicate error.
+      onStreamStart: (ts: string): void => {
+        streamTs = ts;
+      },
     });
   } catch (err) {
     logger.error('Streaming summary failed', {
@@ -154,6 +160,8 @@ interface ConsumeStreamArgs extends StreamSummaryArgs {
   streamTs: string | null;
   sleep: (ms: number) => Promise<void>;
   logger: Logger;
+  /** Called once with the streamed message ts as soon as the stream starts. */
+  onStreamStart?: (ts: string) => void;
 }
 
 async function consumeStream(args: ConsumeStreamArgs): Promise<string> {
@@ -228,6 +236,7 @@ async function consumeStream(args: ConsumeStreamArgs): Promise<string> {
           threadTs: args.assistantThreadTs,
           markdownText: initialText,
         });
+        args.onStreamStart?.(streamTs);
         pending = taken.rest;
         lastAppendAt = Date.now();
         continue;

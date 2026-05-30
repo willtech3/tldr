@@ -204,6 +204,24 @@ describe('Block Kit builders', () => {
         expect(section.text.text).toContain('Style cleared');
       }
     });
+
+    it('truncates a long style by code point without splitting an emoji', () => {
+      const longEmoji = '😀'.repeat(120);
+      const blocks = buildStyleConfirmationBlocks(longEmoji);
+      const context = blocks.find((b) => b.type === 'context');
+      expect(context).toBeDefined();
+      if (context?.type === 'context') {
+        const textElement = context.elements.find((e) => 'text' in e);
+        expect(textElement).toBeDefined();
+        if (textElement && 'text' in textElement) {
+          const styleSegment = textElement.text.split('Active style: ')[1];
+          // 97 emoji + "..." == 100 code points, with no lone surrogate halves.
+          expect([...styleSegment].length).toBe(100);
+          expect(styleSegment.endsWith('...')).toBe(true);
+          expect(styleSegment.startsWith('😀')).toBe(true);
+        }
+      }
+    });
   });
 
   // Note: No channel picker blocks in AI App V1. Context is tracked via

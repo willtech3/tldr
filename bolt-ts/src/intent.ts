@@ -2,6 +2,12 @@
  * Intent parsing for user messages.
  *
  * Parses natural language commands from assistant thread messages.
+ *
+ * Ordering matters: the structured commands (`clear style`, `style:`,
+ * `summarize`) are matched on their explicit markers *before* the catch-all
+ * `help` check, and `help` is matched as a whole word — otherwise a message
+ * like `style: be more helpful` or `summarize the #help-desk channel` would be
+ * misread as a help request because it merely contains the substring "help".
  */
 
 import { UserIntent } from './types';
@@ -15,12 +21,7 @@ import { UserIntent } from './types';
 export function parseUserIntent(text: string): UserIntent {
   const textLower = text.toLowerCase().trim();
 
-  // Help intent
-  if (textLower.includes('help') || textLower === '?' || textLower.includes('what can')) {
-    return { type: 'help' };
-  }
-
-  // Clear style intent
+  // Clear style intent (anchored).
   // Examples:
   // - "clear style"
   // - "reset style"
@@ -29,7 +30,9 @@ export function parseUserIntent(text: string): UserIntent {
     return { type: 'clear_style' };
   }
 
-  // Style intent (thread-scoped; persisted via Slack message metadata)
+  // Style intent (thread-scoped; persisted via Slack message metadata).
+  // Anchored so it wins over the help check even when the instructions contain
+  // the word "help" (e.g. "style: be more helpful").
   // Examples:
   // - "style: write as a haiku"
   // - "style : extremely concise"
@@ -42,10 +45,7 @@ export function parseUserIntent(text: string): UserIntent {
     return { type: 'help' };
   }
 
-  // Parse summarize intent
-  const postHere = textLower.includes('post here') || textLower.includes('public');
-
-  // Parse per-run style override (doesn't persist)
+  // Parse per-run style override (doesn't persist).
   // Examples:
   // - "summarize with style: be funny"
   // - "summarize last 50 with style: write as haiku"
@@ -55,7 +55,7 @@ export function parseUserIntent(text: string): UserIntent {
     styleOverride = styleOverrideMatch[1]?.trim() || null;
   }
 
-  // Parse "last N" pattern
+  // Parse "last N" pattern.
   const words = textLower.split(/\s+/);
   let count: number | null = null;
   for (let i = 0; i < words.length - 1; i++) {
@@ -68,23 +68,32 @@ export function parseUserIntent(text: string): UserIntent {
     }
   }
 
-  // Extract channel mention like <#C123|name>
+  // Extract channel mention like <#C123|name>.
   let targetChannel: string | null = null;
   const channelMatch = text.match(/<#([A-Z0-9]+)\|[^>]+>/);
   if (channelMatch) {
     targetChannel = channelMatch[1];
   }
 
-  const askedToRun = textLower.includes('summarize') || count !== null;
-
+  // Summarize intent — explicit keyword or a "last N" count. Checked before
+  // `help` so commands such as "summarize the #help-desk channel" or
+  // "summarize last 100 when you get a chance, would help" are not swallowed by
+  // the help matcher.
+  const askedToRun = /\bsummari[sz]e\b/i.test(text) || count !== null;
   if (askedToRun) {
     return {
       type: 'summarize',
       count,
       targetChannel,
-      postHere,
       styleOverride,
     };
+  }
+
+  // Help intent — matched as a whole word so "helpful" / "unhelpful" don't
+  // trigger it, and only after the structured commands above have had a chance
+  // to match.
+  if (/\bhelp\b/i.test(text) || textLower === '?' || /\bwhat can\b/i.test(textLower)) {
+    return { type: 'help' };
   }
 
   return { type: 'unknown' };
