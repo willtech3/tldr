@@ -29,7 +29,7 @@ describe('loadConfig', () => {
     expect(config.slackBotToken).toBe('xoxb-test-token');
     expect(config.slackSigningSecret).toBe('test-secret');
     expect(config.anthropicApiKey).toBe('sk-ant-test');
-    expect(config.anthropicModel).toBe('claude-sonnet-4-6');
+    expect(config.anthropicModel).toBe('claude-opus-4-8');
     expect(config.anthropicMaxOutputTokens).toBeGreaterThan(0);
     expect(config.enableStreaming).toBe(true);
     expect(config.streamMaxChunkChars).toBeGreaterThan(0);

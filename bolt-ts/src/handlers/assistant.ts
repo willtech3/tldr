@@ -11,45 +11,36 @@
  */
 
 import { App, Assistant } from '@slack/bolt';
-import { v4 as uuidv4 } from 'uuid';
 import {
   buildHelpBlocks,
   buildStyleConfirmationBlocks,
+  buildUnknownIntentBlocks,
   buildWelcomeBlocks,
 } from '../blocks';
 import { parseUserIntent } from '../intent';
-import { buildSummarizeLoadingMessages } from '../loading_messages';
-import {
-  checkSummarizeRateLimit,
-  isUserMemberOfChannel,
-  isValidSlackChannelId,
-  normalizeMessageCount,
-  validateAndSanitizeStyle,
-  type ConversationsMembersClient,
-} from '../security';
+import { normalizeMessageCount, validateAndSanitizeStyle } from '../security';
 import type { ThreadContext } from '../types';
 import {
   buildThreadStateMetadata,
   findThreadStateMessage,
   getCachedThreadState,
+  loadThreadStateWithFallback,
   makeThreadKey,
   setCachedThreadState,
   type SlackWebApiClient,
 } from '../thread_state';
 import type { AppConfig } from '../config';
-import { runSummarization } from '../worker/summarize';
+import { guardAndRunSummarization } from './run_summary';
 
 const WELCOME_TEXT = 'Welcome to TLDR';
-const CANONICAL_FAILURE_MESSAGE =
-  "Sorry, I couldn't generate a summary at this time. Please try again later.";
 
-const DEFAULT_PROMPTS: Array<{ title: string; message: string }> = [
+const CHANNEL_PROMPTS: Array<{ title: string; message: string }> = [
+  { title: '📋 Just the Facts', message: 'summarize' },
   {
     title: '🔥 Choose Violence',
     message:
       'summarize with style: be hyper-critical, sarcastic, and roast everyone mercilessly. call out bad takes and dumb ideas.',
   },
-  { title: '📋 Just the Facts', message: 'summarize' },
   {
     title: '🕵️ Run the Investigation',
     message:
@@ -61,6 +52,21 @@ const DEFAULT_PROMPTS: Array<{ title: string; message: string }> = [
       "summarize with style: find contradictions, broken promises, and things people said they would do but didn't. bring the receipts.",
   },
 ];
+
+const ONBOARDING_PROMPTS: Array<{ title: string; message: string }> = [
+  { title: '📖 Show me what you can do', message: 'help' },
+  { title: '⚡ Summarize my current channel', message: 'summarize' },
+];
+
+/**
+ * Suggested prompts for a fresh thread. Without a channel in view, every
+ * one-tap summarize would fail — offer onboarding prompts instead.
+ */
+export function buildThreadStartPrompts(
+  viewingChannelId: string | null
+): Array<{ title: string; message: string }> {
+  return viewingChannelId ? CHANNEL_PROMPTS : ONBOARDING_PROMPTS;
+}
 
 export function createAssistant(config: AppConfig): Assistant {
   return new Assistant({
@@ -91,7 +97,11 @@ export function createAssistant(config: AppConfig): Assistant {
       };
 
       try {
-        await setSuggestedPrompts({ prompts: DEFAULT_PROMPTS });
+        const prompts = buildThreadStartPrompts(initialState.viewingChannelId);
+        await setSuggestedPrompts({
+          title: initialState.viewingChannelId ? 'Pick your poison:' : 'New here? Start with:',
+          prompts: prompts as [(typeof prompts)[number], ...typeof prompts],
+        });
         await setTitle('TLDR');
         await saveThreadContext();
 
@@ -193,9 +203,20 @@ export function createAssistant(config: AppConfig): Assistant {
           logger.info(`Context changed: viewing_channel_id=${viewingChannelId}`);
         })
         .catch((err) => logger.error('Failed to persist thread context:', err));
+
+      // A channel is in view now — swap any onboarding prompts for the real ones.
+      const prompts = buildThreadStartPrompts(viewingChannelId);
+      void client.assistant.threads
+        .setSuggestedPrompts({
+          channel_id: channelId,
+          thread_ts: threadTs,
+          title: 'Pick your poison:',
+          prompts: prompts as [(typeof prompts)[number], ...typeof prompts],
+        })
+        .catch((err) => logger.warn('Failed to refresh suggested prompts:', err));
     },
 
-    userMessage: async ({ client, message, logger, setStatus }): Promise<void> => {
+    userMessage: async ({ client, message, logger }): Promise<void> => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const msg = message as any;
 
@@ -299,7 +320,15 @@ export function createAssistant(config: AppConfig): Assistant {
           }
 
           case 'summarize': {
-            const { state } = getCachedOrEmpty();
+            // Survive cold starts: fall back to the Slack-metadata state
+            // message so the channel/style/count the welcome card shows are
+            // actually honored.
+            const state = await loadThreadStateWithFallback({
+              client: client as unknown as SlackWebApiClient,
+              assistantChannelId: channelId,
+              assistantThreadTs: threadTs,
+              logger,
+            });
             const targetChannelId = intent.targetChannel ?? state.viewingChannelId;
 
             if (!targetChannelId) {
@@ -307,41 +336,7 @@ export function createAssistant(config: AppConfig): Assistant {
                 channel: channelId,
                 thread_ts: threadTs,
                 text:
-                  "I don't know which channel you're viewing yet. Switch to a channel in Slack, then try `summarize` again — or mention one like `summarize <#C123|general>`.",
-              });
-              return;
-            }
-
-            if (!isValidSlackChannelId(targetChannelId)) {
-              await client.chat.postMessage({
-                channel: channelId,
-                thread_ts: threadTs,
-                text: "I can't summarize that channel identifier.",
-              });
-              return;
-            }
-
-            if (!checkSummarizeRateLimit(userId)) {
-              await client.chat.postMessage({
-                channel: channelId,
-                thread_ts: threadTs,
-                text: 'Please wait a minute before starting more summaries.',
-              });
-              return;
-            }
-
-            const userCanReadChannel = await isUserMemberOfChannel({
-              client: client as unknown as ConversationsMembersClient,
-              channelId: targetChannelId,
-              userId,
-              logger,
-            });
-
-            if (!userCanReadChannel) {
-              await client.chat.postMessage({
-                channel: channelId,
-                thread_ts: threadTs,
-                text: "I can only summarize channels you're a member of.",
+                  "I don't know which channel you're viewing yet. Switch to a channel in Slack, then try `summarize` again — or mention one like `summarize #general`.",
               });
               return;
             }
@@ -356,54 +351,41 @@ export function createAssistant(config: AppConfig): Assistant {
               });
               return;
             }
-            const effectiveStyle = sanitizedStyle.value;
-            const effectiveCount = normalizeMessageCount(
-              intent.count,
-              normalizeMessageCount(state.defaultMessageCount)
-            );
 
-            await setStatus({
-              status: 'Summarizing...',
-              loading_messages: buildSummarizeLoadingMessages({
-                messageCount: effectiveCount,
-                hasCustomStyle: effectiveStyle !== null && effectiveStyle.trim().length > 0,
-              }),
+            await guardAndRunSummarization({
+              client,
+              config,
+              userId,
+              sourceChannelId: targetChannelId,
+              assistantChannelId: channelId,
+              assistantThreadTs: threadTs,
+              messageCount: normalizeMessageCount(
+                intent.count,
+                normalizeMessageCount(state.defaultMessageCount)
+              ),
+              customStyle: sanitizedStyle.value,
+              logger,
             });
-
-            const correlationId = uuidv4();
-            try {
-              await runSummarization({
-                config,
-                client,
-                request: {
-                  correlationId,
-                  userId,
-                  channelId: targetChannelId,
-                  originChannelId: channelId,
-                  threadTs,
-                  messageCount: effectiveCount,
-                  customStyle: effectiveStyle,
-                },
-              });
-              logger.info(`Completed summarize (corr_id=${correlationId})`);
-            } catch (error) {
-              logger.error('Inline summarization failed:', error);
-              try {
-                await client.chat.postMessage({
-                  channel: channelId,
-                  thread_ts: threadTs,
-                  text: CANONICAL_FAILURE_MESSAGE,
-                });
-              } catch (followup) {
-                logger.error('Failed to notify user of summarization failure:', followup);
-              }
-            }
             break;
           }
 
           case 'unknown':
-          default:
+          default: {
+            // Never leave the user on read — nudge them toward a next step.
+            const state = await loadThreadStateWithFallback({
+              client: client as unknown as SlackWebApiClient,
+              assistantChannelId: channelId,
+              assistantThreadTs: threadTs,
+              logger,
+            });
+            await client.chat.postMessage({
+              channel: channelId,
+              thread_ts: threadTs,
+              text: "I didn't catch that. Try `summarize`, or tap a button below.",
+              blocks: buildUnknownIntentBlocks(state.viewingChannelId),
+            });
             break;
+          }
         }
       } catch (error) {
         logger.error('Error handling message:', error);

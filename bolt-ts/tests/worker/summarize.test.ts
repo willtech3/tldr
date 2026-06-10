@@ -70,7 +70,7 @@ describe('runSummarization (non-streaming)', () => {
       expect.objectContaining({
         channel: 'D1',
         thread_ts: '1.0',
-        text: 'No messages found to summarize.',
+        text: expect.stringContaining('Nothing to summarize in <#C1>'),
       })
     );
   });
@@ -100,14 +100,19 @@ describe('runSummarization (non-streaming)', () => {
     expect(spies.conversationsHistory).toHaveBeenCalled();
     expect(llm.generateSummary).toHaveBeenCalled();
     const call = spies.postMessage.mock.calls.find((c) =>
-      typeof c[0]?.text === 'string' && c[0].text.includes('*Summary from <#C123>*')
+      Array.isArray(c[0]?.blocks) &&
+      c[0].blocks.some(
+        (b: { type: string; text?: string }) =>
+          b.type === 'markdown' && typeof b.text === 'string' && b.text.includes('**Summary of #demo**')
+      )
     );
     expect(call).toBeDefined();
     const args = call![0];
     expect(args.thread_ts).toBe('1.0');
-    expect(args.blocks).toBeDefined();
-    const actions = (args.blocks as Array<{ type: string; elements: Array<{ action_id: string }> }>)[0];
-    expect(actions.elements.map((e) => e.action_id)).toContain('share_summary');
+    const actions = (args.blocks as Array<{ type: string; elements?: Array<{ action_id: string }> }>).find(
+      (b) => b.type === 'actions'
+    );
+    expect(actions?.elements?.map((e) => e.action_id)).toContain('share_summary');
   });
 
   it('posts the canonical failure message when the model errors', async () => {

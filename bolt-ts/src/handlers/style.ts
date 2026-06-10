@@ -12,6 +12,8 @@ import {
   MODAL_CALLBACK_SET_STYLE,
   INPUT_BLOCK_STYLE,
   INPUT_ACTION_STYLE,
+  INPUT_BLOCK_STYLE_PRESET,
+  INPUT_ACTION_STYLE_PRESET,
   buildStyleModal,
   buildStyleConfirmationBlocks,
   buildWelcomeBlocks,
@@ -26,6 +28,7 @@ import {
   type SlackWebApiClient,
 } from '../thread_state';
 import type { ThreadContext } from '../types';
+import { resolveStylePreset } from '../styles';
 import {
   isUserMemberOfChannel,
   isValidSlackChannelId,
@@ -148,9 +151,26 @@ export function registerStyleHandlers(app: App): void {
       return;
     }
 
-    // Extract the style value from the submission
+    // Extract the style from the submission. Typed text wins over the preset
+    // dropdown — unless the text is just the untouched prefill of the
+    // previously saved style, in which case the freshly picked preset wins.
+    // The "✨ Default" sentinel (and clearing both inputs) clears the style.
     const styleInput = view.state.values[INPUT_BLOCK_STYLE]?.[INPUT_ACTION_STYLE];
-    const styleValidation = validateAndSanitizeStyle(styleInput?.value ?? null);
+    const presetInput = view.state.values[INPUT_BLOCK_STYLE_PRESET]?.[INPUT_ACTION_STYLE_PRESET];
+    const freeText = styleInput?.value?.trim() ?? '';
+    const presetKey = presetInput?.selected_option?.value ?? null;
+    const textIsUntouchedPrefill =
+      freeText.length > 0 && freeText === (privateMetadata.originalStyle ?? '').trim();
+
+    let chosenStyle: string | null;
+    if (freeText.length > 0 && !(presetKey && textIsUntouchedPrefill)) {
+      chosenStyle = freeText;
+    } else if (presetKey) {
+      chosenStyle = resolveStylePreset(presetKey);
+    } else {
+      chosenStyle = null;
+    }
+    const styleValidation = validateAndSanitizeStyle(chosenStyle);
     if (!styleValidation.ok) {
       try {
         await client.chat.postMessage({

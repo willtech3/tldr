@@ -6,15 +6,21 @@
  */
 
 import type { WebClient } from '@slack/web-api';
-import { LlmClient } from '../ai/anthropic';
+import type { KnownBlock } from '@slack/types';
+import { LlmClient, PromptTooLargeError, TOO_LARGE_MESSAGE } from '../ai/anthropic';
+import { buildFailureBlocks, buildRetryValue } from '../blocks';
 import type { AppConfig } from '../config';
-import { sanitizeGeneratedSlackMrkdwn } from '../slack/sanitize';
-import { getRecentMessages, getBotUserId } from '../slack/client';
+import { sanitizeGeneratedSlackMrkdwn, truncateForMarkdownBlock } from '../slack/sanitize';
+import { BotNotInChannelError, getRecentMessages, getBotUserId } from '../slack/client';
+import type { SummarizeOutcome } from '../types';
 import { applySafetyNetSections, buildSummarizePromptData } from './prompt_builder';
 import { buildSummaryActionButtons } from './deliver';
 import {
   CANONICAL_FAILURE_MESSAGE,
+  buildBotNotInChannelMessage,
+  buildEmptyChannelMessage,
   buildStreamPrefix,
+  buildTooLargeBlocks,
   streamSummaryToAssistantThread,
 } from './streaming';
 
@@ -43,8 +49,11 @@ interface RunArgs {
  * Summarise the requested channel and post the result back into the assistant
  * thread. Streams the response when `config.enableStreaming` is set; otherwise
  * makes a single Anthropic call and posts the result.
+ *
+ * Posts the user-facing message for every outcome itself — including a
+ * retryable failure message — and never throws.
  */
-export async function runSummarization(args: RunArgs): Promise<void> {
+export async function runSummarization(args: RunArgs): Promise<SummarizeOutcome> {
   const { config, client, request } = args;
   const llm =
     args.llm ??
@@ -55,7 +64,7 @@ export async function runSummarization(args: RunArgs): Promise<void> {
     });
 
   if (config.enableStreaming) {
-    await streamSummaryToAssistantThread({
+    return streamSummaryToAssistantThread({
       client,
       llm,
       botToken: config.slackBotToken,
@@ -69,21 +78,20 @@ export async function runSummarization(args: RunArgs): Promise<void> {
       streamMinAppendIntervalMs: config.streamMinAppendIntervalMs,
       fetchImpl: args.fetchImpl,
     });
-    return;
   }
 
   try {
     const messages = await getRecentMessages(client, request.channelId, request.messageCount);
-    if (messages.length === 0) {
+    const botUserId = await getBotUserId(client);
+    const userMessages = botUserId ? messages.filter((m) => m.user !== botUserId) : messages;
+    if (userMessages.length === 0) {
       await client.chat.postMessage({
         channel: request.originChannelId,
         thread_ts: request.threadTs,
-        text: 'No messages found to summarize.',
+        text: buildEmptyChannelMessage(request.channelId),
       });
-      return;
+      return 'empty';
     }
-    const botUserId = await getBotUserId(client);
-    const userMessages = botUserId ? messages.filter((m) => m.user !== botUserId) : messages;
     const promptData = await buildSummarizePromptData({
       client,
       botToken: config.slackBotToken,
@@ -94,33 +102,65 @@ export async function runSummarization(args: RunArgs): Promise<void> {
     });
     const summary = await llm.generateSummary(promptData.prompt);
     const safetyNetted = applySafetyNetSections(summary, promptData);
-    const text = sanitizeGeneratedSlackMrkdwn(
-      buildStreamPrefix(request.channelId, request.customStyle) + safetyNetted
+    const body = sanitizeGeneratedSlackMrkdwn(
+      buildStreamPrefix(promptData.channelName, request.customStyle) + safetyNetted
     );
-    const blocks = buildSummaryActionButtons({
-      sourceChannelId: request.channelId,
-      messageCount: request.messageCount,
-      currentStyle: request.customStyle,
-    });
+    // The body is standard Markdown — deliver it via a markdown block so it
+    // renders, with `text` as the short notification fallback. The full body
+    // also goes in `text` so the Share button (and notifications) can recover
+    // it — Slack treats `text` purely as fallback when blocks are present.
+    const blocks: KnownBlock[] = [
+      { type: 'markdown', text: truncateForMarkdownBlock(body) },
+      ...buildSummaryActionButtons({
+        sourceChannelId: request.channelId,
+        messageCount: request.messageCount,
+        currentStyle: request.customStyle,
+      }),
+    ];
     await client.chat.postMessage({
       channel: request.originChannelId,
       thread_ts: request.threadTs,
-      text,
+      text: body,
       blocks,
     });
+    return 'delivered';
   } catch (err) {
     console.error('Non-streaming summarization failed', {
       corr_id: request.correlationId,
       error: err instanceof Error ? err.message : String(err),
     });
+
+    if (err instanceof PromptTooLargeError) {
+      try {
+        await client.chat.postMessage({
+          channel: request.originChannelId,
+          thread_ts: request.threadTs,
+          text: TOO_LARGE_MESSAGE,
+          blocks: buildTooLargeBlocks(request.channelId, request.customStyle),
+        });
+      } catch (followup) {
+        console.error('Failed to post too-large message', followup);
+      }
+      return 'too_large';
+    }
+
+    const failureText =
+      err instanceof BotNotInChannelError
+        ? buildBotNotInChannelMessage(request.channelId)
+        : undefined;
     try {
       await client.chat.postMessage({
         channel: request.originChannelId,
         thread_ts: request.threadTs,
         text: CANONICAL_FAILURE_MESSAGE,
+        blocks: buildFailureBlocks(
+          buildRetryValue(request.channelId, request.messageCount, request.customStyle),
+          failureText
+        ),
       });
     } catch (followup) {
       console.error('Failed to post canonical failure', followup);
     }
+    return 'failed';
   }
 }

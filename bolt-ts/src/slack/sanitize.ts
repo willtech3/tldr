@@ -14,3 +14,15 @@ export function sanitizeGeneratedSlackMrkdwn(text: string): string {
     .replace(USER_GROUP_MENTION_RE, '`$&`')
     .replace(USER_MENTION_RE, '`$&`');
 }
+
+/** All markdown blocks in one message payload share this cumulative cap. */
+export const MARKDOWN_BLOCK_CHAR_LIMIT = 12_000;
+
+/** Hard-truncate a markdown body to the block limit, noting the cut. */
+export function truncateForMarkdownBlock(body: string): string {
+  if (body.length <= MARKDOWN_BLOCK_CHAR_LIMIT) {
+    return body;
+  }
+  const suffix = '\n\n_…truncated — try a smaller message count._';
+  return body.slice(0, MARKDOWN_BLOCK_CHAR_LIMIT - suffix.length) + suffix;
+}

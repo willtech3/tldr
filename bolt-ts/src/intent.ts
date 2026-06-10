@@ -2,9 +2,22 @@
  * Intent parsing for user messages.
  *
  * Parses natural language commands from assistant thread messages.
+ *
+ * Precedence (most-specific first):
+ *  1. clear/reset/remove style
+ *  2. "style: ..." (anchored at start, so instructions may mention
+ *     "help" or "summarize" without being misrouted)
+ *  3. summarize (any phrasing that asks for a summary wins over "help",
+ *     so "help me summarize" runs a summary instead of printing the manual)
+ *  4. help
+ *  5. unknown (the handler replies with a friendly nudge, never silence)
  */
 
 import { UserIntent } from './types';
+
+/** Phrasings that mean "summarize", beyond the literal verb. */
+const SUMMARIZE_PHRASES =
+  /summar|tl;?dr|recap|catch\s+me\s+up|fill\s+me\s+in|what\s+did\s+i\s+miss|what\s+happened/i;
 
 /**
  * Parse user intent from message text.
@@ -14,11 +27,6 @@ import { UserIntent } from './types';
  */
 export function parseUserIntent(text: string): UserIntent {
   const textLower = text.toLowerCase().trim();
-
-  // Help intent
-  if (textLower.includes('help') || textLower === '?' || textLower.includes('what can')) {
-    return { type: 'help' };
-  }
 
   // Clear style intent
   // Examples:
@@ -68,14 +76,14 @@ export function parseUserIntent(text: string): UserIntent {
     }
   }
 
-  // Extract channel mention like <#C123|name>
+  // Extract channel mention like <#C123|name> or <#C123>
   let targetChannel: string | null = null;
-  const channelMatch = text.match(/<#([A-Z0-9]+)\|[^>]+>/);
+  const channelMatch = text.match(/<#([A-Z0-9]+)(?:\|[^>]*)?>/);
   if (channelMatch) {
     targetChannel = channelMatch[1];
   }
 
-  const askedToRun = textLower.includes('summarize') || count !== null;
+  const askedToRun = SUMMARIZE_PHRASES.test(textLower) || count !== null;
 
   if (askedToRun) {
     return {
@@ -85,6 +93,11 @@ export function parseUserIntent(text: string): UserIntent {
       postHere,
       styleOverride,
     };
+  }
+
+  // Help intent — word-boundary match so "helpful" doesn't trigger it.
+  if (/\bhelp\b/.test(textLower) || textLower === '?' || textLower.includes('what can')) {
+    return { type: 'help' };
   }
 
   return { type: 'unknown' };

@@ -95,8 +95,8 @@ Required deployment variables:
 - `AWS_ACCOUNT_ID`
 
 Optional tuning:
-- `ANTHROPIC_MODEL` — overrides the default model (defaults to `claude-sonnet-4-6`)
-- `ANTHROPIC_MAX_OUTPUT_TOKENS` — overrides the default 16 000 (cap 64 000)
+- `ANTHROPIC_MODEL` — overrides the default model (defaults to `claude-opus-4-8`)
+- `ANTHROPIC_MAX_OUTPUT_TOKENS` — overrides the default 32 000 (cap 64 000)
 - `ENABLE_STREAMING` — `true` (default) to stream summaries into the thread
 - `STREAM_MAX_CHUNK_CHARS` — per-append chunk size (max 12 000, default 8 000)
 - `STREAM_MIN_APPEND_INTERVAL_MS` — floor between `chat.appendStream` calls (default 500)

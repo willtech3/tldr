@@ -12,3 +12,4 @@
 export { registerAssistantHandlers } from './assistant';
 export { registerStyleHandlers } from './style';
 export { registerActionHandlers } from './actions';
+export { registerShortcutHandlers } from './shortcuts';

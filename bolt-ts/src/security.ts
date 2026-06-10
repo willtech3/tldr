@@ -96,7 +96,8 @@ export function validateAndSanitizeStyle(raw: string | null | undefined):
   if (DISALLOWED_STYLE_PATTERNS.some((pattern) => pattern.test(trimmed))) {
     return {
       ok: false,
-      reason: 'Style instructions cannot include role labels or template markers.',
+      reason:
+        'Styles can\'t contain "system:", "assistant:", "user:", or "{{" — try rephrasing.',
     };
   }
 
@@ -119,19 +120,30 @@ export function isValidSlackTimestamp(timestamp: string | null | undefined): tim
   return /^\d{10,}\.\d{6}$/.test(timestamp);
 }
 
-export function checkSummarizeRateLimit(userId: string, now = Date.now()): boolean {
+export const RATE_LIMIT_MAX_PER_MINUTE = RATE_LIMIT_MAX_REQUESTS;
+
+export interface RateLimitDecision {
+  allowed: boolean;
+  /** When `allowed` is false: how long until the window resets. */
+  retryAfterMs: number;
+}
+
+export function checkSummarizeRateLimit(userId: string, now = Date.now()): RateLimitDecision {
   const bucket = rateLimitBuckets.get(userId);
   if (!bucket || now - bucket.windowStartedAt >= RATE_LIMIT_WINDOW_MS) {
     rateLimitBuckets.set(userId, { windowStartedAt: now, count: 1 });
-    return true;
+    return { allowed: true, retryAfterMs: 0 };
   }
 
   if (bucket.count >= RATE_LIMIT_MAX_REQUESTS) {
-    return false;
+    return {
+      allowed: false,
+      retryAfterMs: Math.max(0, bucket.windowStartedAt + RATE_LIMIT_WINDOW_MS - now),
+    };
   }
 
   bucket.count += 1;
-  return true;
+  return { allowed: true, retryAfterMs: 0 };
 }
 
 export function resetRateLimitForTests(): void {
@@ -145,15 +157,22 @@ export function sanitizeGeneratedSlackText(text: string): string {
     .replace(/<@[UW][A-Z0-9]+>/g, '`$&`');
 }
 
-export async function isUserMemberOfChannel(args: {
+/**
+ * Membership check result. `unknown` means we couldn't verify (API error or
+ * pagination limit) — callers should say so instead of falsely telling a
+ * member they're not in the channel.
+ */
+export type ChannelMembership = 'member' | 'not_member' | 'unknown';
+
+export async function checkChannelMembership(args: {
   client: ConversationsMembersClient;
   channelId: string;
   userId: string;
   logger: SecurityLogger;
-}): Promise<boolean> {
+}): Promise<ChannelMembership> {
   const { client, channelId, userId, logger } = args;
   if (!isValidSlackChannelId(channelId)) {
-    return false;
+    return 'not_member';
   }
 
   let cursor: string | undefined;
@@ -166,20 +185,30 @@ export async function isUserMemberOfChannel(args: {
       });
 
       if (response.members?.includes(userId)) {
-        return true;
+        return 'member';
       }
 
       const nextCursor = response.response_metadata?.next_cursor?.trim();
       if (!nextCursor) {
-        return false;
+        return 'not_member';
       }
       cursor = nextCursor;
     } catch (error) {
       logger.warn('Failed to verify Slack channel membership before enqueueing work:', error);
-      return false;
+      return 'unknown';
     }
   }
 
   logger.warn('Slack channel membership check exceeded pagination limit');
-  return false;
+  return 'unknown';
+}
+
+/** Back-compat boolean wrapper around {@link checkChannelMembership}. */
+export async function isUserMemberOfChannel(args: {
+  client: ConversationsMembersClient;
+  channelId: string;
+  userId: string;
+  logger: SecurityLogger;
+}): Promise<boolean> {
+  return (await checkChannelMembership(args)) === 'member';
 }

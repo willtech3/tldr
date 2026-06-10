@@ -12,6 +12,7 @@ import { AppConfig } from './config';
 import {
   registerActionHandlers,
   registerAssistantHandlers,
+  registerShortcutHandlers,
   registerStyleHandlers,
 } from './handlers';
 
@@ -25,6 +26,7 @@ export function createApp(config: AppConfig, receiver: Receiver): App {
   registerAssistantHandlers(app, config);
   registerStyleHandlers(app);
   registerActionHandlers(app, config);
+  registerShortcutHandlers(app, config);
 
   return app;
 }

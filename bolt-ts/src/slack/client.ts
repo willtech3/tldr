@@ -59,6 +59,25 @@ interface RawHistoryMessage {
   attachments?: unknown;
 }
 
+/**
+ * Thrown when the bot itself isn't in the source channel — the one failure the
+ * user can actually fix themselves (`/invite @TLDR`).
+ */
+export class BotNotInChannelError extends Error {
+  constructor(public readonly channelId: string) {
+    super(`Bot is not a member of channel ${channelId}`);
+    this.name = 'BotNotInChannelError';
+  }
+}
+
+function isNotInChannelApiError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') {
+    return false;
+  }
+  const data = (err as { data?: { error?: string } }).data;
+  return data?.error === 'not_in_channel' || ((err as Error).message ?? '').includes('not_in_channel');
+}
+
 /** Fetch the latest `count` messages in a channel. */
 export async function getRecentMessages(
   client: WebClient,
@@ -66,7 +85,40 @@ export async function getRecentMessages(
   count: number
 ): Promise<RecentMessage[]> {
   const limit = Math.min(Math.max(count, 1), 1000);
-  const response = await client.conversations.history({ channel: channelId, limit });
+  let response;
+  try {
+    response = await client.conversations.history({ channel: channelId, limit });
+  } catch (err) {
+    if (isNotInChannelApiError(err)) {
+      throw new BotNotInChannelError(channelId);
+    }
+    throw err;
+  }
+  const messages = (response.messages ?? []) as RawHistoryMessage[];
+  return messages.map(toRecentMessage);
+}
+
+/** Fetch up to `limit` messages of a thread (parent included, oldest first). */
+export async function getThreadMessages(
+  client: WebClient,
+  channelId: string,
+  threadTs: string,
+  limit = 200
+): Promise<RecentMessage[]> {
+  let response;
+  try {
+    response = await client.conversations.replies({
+      channel: channelId,
+      ts: threadTs,
+      limit: Math.min(Math.max(limit, 1), 1000),
+      inclusive: true,
+    });
+  } catch (err) {
+    if (isNotInChannelApiError(err)) {
+      throw new BotNotInChannelError(channelId);
+    }
+    throw err;
+  }
   const messages = (response.messages ?? []) as RawHistoryMessage[];
   return messages.map(toRecentMessage);
 }
