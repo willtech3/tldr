@@ -25,6 +25,16 @@ describe('parseUserIntent', () => {
       const result = parseUserIntent('what can you do');
       expect(result).toEqual({ type: 'help' });
     });
+
+    it('should not treat "helpful" as help', () => {
+      const result = parseUserIntent('be helpful');
+      expect(result).toEqual({ type: 'unknown' });
+    });
+
+    it('should prefer summarize over help when both appear', () => {
+      const result = parseUserIntent('help me summarize this channel');
+      expect(result).toMatchObject({ type: 'summarize' });
+    });
   });
 
   describe('style intent', () => {
@@ -41,6 +51,14 @@ describe('parseUserIntent', () => {
     it('should treat "style:" with no instructions as help', () => {
       const result = parseUserIntent('style:   ');
       expect(result).toEqual({ type: 'help' });
+    });
+
+    it('should keep style intent when instructions mention help', () => {
+      const result = parseUserIntent('style: write helpful, friendly summaries');
+      expect(result).toEqual({
+        type: 'style',
+        instructions: 'write helpful, friendly summaries',
+      });
     });
   });
 
@@ -114,6 +132,29 @@ describe('parseUserIntent', () => {
         postHere: false,
         styleOverride: null,
       });
+    });
+
+    it('should extract bare channel mention without a name', () => {
+      const result = parseUserIntent('summarize <#C123ABC>');
+      expect(result).toMatchObject({ type: 'summarize', targetChannel: 'C123ABC' });
+    });
+
+    it('should extract channel mention with empty name segment', () => {
+      const result = parseUserIntent('summarize <#C123ABC|>');
+      expect(result).toMatchObject({ type: 'summarize', targetChannel: 'C123ABC' });
+    });
+
+    it.each(['summarise last 20', 'tldr', 'tl;dr', 'recap', 'catch me up', 'fill me in', 'what did I miss?', 'what happened here', 'give me a summary'])(
+      'should treat %j as a summarize request',
+      (phrase) => {
+        const result = parseUserIntent(phrase);
+        expect(result).toMatchObject({ type: 'summarize' });
+      }
+    );
+
+    it('should parse count alongside natural phrasing', () => {
+      const result = parseUserIntent('catch me up on the last 200');
+      expect(result).toMatchObject({ type: 'summarize', count: 200 });
     });
 
     it('should recognize "post here" flag', () => {

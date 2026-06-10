@@ -117,6 +117,38 @@ export function parseThreadContextFromMetadata(eventPayload: unknown): ThreadCon
   return { viewingChannelId, customStyle, defaultMessageCount };
 }
 
+/**
+ * Load thread state from the warm cache, falling back to the Slack-metadata
+ * state message on a cache miss (Lambda cold start). Returns the empty state
+ * when neither exists. Note: the fallback only scans the first ~20 thread
+ * replies — the state message lives at the top of the thread.
+ */
+export async function loadThreadStateWithFallback(args: {
+  client: SlackWebApiClient;
+  assistantChannelId: string;
+  assistantThreadTs: string;
+  logger?: { warn(message: string, ...meta: unknown[]): void };
+}): Promise<ThreadContext> {
+  const threadKey = makeThreadKey(args.assistantChannelId, args.assistantThreadTs);
+  const cached = getCachedThreadState(threadKey);
+  if (cached) {
+    return cached.state;
+  }
+  try {
+    const loaded = await findThreadStateMessage({
+      client: args.client,
+      assistantChannelId: args.assistantChannelId,
+      assistantThreadTs: args.assistantThreadTs,
+    });
+    if (loaded) {
+      return loaded.state;
+    }
+  } catch (error) {
+    args.logger?.warn('Failed to load thread state from Slack:', error);
+  }
+  return { viewingChannelId: null, customStyle: null, defaultMessageCount: null };
+}
+
 export async function findThreadStateMessage(args: {
   client: SlackWebApiClient;
   assistantChannelId: string;

@@ -7,11 +7,32 @@ import {
   buildHelpBlocks,
   buildStyleModal,
   buildStyleConfirmationBlocks,
+  buildUnknownIntentBlocks,
+  buildFailureBlocks,
+  buildRetryValue,
   ACTION_OPEN_STYLE_MODAL,
+  ACTION_QUICK_SUMMARIZE,
+  ACTION_SHOW_HELP,
+  ACTION_RETRY_SUMMARY,
   MODAL_CALLBACK_SET_STYLE,
   INPUT_BLOCK_STYLE,
   INPUT_ACTION_STYLE,
 } from '../src/blocks';
+
+function findButton(blocks: ReturnType<typeof buildWelcomeBlocks>, actionId: string) {
+  for (const block of blocks) {
+    if (block.type !== 'actions') {
+      continue;
+    }
+    const button = block.elements.find(
+      (e) => e.type === 'button' && 'action_id' in e && e.action_id === actionId
+    );
+    if (button) {
+      return button;
+    }
+  }
+  return undefined;
+}
 
 describe('Block Kit builders', () => {
   describe('buildWelcomeBlocks', () => {
@@ -162,13 +183,36 @@ describe('Block Kit builders', () => {
       }
     });
 
-    it('should store private metadata as JSON', () => {
+    it('should store private metadata as JSON including the prefill text', () => {
       const metadata = {
         assistantChannelId: 'D123',
         assistantThreadTs: '1700000000.000100',
       };
-      const modal = buildStyleModal(null, metadata);
-      expect(modal.private_metadata).toBe(JSON.stringify(metadata));
+      const modal = buildStyleModal('be funny', metadata);
+      expect(JSON.parse(modal.private_metadata ?? '{}')).toEqual({
+        assistantChannelId: 'D123',
+        assistantThreadTs: '1700000000.000100',
+        originalStyle: 'be funny',
+      });
+    });
+
+    it('keeps every preset option value within Slack limits', () => {
+      const modal = buildStyleModal(null, {
+        assistantChannelId: 'D123',
+        assistantThreadTs: '1700000000.000100',
+      });
+      const presetBlock = modal.blocks.find(
+        (b) => b.type === 'input' && 'block_id' in b && b.block_id === 'style_preset_block'
+      ) as unknown as {
+        element: { type: string; options?: Array<{ value?: string; text: { text: string } }> };
+      };
+      expect(presetBlock.element.type).toBe('static_select');
+      for (const option of presetBlock.element.options ?? []) {
+        expect(option.value!.length).toBeLessThanOrEqual(150);
+        expect(option.text.text.length).toBeLessThanOrEqual(75);
+      }
+      // Includes the "default" sentinel for clearing a saved preset.
+      expect(presetBlock.element.options?.[0].value).toBe('__default__');
     });
   });
 
@@ -203,6 +247,61 @@ describe('Block Kit builders', () => {
       if (section?.type === 'section' && section.text && section.text.type === 'mrkdwn') {
         expect(section.text.text).toContain('Style cleared');
       }
+    });
+  });
+
+  describe('quick summarize affordances', () => {
+    it('welcome blocks should include a primary Summarize now button', () => {
+      const button = findButton(buildWelcomeBlocks(), ACTION_QUICK_SUMMARIZE);
+      expect(button).toBeDefined();
+      if (button?.type === 'button') {
+        expect(button.style).toBe('primary');
+      }
+    });
+
+    it('style confirmation should include a try-it-now button', () => {
+      expect(findButton(buildStyleConfirmationBlocks('be funny'), ACTION_QUICK_SUMMARIZE)).toBeDefined();
+      expect(findButton(buildStyleConfirmationBlocks(null), ACTION_QUICK_SUMMARIZE)).toBeDefined();
+    });
+  });
+
+  describe('buildUnknownIntentBlocks', () => {
+    it('should mention the viewing channel when known', () => {
+      const blocks = buildUnknownIntentBlocks('C12345');
+      const section = blocks.find((b) => b.type === 'section');
+      if (section?.type === 'section' && section.text?.type === 'mrkdwn') {
+        expect(section.text.text).toContain('<#C12345>');
+      } else {
+        throw new Error('expected mrkdwn section');
+      }
+    });
+
+    it('should offer summarize and help buttons', () => {
+      const blocks = buildUnknownIntentBlocks(null);
+      expect(findButton(blocks, ACTION_QUICK_SUMMARIZE)).toBeDefined();
+      expect(findButton(blocks, ACTION_SHOW_HELP)).toBeDefined();
+    });
+  });
+
+  describe('buildFailureBlocks', () => {
+    it('should carry the original request in the retry button value', () => {
+      const blocks = buildFailureBlocks(buildRetryValue('C999', 75, 'roast'));
+      const button = findButton(blocks, ACTION_RETRY_SUMMARY);
+      expect(button).toBeDefined();
+      if (button?.type === 'button') {
+        expect(JSON.parse(button.value ?? '{}')).toEqual({
+          channelId: 'C999',
+          count: 75,
+          style: 'roast',
+        });
+      }
+    });
+
+    it('falls back to thread style when the style is too long for a button value', () => {
+      const longStyle = 'x'.repeat(4000);
+      const value = buildRetryValue('C999', 75, longStyle);
+      expect(value).toEqual({ channelId: 'C999', count: 75, style: null, useThreadStyle: true });
+      expect(JSON.stringify(value).length).toBeLessThanOrEqual(2000);
     });
   });
 

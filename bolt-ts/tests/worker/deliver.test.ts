@@ -37,7 +37,7 @@ describe('buildSummaryActionButtons', () => {
     expect(actionIds(blocks)).toEqual(['share_summary', 'rerun_roast']);
   });
 
-  it('embeds count and source channel in Share value payload', () => {
+  it('embeds count, source channel, and compact style kind in Share value payload', () => {
     const blocks = buildSummaryActionButtons({
       sourceChannelId: 'C42',
       messageCount: 100,
@@ -49,7 +49,41 @@ describe('buildSummaryActionButtons', () => {
       action: 'share_summary',
       sourceChannelId: 'C42',
       count: 100,
-      style: 'be funny',
+      styleKind: 'default',
     });
+  });
+
+  it('keeps every button value under Slack 2,000-char cap even with a maximal style', () => {
+    const longStyle = 'roast '.repeat(700); // ~4,200 chars
+    const blocks = buildSummaryActionButtons({
+      sourceChannelId: 'C42',
+      messageCount: 100,
+      currentStyle: longStyle,
+    });
+    const block = blocks[0] as ActionsBlock;
+    for (const element of block.elements) {
+      expect(element.value.length).toBeLessThanOrEqual(2000);
+    }
+  });
+
+  it('includes a provenance footer and feedback buttons', () => {
+    const blocks = buildSummaryActionButtons({
+      sourceChannelId: 'C42',
+      messageCount: 100,
+      currentStyle: null,
+      deliveredAtMs: 1_700_000_000_000,
+    });
+    const context = blocks.find((b) => (b as { type: string }).type === 'context') as {
+      elements: Array<{ text: string }>;
+    };
+    expect(context.elements[0].text).toContain('AI-generated');
+    expect(context.elements[0].text).toContain('<#C42>');
+    expect(context.elements[0].text).toContain('<!date^1700000000^{time}|');
+
+    const feedback = blocks.find(
+      (b) => (b as { type: string }).type === 'context_actions'
+    ) as { elements: Array<{ type: string; positive_button: { text: { text: string } } }> };
+    expect(feedback.elements[0].type).toBe('feedback_buttons');
+    expect(feedback.elements[0].positive_button.text.text.length).toBeLessThanOrEqual(75);
   });
 });

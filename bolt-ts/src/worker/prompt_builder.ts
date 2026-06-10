@@ -27,14 +27,16 @@ import { extractLinksFromMessage, extractLinksFromMessages } from './links';
 /** Inline-image ceiling (bytes). Modern multimodal models accept larger
  *  attachments, but we keep an upper bound to protect Lambda memory and
  *  Anthropic per-request size limits. */
-export const INLINE_IMAGE_MAX_BYTES = 4 * 1024 * 1024; // 4 MiB
+export const INLINE_IMAGE_MAX_BYTES = 4.5 * 1024 * 1024; // 4.5 MiB (kept under Anthropic's 5 MB/image limit)
 /** Conservative cap on inline images per summary to keep prompts focused. */
-export const MAX_IMAGES_TOTAL = 8;
-const MAX_RECEIPTS = 12;
-const MAX_SNIPPET_CHARS = 100;
+export const MAX_IMAGES_TOTAL = 12;
+const MAX_RECEIPTS = 16;
+const MAX_SNIPPET_CHARS = 160;
 
 export interface SummarizePromptData {
   prompt: PromptPayload;
+  /** Human-readable channel name (no leading '#'); channel ID on lookup failure. */
+  channelName: string;
   linksShared: string[];
   receiptPermalinks: string[];
   hasAnyImages: boolean;
@@ -149,6 +151,7 @@ export async function buildSummarizePromptData(
 
   return {
     prompt,
+    channelName,
     linksShared,
     receiptPermalinks,
     hasAnyImages: images.length > 0,
@@ -158,7 +161,8 @@ export async function buildSummarizePromptData(
 /**
  * Safety-net: if the model omits required sections (`Links shared`, `Image
  * highlights`, `Receipts`), append minimal versions so the output is
- * consistent. Mutates the input string and returns the result.
+ * consistent. Headers use standard Markdown (`**…**`) to match the streaming
+ * `markdown_text` dialect. Mutates the input string and returns the result.
  */
 export function applySafetyNetSections(
   summary: string,
@@ -168,7 +172,7 @@ export function applySafetyNetSections(
   let out = summary;
 
   if (!lower.includes('links shared')) {
-    out += '\n\n*Links shared*\n';
+    out += '\n\n**Links shared**\n';
     if (data.linksShared.length === 0) {
       out += '- None\n';
     } else {
@@ -179,12 +183,14 @@ export function applySafetyNetSections(
   }
 
   if (!lower.includes('image highlights')) {
-    out += '\n\n*Image highlights*\n';
-    out += data.hasAnyImages ? '- (No image highlights provided.)\n' : '- None\n';
+    out += '\n\n**Image highlights**\n';
+    out += data.hasAnyImages
+      ? '- Images were shared, but nothing stood out enough to describe.\n'
+      : '- None\n';
   }
 
   if (!lower.includes('receipts')) {
-    out += '\n\n*Receipts*\n';
+    out += '\n\n**Receipts**\n';
     if (data.receiptPermalinks.length === 0) {
       out += '- None\n';
     } else {

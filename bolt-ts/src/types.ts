@@ -27,3 +27,12 @@ export interface ThreadContext {
   customStyle: string | null;
   defaultMessageCount: number | null;
 }
+
+/**
+ * How a summarization run ended. `runSummarization` posts the appropriate
+ * user-facing message for every outcome itself and never throws; callers use
+ * the outcome to decide on follow-up touches (suggested prompts, titles).
+ * `stopped` means the user clicked Slack's stop button on the streaming
+ * message — no further messaging is appropriate.
+ */
+export type SummarizeOutcome = 'delivered' | 'empty' | 'too_large' | 'failed' | 'stopped';

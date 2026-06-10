@@ -68,7 +68,7 @@ Set these deployment variables in `cdk/.env` or your CI environment:
 - `SLACK_BOT_TOKEN_PARAMETER_NAME`
 - `SLACK_SIGNING_SECRET_PARAMETER_NAME`
 - `ANTHROPIC_API_KEY_PARAMETER_NAME`
-- `ANTHROPIC_MODEL` (optional, default `claude-sonnet-4-6`)
+- `ANTHROPIC_MODEL` (optional, default `claude-opus-4-8`)
 
 For CI/CD, configure the `AWS_DEPLOY_ROLE_ARN` GitHub secret for a GitHub OIDC role and set `AWS_ACCOUNT_ID` as a repository variable. The CDK stack no longer creates a broad IAM deployment user or outputs long-lived access keys.
 

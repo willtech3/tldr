@@ -2,7 +2,7 @@
  * End-to-end streaming summarisation for assistant threads.
  *
  *  - Fetch messages, build prompt with images and link/receipt context.
- *  - Open an Anthropic Messages streaming request (Claude Sonnet 4.6).
+ *  - Open an Anthropic Messages streaming request (Claude Opus 4.8 by default).
  *  - For each text delta, chunk and append to the Slack streaming message via
  *    `chat.appendStream`.
  *  - On completion, apply safety-net sections then call `chat.stopStream` with
@@ -15,24 +15,38 @@
 import type { WebClient } from '@slack/web-api';
 import {
   LlmClient,
+  PromptTooLargeError,
   type StreamingResponse,
   TOO_LARGE_MESSAGE,
+  isPromptTooLargeError,
 } from '../ai/anthropic';
+import { buildFailureBlocks, buildRetryValue } from '../blocks';
 import { sanitizeGeneratedSlackMrkdwn } from '../slack/sanitize';
 import {
-  STREAM_MARKDOWN_TEXT_LIMIT,
+  BotNotInChannelError,
   appendStream,
   getBotUserId,
   getRecentMessages,
   startStream,
   stopStream,
 } from '../slack/client';
+import type { SummarizeOutcome } from '../types';
 import { takeStreamChunk } from './chunks';
 import { applySafetyNetSections, buildSummarizePromptData } from './prompt_builder';
 import { buildSummaryActionButtons } from './deliver';
 
 export const CANONICAL_FAILURE_MESSAGE =
   "Sorry, I couldn't generate a summary at this time. Please try again later.";
+
+/** Friendly reply when the source channel has no recent messages. */
+export function buildEmptyChannelMessage(sourceChannelId: string): string {
+  return `🪹 Nothing to summarize in <#${sourceChannelId}> yet — I couldn't find any recent messages. Switch to a busier channel and try again.`;
+}
+
+/** Guidance when the BOT (not the user) isn't in the source channel. */
+export function buildBotNotInChannelMessage(sourceChannelId: string): string {
+  return `🚪 I'm not in <#${sourceChannelId}> yet, so I can't read it. Run \`/invite @TLDR\` there, then tap *Try again*.`;
+}
 
 export interface StreamSummaryArgs {
   client: WebClient;
@@ -68,13 +82,14 @@ const defaultLogger: Logger = {
 };
 
 /**
- * Run the end-to-end streaming summary, including safety-net cleanup. Returns
- * normally on success; throws if cleanup fails fatally.
+ * Run the end-to-end streaming summary, including safety-net cleanup. Posts
+ * the user-facing message for every outcome itself (including failures, which
+ * end in a retryable error message) and reports how the run ended.
  */
 export async function streamSummaryToAssistantThread(
   args: StreamSummaryArgs,
   logger: Logger = defaultLogger
-): Promise<void> {
+): Promise<SummarizeOutcome> {
   const sleep: (ms: number) => Promise<void> =
     args.sleep ?? ((ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms)));
 
@@ -82,20 +97,21 @@ export async function streamSummaryToAssistantThread(
 
   try {
     const messages = await getRecentMessages(args.client, args.sourceChannelId, args.messageCount);
-    if (messages.length === 0) {
-      await args.client.chat.postMessage({
-        channel: args.assistantChannelId,
-        thread_ts: args.assistantThreadTs,
-        text: 'No messages found to summarize.',
-      });
-      return;
-    }
 
-    // Filter out bot's own messages so it doesn't summarize itself.
+    // Filter out bot's own messages so it doesn't summarize itself — and
+    // treat a bot-only channel as empty rather than summarizing nothing.
     const botUserId = await getBotUserId(args.client);
     const userMessages = botUserId
       ? messages.filter((m) => m.user !== botUserId)
       : messages;
+    if (userMessages.length === 0) {
+      await args.client.chat.postMessage({
+        channel: args.assistantChannelId,
+        thread_ts: args.assistantThreadTs,
+        text: buildEmptyChannelMessage(args.sourceChannelId),
+      });
+      return 'empty';
+    }
 
     const promptData = await buildSummarizePromptData({
       client: args.client,
@@ -106,61 +122,106 @@ export async function streamSummaryToAssistantThread(
       fetchImpl: args.fetchImpl,
     });
 
-    const prefix = buildStreamPrefix(args.sourceChannelId, args.customStyle);
+    const prefix = buildStreamPrefix(promptData.channelName, args.customStyle);
     const stream = await args.llm.generateSummaryStream(promptData.prompt);
 
     if (stream.kind === 'too_large') {
-      const message = sanitizeGeneratedSlackMrkdwn(
-        prefix + applySafetyNetSections(TOO_LARGE_MESSAGE, promptData)
-      );
       await args.client.chat.postMessage({
         channel: args.assistantChannelId,
         thread_ts: args.assistantThreadTs,
-        text: message,
+        text: TOO_LARGE_MESSAGE,
+        blocks: buildTooLargeBlocks(args.sourceChannelId, args.customStyle),
       });
-      return;
+      return 'too_large';
     }
 
-    streamTs = await consumeStream({
+    // Start the stream with the header immediately — the user sees activity
+    // while Anthropic is still thinking, instead of staring at dead air.
+    streamTs = await startStream(args.client, {
+      channel: args.assistantChannelId,
+      threadTs: args.assistantThreadTs,
+      markdownText: sanitizeGeneratedSlackMrkdwn(prefix),
+    });
+
+    const consumed = await consumeStream({
       ...args,
       sleep,
-      prefix,
       promptData,
       stream,
-      streamTs: null,
+      streamTs,
       logger,
     });
+    // The user clicked Slack's stop button — accept it quietly.
+    return consumed.stopped ? 'stopped' : 'delivered';
   } catch (err) {
     logger.error('Streaming summary failed', {
       corr_id: args.correlationId,
       error: err instanceof Error ? err.message : String(err),
     });
+
+    if (err instanceof PromptTooLargeError) {
+      await ensureCanonicalFailure({
+        client: args.client,
+        assistantChannelId: args.assistantChannelId,
+        assistantThreadTs: args.assistantThreadTs,
+        streamTs,
+        correlationId: args.correlationId,
+        retry: buildRetryValue(args.sourceChannelId, 50, args.customStyle),
+        failureText: buildTooLargeText(args.sourceChannelId),
+        buttonLabel: '📉 Try last 50',
+        logger,
+      });
+      return 'too_large';
+    }
+
+    const failureText =
+      err instanceof BotNotInChannelError
+        ? buildBotNotInChannelMessage(args.sourceChannelId)
+        : undefined;
     await ensureCanonicalFailure({
       client: args.client,
       assistantChannelId: args.assistantChannelId,
       assistantThreadTs: args.assistantThreadTs,
       streamTs,
       correlationId: args.correlationId,
+      retry: buildRetryValue(args.sourceChannelId, args.messageCount, args.customStyle),
+      failureText,
       logger,
     });
-    throw err;
+    return 'failed';
   }
 }
 
+function buildTooLargeText(sourceChannelId: string): string {
+  return `📚 <#${sourceChannelId}> has too much going on to summarize in one go.\nWant the highlights of just the last 50?`;
+}
+
+/** "Conversation too long" blocks with a one-tap smaller retry. */
+export function buildTooLargeBlocks(
+  sourceChannelId: string,
+  style: string | null
+): ReturnType<typeof buildFailureBlocks> {
+  return buildFailureBlocks(
+    buildRetryValue(sourceChannelId, 50, style),
+    buildTooLargeText(sourceChannelId),
+    '📉 Try last 50'
+  );
+}
+
 interface ConsumeStreamArgs extends StreamSummaryArgs {
-  prefix: string;
   promptData: { linksShared: string[]; receiptPermalinks: string[]; hasAnyImages: boolean };
   stream: Extract<StreamingResponse, { kind: 'active' }>;
-  streamTs: string | null;
+  /** Slack streaming message ts — already started with the header prefix. */
+  streamTs: string;
   sleep: (ms: number) => Promise<void>;
   logger: Logger;
 }
 
-async function consumeStream(args: ConsumeStreamArgs): Promise<string> {
-  let streamTs: string | null = args.streamTs;
+async function consumeStream(args: ConsumeStreamArgs): Promise<{ stopped: boolean }> {
+  const streamTs: string = args.streamTs;
   let pending = '';
   let collected = '';
-  let lastAppendAt: number | null = null;
+  let lastAppendAt: number | null = Date.now();
   let canAppend = true;
 
   const flushAll = async (ts: string): Promise<void> => {
@@ -198,6 +259,9 @@ async function consumeStream(args: ConsumeStreamArgs): Promise<string> {
       }
       const event = next.value;
       if (event.kind === 'failed') {
+        if (isPromptTooLargeError({ message: event.message })) {
+          throw new PromptTooLargeError(event.message);
+        }
         throw new Error(event.message);
       }
       if (event.kind === 'completed') {
@@ -208,30 +272,6 @@ async function consumeStream(args: ConsumeStreamArgs): Promise<string> {
       }
       pending += event.delta;
       collected += event.delta;
-
-      if (streamTs === null) {
-        const prefixChars = [...args.prefix].length;
-        if (prefixChars >= STREAM_MARKDOWN_TEXT_LIMIT) {
-          throw new Error('Streaming prefix exceeds Slack markdown limit');
-        }
-        const maxFirst = Math.min(
-          STREAM_MARKDOWN_TEXT_LIMIT - prefixChars,
-          args.streamMaxChunkChars
-        );
-        const taken = takeStreamChunk(pending, maxFirst);
-        if (!taken) {
-          continue;
-        }
-        const initialText = sanitizeGeneratedSlackMrkdwn(args.prefix + taken.chunk);
-        streamTs = await startStream(args.client, {
-          channel: args.assistantChannelId,
-          threadTs: args.assistantThreadTs,
-          markdownText: initialText,
-        });
-        pending = taken.rest;
-        lastAppendAt = Date.now();
-        continue;
-      }
 
       if (!canAppend || pending.length === 0 || lastAppendAt === null) {
         continue;
@@ -262,7 +302,7 @@ async function consumeStream(args: ConsumeStreamArgs): Promise<string> {
     }
   }
 
-  if (streamTs === null) {
+  if (collected.length === 0) {
     throw new Error('Anthropic stream completed without any output');
   }
 
@@ -291,7 +331,7 @@ async function consumeStream(args: ConsumeStreamArgs): Promise<string> {
     });
   }
 
-  return streamTs;
+  return { stopped: !canAppend };
 }
 
 interface AppendOneChunkArgs {
@@ -348,6 +388,14 @@ async function finalizeStreamSuccess(args: {
     channel: args.channel,
     ts: args.streamTs,
     blocks,
+    metadata: {
+      event_type: 'tldr_summary_v1',
+      event_payload: {
+        source_channel_id: args.sourceChannelId,
+        message_count: args.messageCount,
+        has_style: args.customStyle !== null,
+      },
+    },
   });
 }
 
@@ -357,16 +405,25 @@ interface EnsureCanonicalFailureArgs {
   assistantThreadTs: string;
   streamTs: string | null;
   correlationId: string;
+  /** Original request, embedded in the retry button (pre-bounded via buildRetryValue). */
+  retry: { channelId: string; count: number; style: string | null; useThreadStyle?: boolean };
+  /** Override the default apology (e.g. bot-not-in-channel guidance). */
+  failureText?: string;
+  /** Override the retry button label. */
+  buttonLabel?: string;
   logger: Logger;
 }
 
 async function ensureCanonicalFailure(args: EnsureCanonicalFailureArgs): Promise<void> {
+  const failureBlocks = buildFailureBlocks(args.retry, args.failureText, args.buttonLabel);
+
   if (!args.streamTs) {
     try {
       await args.client.chat.postMessage({
         channel: args.assistantChannelId,
         thread_ts: args.assistantThreadTs,
         text: CANONICAL_FAILURE_MESSAGE,
+        blocks: failureBlocks,
       });
     } catch (err) {
       args.logger.error('Failed to post canonical failure message', {
@@ -391,7 +448,7 @@ async function ensureCanonicalFailure(args: EnsureCanonicalFailureArgs): Promise
       channel: args.assistantChannelId,
       ts: args.streamTs,
       text: CANONICAL_FAILURE_MESSAGE,
-      blocks: [],
+      blocks: failureBlocks,
     });
     return;
   } catch (err) {
@@ -414,6 +471,7 @@ async function ensureCanonicalFailure(args: EnsureCanonicalFailureArgs): Promise
       channel: args.assistantChannelId,
       thread_ts: args.assistantThreadTs,
       text: CANONICAL_FAILURE_MESSAGE,
+      blocks: failureBlocks,
     });
   } catch (err) {
     args.logger.error('Failed to post fallback canonical failure message', {
@@ -423,14 +481,22 @@ async function ensureCanonicalFailure(args: EnsureCanonicalFailureArgs): Promise
   }
 }
 
-/** Build the streaming prefix shown above the LLM-streamed body. */
-export function buildStreamPrefix(channelId: string, customStyle: string | null): string {
+/**
+ * Build the streaming prefix shown above the LLM-streamed body.
+ *
+ * Written in standard Markdown — the chat.*Stream `markdown_text` field is a
+ * Markdown renderer, so mrkdwn tokens like `<#C123>` would render literally.
+ * Takes the human-readable channel name (falls back to whatever is passed,
+ * e.g. a channel ID when the name lookup failed).
+ */
+export function buildStreamPrefix(channelName: string, customStyle: string | null): string {
   let prefix = '';
   const stylePrefix = buildStylePrefix(customStyle);
   if (stylePrefix) {
     prefix += stylePrefix;
   }
-  prefix += `*Summary from <#${channelId}>*\n\n`;
+  const label = /^[A-Z][A-Z0-9]{8,}$/.test(channelName) ? channelName : `#${channelName}`;
+  prefix += `**Summary of ${label}**\n\n`;
   return prefix;
 }
 

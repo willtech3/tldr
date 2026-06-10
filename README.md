@@ -6,9 +6,11 @@ TLDR is a serverless Slack bot that turns a wall of unread messages into a conci
 
 ## ✨ Key Features
 
-- **AI App Experience** – Native Slack AI App split-view integration with suggested prompts and context tracking.
-- **AI-Generated Summaries** – Uses Anthropic Claude Sonnet 4.6 to distill channel messages into digestible summaries.
-- **Custom Styles** – Make summaries funny, formal, or fit your friend group's vibe.
+- **AI App Experience** – Native Slack AI App split-view integration with suggested prompts, context tracking, and one-tap ⚡ Summarize now buttons.
+- **AI-Generated Summaries** – Uses Anthropic Claude Opus 4.8 to distill channel messages into digestible summaries with links, image highlights, and receipts (message permalinks).
+- **Custom Styles** – Preset personas (Roast, Receipts, Executive brief, Haiku) or write your own; per-thread or one-off.
+- **Summarize Thread Shortcut** – Right-click any message → *Summarize Thread* for a private, in-channel thread recap.
+- **Engagement Built In** – Post-summary follow-up prompts, thumbs up/down feedback, share-to-channel with confirmation, retry buttons on every failure.
 - **Single TypeScript Service** – One Bolt.js Lambda hosts the Slack event surface *and* the streaming summarizer.
 - **Streaming Replies** – Summaries stream into the assistant thread token-by-token via Slack's `chat.startStream` / `chat.appendStream` / `chat.stopStream` APIs.
 
@@ -20,13 +22,15 @@ TLDR is a serverless Slack bot that turns a wall of unread messages into a conci
 
 1. **Open TLDR** – Click the AI Apps icon in the top-right corner of Slack, then select TLDR.
 2. **Navigate to a channel** – Switch to any channel in Slack's main view.
-3. **Summarize** – Click a suggested prompt or type:
-   - `summarize` – Summarize last 50 messages
+3. **Summarize** – Tap *⚡ Summarize now*, click a suggested prompt, or type:
+   - `summarize` (or `catch me up`, `what did I miss`, `tldr`) – Summarize the channel you're viewing
    - `summarize last 100` – Summarize last 100 messages
-   - `style: write as haiku` – Change the summary style
+   - `summarize #general` – Summarize a specific channel
+   - `style: write as haiku` – Change the summary style for this thread
    - `help` – Show available commands
 
 That's it! TLDR automatically tracks which channel you're viewing and summarizes it.
+You can also right-click any message → **Summarize Thread** for a private thread recap.
 
 ---
 
@@ -43,7 +47,7 @@ That's it! TLDR automatically tracks which channel you're viewing and summarizes
 ```
 
 A single Node.js Lambda hosts the entire app. Bolt internally ACKs Slack events;
-the handler streams the Anthropic Claude response (Sonnet 4.6 by default)
+the handler streams the Anthropic Claude response (Opus 4.8 by default)
 straight into the assistant thread via Slack's `chat.*Stream` APIs.
 
 ---
@@ -106,8 +110,8 @@ Deployment variables:
 | `SLACK_BOT_TOKEN_PARAMETER_NAME` | SSM SecureString parameter for the bot OAuth token |
 | `SLACK_SIGNING_SECRET_PARAMETER_NAME` | SSM SecureString parameter for the Slack signing secret |
 | `ANTHROPIC_API_KEY_PARAMETER_NAME` | SSM SecureString parameter for the Anthropic API key |
-| `ANTHROPIC_MODEL` | Optional override (defaults to `claude-sonnet-4-6`) |
-| `ANTHROPIC_MAX_OUTPUT_TOKENS` | Optional output cap (default 16 000, max 64 000) |
+| `ANTHROPIC_MODEL` | Optional override (defaults to `claude-opus-4-8`) |
+| `ANTHROPIC_MAX_OUTPUT_TOKENS` | Optional output cap (default 32 000, max 64 000) |
 | `ENABLE_STREAMING` | `true` to stream summaries into the thread (recommended, default) |
 | `STREAM_MAX_CHUNK_CHARS` | Per-append chunk size for `chat.appendStream` (default 8 000, max 12 000) |
 | `STREAM_MIN_APPEND_INTERVAL_MS` | Floor between appends to respect rate limits (default 500 ms) |

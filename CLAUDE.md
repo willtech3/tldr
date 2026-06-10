@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 TLDR is a serverless Slack AI App that generates AI summaries of unread messages.
 A single TypeScript Bolt.js Lambda handles Slack events *and* runs the
-summarization pipeline inline, streaming Anthropic Claude (Sonnet 4.6 by
+summarization pipeline inline, streaming Anthropic Claude (Opus 4.8 by
 default) responses into the assistant thread via Slack's `chat.startStream` /
 `chat.appendStream` / `chat.stopStream` APIs.
 
@@ -93,8 +93,8 @@ worker split has been removed.
 - `SLACK_BOT_TOKEN_PARAMETER_NAME` — SSM SecureString for bot OAuth token.
 - `SLACK_SIGNING_SECRET_PARAMETER_NAME` — SSM SecureString for request verification.
 - `ANTHROPIC_API_KEY_PARAMETER_NAME` — SSM SecureString for Anthropic API access.
-- `ANTHROPIC_MODEL` — Optional override (defaults to `claude-sonnet-4-6`).
-- `ANTHROPIC_MAX_OUTPUT_TOKENS` — Optional output cap (default 16 000, max 64 000).
+- `ANTHROPIC_MODEL` — Optional override (defaults to `claude-opus-4-8`).
+- `ANTHROPIC_MAX_OUTPUT_TOKENS` — Optional output cap (default 32 000, max 64 000; adaptive thinking shares this budget).
 - `ENABLE_STREAMING` — `true` / `false` (default `true`).
 - `STREAM_MAX_CHUNK_CHARS` — Per-append chunk size (default 8 000, capped at 12 000).
 - `STREAM_MIN_APPEND_INTERVAL_MS` — Floor between appends (default 500 ms).

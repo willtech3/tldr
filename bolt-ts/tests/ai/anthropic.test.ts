@@ -1,6 +1,6 @@
 import {
   LlmClient,
-  TOO_LARGE_MESSAGE,
+  PromptTooLargeError,
   isPromptTooLargeError,
 } from '../../src/ai/anthropic';
 import { buildPrompt } from '../../src/ai/prompt';
@@ -52,7 +52,7 @@ describe('LlmClient.generateSummary', () => {
     expect(requestUrl).toContain('/v1/messages');
   });
 
-  it('returns the friendly TOO_LARGE_MESSAGE when Anthropic rejects an oversize prompt', async () => {
+  it('throws PromptTooLargeError when Anthropic rejects an oversize prompt', async () => {
     const errorBody = JSON.stringify({
       type: 'error',
       error: { type: 'invalid_request_error', message: 'prompt is too long: ...' },
@@ -65,8 +65,7 @@ describe('LlmClient.generateSummary', () => {
       model: 'claude-test',
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
-    const result = await client.generateSummary(makePrompt());
-    expect(result).toBe(TOO_LARGE_MESSAGE);
+    await expect(client.generateSummary(makePrompt())).rejects.toBeInstanceOf(PromptTooLargeError);
   });
 
   it('rethrows non-too-large errors', async () => {

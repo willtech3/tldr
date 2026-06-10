@@ -9,15 +9,22 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { MessageStreamEvent } from '@anthropic-ai/sdk/resources/messages';
 import type { ContentBlock, PromptPayload } from './prompt';
 
-/** Default Anthropic model. */
-export const DEFAULT_MODEL = 'claude-sonnet-4-6';
+/** Default Anthropic model — latest non-Fable Claude model. */
+export const DEFAULT_MODEL = 'claude-opus-4-8';
 
 /**
- * Max output tokens per request. Sonnet 4.6 supports up to 64k synchronous
- * output; we cap below that to keep streaming latency reasonable for Slack
- * (Slack's per-call markdown_text limit dominates anyway).
+ * Max output tokens per request. Opus 4.8 supports far more, but we cap well
+ * below that to keep streaming latency reasonable for Slack (Slack's per-call
+ * markdown_text limit dominates anyway). Adaptive thinking shares this budget
+ * with the visible summary, so leave generous headroom.
  */
-export const DEFAULT_MAX_OUTPUT_TOKENS = 16_000;
+export const DEFAULT_MAX_OUTPUT_TOKENS = 32_000;
+
+/**
+ * Non-streaming requests must stay under the SDK's HTTP-timeout heuristic
+ * (it rejects non-streaming calls whose max_tokens imply >10 min runtime).
+ */
+const NONSTREAMING_MAX_OUTPUT_TOKENS = 16_000;
 
 export type StreamEvent =
   | { kind: 'text_delta'; delta: string }
@@ -39,6 +46,14 @@ export type StreamingResponse =
 /** Friendly message shown when the model rejects the request as too long. */
 export const TOO_LARGE_MESSAGE =
   'The conversation is too long to summarize in full. Try `summarize last N` in this thread to limit the window.';
+
+/** Typed signal that the prompt exceeded the model's context window. */
+export class PromptTooLargeError extends Error {
+  constructor(message = 'Prompt exceeds the model context window') {
+    super(message);
+    this.name = 'PromptTooLargeError';
+  }
+}
 
 /**
  * Detect Anthropic's "prompt is too long" / overloaded responses so the
@@ -79,10 +94,10 @@ export class LlmClient {
     try {
       const response = await this.client.messages.create({
         model: this.model,
-        max_tokens: this.maxOutputTokens,
-        // Anthropic's current best practice for Sonnet 4.6: adaptive thinking.
-        // The model decides when and how much to think; budget_tokens is
-        // deprecated on this family. Thinking blocks are emitted separately
+        max_tokens: Math.min(this.maxOutputTokens, NONSTREAMING_MAX_OUTPUT_TOKENS),
+        // Anthropic's current best practice for the Claude 4.6+ family:
+        // adaptive thinking. The model decides when and how much to think;
+        // budget_tokens is deprecated. Thinking blocks are emitted separately
         // from text blocks, so our text-only consumer is unaffected.
         thinking: { type: 'adaptive' },
         system: prompt.system,
@@ -96,7 +111,7 @@ export class LlmClient {
       return extractText(response.content);
     } catch (err) {
       if (isPromptTooLargeError(err)) {
-        return TOO_LARGE_MESSAGE;
+        throw new PromptTooLargeError(err instanceof Error ? err.message : undefined);
       }
       throw err;
     }
