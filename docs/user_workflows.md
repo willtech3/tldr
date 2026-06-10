@@ -25,7 +25,7 @@ This document describes the primary user interactions for TLDR in the Slack AI S
 **Goal**: Entertain the group with a sarcastic or critical summary.
 
 1. **User Action**: Opens TLDR and clicks the "🔥 Choose Violence" suggested prompt.
-   - *Command sent*: `summarize with style: be hyper-critical, sarcastic, and roast everyone...`
+   - *Command sent*: `summarize with style: maximum chaos mode — be theatrically funny, dramatic, and roast everyone with surgical precision... start every bullet with a verdict emoji (🔥 💀 🤡 📉 🎯 🚨 🍿 🧠 ⚰️)... end the Summary with 🏆 MVP and 🪦 casualty awards...`
 2. **System**:
    - Generates a summary using the "Roast" persona.
    - Posts the result.

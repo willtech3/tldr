@@ -35,7 +35,7 @@ We will update the default suggested prompts shown when opening the assistant th
 
 | # | Title | Message | Rationale |
 |---|-------|---------|-----------|
-| 1 | 🔥 Choose Violence | `summarize with style: be hyper-critical, sarcastic, and roast everyone mercilessly. call out bad takes and dumb ideas.` | The killer feature. "Choose Violence" is more evocative than "Roast Mode". |
+| 1 | 🔥 Choose Violence | `summarize with style: maximum chaos mode — be theatrically funny, dramatic, and roast everyone with surgical precision. make it actually funny, not just mean. start every bullet with a verdict emoji: 🔥 hot take, 💀 self-own, 🤡 clown moment, 📉 L taken, 🎯 surprisingly valid, 🚨 red flag, 🍿 drama unfolding, 🧠 galaxy brain, ⚰️ buried by their own argument. in the Summary section, tag each named person with one verdict emoji after their name. end the Summary with a one-line "🏆 MVP: <person>" and "🪦 casualty: <person>" awards. mock-outrage, dramatic gasps, and absurdist commentary encouraged. keep all four sections, real links, and real receipts intact.` | The killer feature. Emoji-graded verdicts, MVP/casualty awards, and theatrical comedy land harder than plain sarcasm. |
 | 2 | 📋 Just the Facts | `summarize` | Basic utility for quick catch-up. Simple but not boring. |
 | 3 | 🕵️ Run the Investigation | `summarize with style: break down by person. what did each person contribute? be specific about who said what.` | Frames the breakdown as detective work. |
 | 4 | 📜 Pull the Receipts | `summarize with style: find contradictions, broken promises, and things people said they would do but didn't. bring the receipts.` | Specific call-outs of hypocrisy drive engagement. |

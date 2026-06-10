@@ -27,14 +27,23 @@ async function initialize(): Promise<AwsLambdaReceiver> {
   if (receiverPromise) {
     return receiverPromise;
   }
-  receiverPromise = (async (): Promise<AwsLambdaReceiver> => {
+  // If initialization fails (e.g. SSM not yet populated), clear the cached
+  // promise so the next invocation on this warm container retries instead of
+  // re-awaiting the same rejection.
+  const attempt = (async (): Promise<AwsLambdaReceiver> => {
     const config = await loadConfigCached();
     const created = new AwsLambdaReceiver({ signingSecret: config.slackSigningSecret });
     createApp(config, created);
     receiver = created;
     return created;
   })();
-  return receiverPromise;
+  receiverPromise = attempt;
+  attempt.catch(() => {
+    if (receiverPromise === attempt) {
+      receiverPromise = null;
+    }
+  });
+  return attempt;
 }
 
 export const handler = async (

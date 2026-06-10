@@ -61,10 +61,11 @@ worker split has been removed.
 - `src/index.ts` — Lambda entry point (`AwsLambdaReceiver` + lazy init).
 - `src/app.ts` — Bolt app factory; registers Assistant, style modal, action handlers.
 - `src/config.ts` — Env + SSM Parameter Store loader (cached).
-- `src/handlers/` — Assistant middleware, style modal, summary action buttons.
+- `src/handlers/` — Assistant middleware, style modal, summary action buttons (registered via `handlers/index.ts` barrel).
 - `src/blocks.ts` — Block Kit builders for welcome / help / style modal / confirmations.
 - `src/intent.ts` — Natural-language command parser (`help`, `style`, `clear_style`, `summarize`, `unknown`).
-- `src/security.ts` — Rate limiting, channel-membership check, style validation.
+- `src/loading_messages.ts` — Rotating progress strings shown via `setStatus({ loading_messages })` while a summary streams.
+- `src/security.ts` — Rate limiting, channel-membership check, style validation, generated-text sanitisers.
 - `src/thread_state.ts` — Persists thread state via Slack message metadata.
 - `src/slack/` — Web client wrappers, `chat.*Stream` helpers, generated-text sanitiser, image fetch.
 - `src/ai/` — Anthropic Messages API client (`@anthropic-ai/sdk`), XML-structured prompt builder, image helpers.
