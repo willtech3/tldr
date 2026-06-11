@@ -77,7 +77,7 @@ export function buildWelcomeBlocks(
         type: 'mrkdwn',
         text:
           "👋 *Hi! I'm TLDR.* I turn busy channels into tight summaries — with links, receipts, and image highlights.\n\n" +
-          'Hit *⚡ Summarize now*, pick a suggested prompt, or just tell me what you want (`catch me up`, `summarize last 200`, …).',
+          'Hit *⚡ Summarize now*, pick a suggested prompt, or just talk to me (`catch me up`, `summarize last 200`, or any question — I chat too).',
       },
     },
     { type: 'divider' },
