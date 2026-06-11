@@ -52,7 +52,7 @@ If installation is not possible (e.g., no root in the container), the scripts em
 Quality checks and tests run without external secrets. For local integration runs or deployments, provide:
 
 - `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`
-- `OPENAI_API_KEY` (and optional `OPENAI_ORG_ID`)
+- `ANTHROPIC_API_KEY` (optionally `ANTHROPIC_MODEL` to override the default `claude-sonnet-4-6`)
 
 For CDK workflows, see `cdk/env.example` and create `cdk/.env` accordingly.
 

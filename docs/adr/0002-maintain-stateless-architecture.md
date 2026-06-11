@@ -1,7 +1,9 @@
 # ADR-0002: Maintain Stateless Architecture
 
 ## Status
-**Accepted**
+**Accepted** _(updated 2026-05: the original SQS worker queue was removed — the
+summarization worker now runs inline in the single Lambda. The stateless
+decision below still holds.)_
 
 ## Date
 2025-12-18
@@ -24,7 +26,8 @@ We will **not** add a persistent database (DynamoDB) to the architecture. The ap
 - **User Preferences:** Custom styles persist only for the current assistant thread (stored in Slack message metadata), not across threads or channels.
 - **No "Unread" Detection:** Without per-user OAuth tokens, the bot cannot detect which messages are unread for a specific user. Summarization defaults to "last N messages."
 - **Development Focus:** Engineering effort focuses on leveraging Slack's interaction payloads and message metadata rather than data modeling and synchronization.
-- **Infrastructure:** No AWS resources beyond Lambda + SQS are required.
+- **Infrastructure:** No AWS resources beyond the Lambda + API Gateway are
+  required (the original SQS worker queue has since been removed).
 
 ## References
 - [ADR-0001: Initial Architecture Assessment](0001-initial-architecture-assessment.md)
