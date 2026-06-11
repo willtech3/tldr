@@ -27,6 +27,7 @@ interface ClientSpies {
   setStatus: jest.Mock;
   conversationsReplies: jest.Mock;
   conversationsInfo: jest.Mock;
+  authTest: jest.Mock;
 }
 
 function makeWebClient(threadMessages: unknown[] = []): { client: WebClient; spies: ClientSpies } {
@@ -39,6 +40,7 @@ function makeWebClient(threadMessages: unknown[] = []): { client: WebClient; spi
     setStatus: jest.fn().mockResolvedValue({ ok: true }),
     conversationsReplies: jest.fn().mockResolvedValue({ messages: threadMessages }),
     conversationsInfo: jest.fn().mockResolvedValue({ channel: { name: 'demo' } }),
+    authTest: jest.fn().mockResolvedValue({ user_id: 'UBOT' }),
   };
   const client = {
     chat: {
@@ -50,6 +52,7 @@ function makeWebClient(threadMessages: unknown[] = []): { client: WebClient; spi
     },
     assistant: { threads: { setStatus: spies.setStatus } },
     conversations: { replies: spies.conversationsReplies, info: spies.conversationsInfo },
+    auth: { test: spies.authTest },
   } as unknown as WebClient;
   return { client, spies };
 }
@@ -129,7 +132,8 @@ describe('runGeneralChat (streaming)', () => {
   it('passes thread history and the user message to the prompt', async () => {
     const { client } = makeWebClient([
       { ts: '0.5', user: 'U1', text: 'summarize' },
-      { ts: '0.6', text: 'Summary of #demo ...' },
+      // Bot messages carry the bot's own user ID, not a missing `user`.
+      { ts: '0.6', user: 'UBOT', text: 'Summary of #demo ...' },
       { ts: '2.0', user: 'U1', text: 'hey, who are you?' }, // triggering msg — excluded
     ]);
     const llm = makeLlm(makeStream([{ kind: 'text_delta', delta: 'hi' }, { kind: 'completed' }]));

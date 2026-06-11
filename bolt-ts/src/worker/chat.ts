@@ -18,6 +18,7 @@ import { checkSummarizeRateLimit } from '../security';
 import { sanitizeGeneratedSlackMrkdwn, truncateForMarkdownBlock } from '../slack/sanitize';
 import {
   appendStream,
+  getBotUserId,
   getChannelName,
   getThreadMessages,
   startStream,
@@ -140,21 +141,26 @@ export async function runGeneralChat(args: GeneralChatArgs): Promise<ChatOutcome
 /**
  * Fetch the assistant thread and shape it into chat history: oldest first,
  * sans the triggering message, each entry capped, empty/blocks-only messages
- * dropped. Bot messages (no `user`) are attributed to the assistant.
+ * dropped. Bot messages carry the bot's own user ID (not a missing `user`),
+ * so attribution compares against `auth.test`.
  */
 async function loadChatHistory(args: GeneralChatArgs): Promise<ChatHistoryEntry[]> {
   try {
-    const messages = await getThreadMessages(
-      args.client,
-      args.assistantChannelId,
-      args.assistantThreadTs,
-      HISTORY_LIMIT + 1
-    );
+    const [messages, botUserId] = await Promise.all([
+      getThreadMessages(
+        args.client,
+        args.assistantChannelId,
+        args.assistantThreadTs,
+        HISTORY_LIMIT + 1
+      ),
+      getBotUserId(args.client),
+    ]);
     return messages
       .filter((m) => m.ts !== args.userMessageTs && m.text.trim().length > 0)
       .slice(-HISTORY_LIMIT)
       .map((m) => ({
-        role: m.user ? ('user' as const) : ('assistant' as const),
+        role:
+          m.user && m.user !== botUserId ? ('user' as const) : ('assistant' as const),
         text: [...m.text].slice(0, HISTORY_MESSAGE_MAX_CHARS).join(''),
       }));
   } catch (error) {
@@ -230,8 +236,12 @@ async function streamChatReply(
         await appendChunk();
       }
     }
+    if (collected.length === 0) {
+      throw new Error('Anthropic chat stream completed without any output');
+    }
   } catch (error) {
-    // Stop the partial message before surfacing the failure fallback.
+    // Stop and remove the partial (or empty) message before surfacing the
+    // failure fallback.
     await stopStream(args.client, {
       channel: args.assistantChannelId,
       ts: streamTs,
@@ -242,14 +252,6 @@ async function streamChatReply(
     throw error;
   } finally {
     void stream.cancel();
-  }
-
-  if (collected.length === 0) {
-    await stopStream(args.client, {
-      channel: args.assistantChannelId,
-      ts: streamTs,
-    }).catch(() => undefined);
-    throw new Error('Anthropic chat stream completed without any output');
   }
 
   while (canAppend && pending.length > 0) {
