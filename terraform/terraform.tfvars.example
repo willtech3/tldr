@@ -17,12 +17,14 @@ slack_signing_secret_parameter_name = "/tldr/slack/signing-secret"
 anthropic_api_key_parameter_name    = "/tldr/anthropic/api-key"
 
 # --- Optional Anthropic + streaming tuning (empty string = omit the env var) ---
-# anthropic_model               = "claude-sonnet-4-6"
-# anthropic_max_output_tokens   = "16000"
+# anthropic_model               = "claude-opus-4-8"
+# anthropic_max_output_tokens   = "32000"
 enable_streaming = "true"
 # stream_max_chunk_chars        = "8000"
 # stream_min_append_interval_ms = "500"
 
 # --- API Gateway ---
-# Set to false if another stack already owns the account-level CloudWatch role.
-# manage_api_gateway_account = true
+# Defaults to false: another stack in the TLDR production account already owns
+# the account-level CloudWatch role. Only enable in an account where nothing
+# else manages API Gateway account settings.
+# manage_api_gateway_account = false

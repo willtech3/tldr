@@ -88,10 +88,9 @@ After deployment, update your Slack app with the API Gateway URL:
 
 1. Get the API Gateway URL from:
    ```bash
-   aws cloudformation describe-stacks --stack-name TldrStack \
-     --query "Stacks[0].Outputs[?OutputKey=='ApiGatewayUrl'].OutputValue" \
-     --output text
+   terraform -chdir=terraform output -raw api_gateway_url
    ```
+   (requires `terraform init` against the state bucket; see terraform/README.md)
    Or check GitHub Actions logs for "API Gateway URL"
 
 2. Update `slack-app-manifest.yaml`:

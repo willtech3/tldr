@@ -2,6 +2,14 @@
 resource "aws_api_gateway_rest_api" "tldr" {
   name        = "Tldr API"
   description = "API for Tldr Slack bot integration"
+
+  # The api id is embedded in the public invoke URL that the Slack app
+  # manifest points at; replacing this resource breaks every Slack request
+  # until the manifest is manually updated. Force any replacement to be an
+  # explicit, deliberate act.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Resource tree: /slack, /slack/interactive, /slack/events
@@ -78,15 +86,19 @@ resource "aws_lambda_permission" "api_gateway_invoke" {
 resource "aws_api_gateway_deployment" "tldr" {
   rest_api_id = aws_api_gateway_rest_api.tldr.id
 
+  # Hash the full resource objects, not their ids: ids are stable identifiers,
+  # so an in-place change (e.g. an integration uri repointed at a new Lambda)
+  # would never alter an id-based hash and the stage would silently keep
+  # serving the old snapshot.
   triggers = {
     redeployment = sha1(jsonencode([
-      aws_api_gateway_resource.slack.id,
-      aws_api_gateway_resource.interactive.id,
-      aws_api_gateway_resource.events.id,
-      aws_api_gateway_method.interactive_post.id,
-      aws_api_gateway_method.events_post.id,
-      aws_api_gateway_integration.interactive.id,
-      aws_api_gateway_integration.events.id,
+      aws_api_gateway_resource.slack,
+      aws_api_gateway_resource.interactive,
+      aws_api_gateway_resource.events,
+      aws_api_gateway_method.interactive_post,
+      aws_api_gateway_method.events_post,
+      aws_api_gateway_integration.interactive,
+      aws_api_gateway_integration.events,
     ]))
   }
 
@@ -105,7 +117,8 @@ resource "aws_api_gateway_stage" "prod" {
   depends_on = [aws_api_gateway_account.this]
 }
 
-# Stage-level method settings, mirroring CDK deployOptions: INFO access logging,
+# Stage-level method settings, mirroring CDK deployOptions: INFO execution
+# logging (API Gateway writes these to its own implicitly-created log group),
 # CloudWatch metrics on, and data tracing OFF (request/response bodies carry
 # workspace data and Slack signature material and must never be logged).
 resource "aws_api_gateway_method_settings" "prod" {

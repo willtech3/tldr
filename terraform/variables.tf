@@ -68,13 +68,13 @@ variable "anthropic_api_key_parameter_name" {
 }
 
 variable "anthropic_model" {
-  description = "Optional Anthropic model override. Empty string omits the env var (Lambda defaults to claude-sonnet-4-6)."
+  description = "Optional Anthropic model override. Empty string omits the env var (Lambda defaults to claude-opus-4-8)."
   type        = string
   default     = ""
 }
 
 variable "anthropic_max_output_tokens" {
-  description = "Optional max output token cap. Empty string omits the env var (Lambda default 16000, cap 64000)."
+  description = "Optional max output token cap. Empty string omits the env var (Lambda default 32000, cap 64000)."
   type        = string
   default     = ""
 }
@@ -104,11 +104,14 @@ variable "stream_max_chunk_chars" {
 variable "manage_api_gateway_account" {
   description = <<-EOT
     Whether to manage the account-level API Gateway CloudWatch Logs role and
-    settings. CDK created these because stage logging is set to INFO. This is an
-    ACCOUNT-GLOBAL, REGION-WIDE setting shared by every REST API in the account;
-    set to false if another stack/Terraform config already owns it (otherwise
-    the two will fight over aws_api_gateway_account).
+    settings. This is an ACCOUNT-GLOBAL, REGION-WIDE setting shared by every
+    REST API in the account; if two stacks both manage it they fight over
+    aws_api_gateway_account on every deploy. Defaults to false because in the
+    TLDR production account another stack (EmojiSmithStack) already owns the
+    setting and a valid CloudWatch role is in place — stage INFO logging works
+    regardless of which stack configured it. Only set to true in an account
+    where nothing else manages API Gateway account settings.
   EOT
   type        = bool
-  default     = true
+  default     = false
 }

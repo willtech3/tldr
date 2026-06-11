@@ -45,6 +45,64 @@ aws s3api put-bucket-versioning \
 In CI, set the repository variable `TF_STATE_BUCKET` to this bucket name
 (optionally `TF_STATE_KEY`, default `tldr/terraform.tfstate`).
 
+## Migrating from CDK (one-time cutover)
+
+Production was originally provisioned by the CDK `TldrStack` (CloudFormation).
+`imports.tf` adopts those live resources into Terraform state on the first
+apply — the Lambda, its log group, and the REST API (including its resources,
+methods, integrations, and `prod` stage) are imported, NOT recreated, so the
+api-id and therefore the Slack request URL never change. The import blocks are
+idempotent no-ops once state exists and can be deleted after the first
+successful deploy.
+
+Expected first-apply diff (anything else — especially a destroy/replace of the
+REST API or Lambda — means an import id is wrong; stop and fix):
+
+- `default_tags` (`Project`/`ManagedBy`) added to every imported resource
+- Lambda execution role swapped to the new `tldr-bolt-role`
+- A new API Gateway deployment (the stage is repointed in place)
+- A new `AllowAPIGatewayInvoke` Lambda permission alongside CDK's
+- Stage method settings re-written with the same values
+
+### Decommissioning TldrStack (after the first successful Terraform deploy)
+
+The CloudFormation stack still references the now-Terraform-managed resources,
+and its template does NOT set `DeletionPolicy: Retain` — a plain
+`delete-stack` would destroy production. Retire it with template surgery:
+
+```bash
+# 1. Fetch the live template
+aws cloudformation get-template --stack-name TldrStack \
+  --query TemplateBody --output json > /tmp/tldr-stack.json
+
+# 2. Add  "DeletionPolicy": "Retain"  to EVERY entry under "Resources"
+#    (python3 -c 'import json;t=json.load(open("/tmp/tldr-stack.json"));
+#    [r.update(DeletionPolicy="Retain") for r in t["Resources"].values()];
+#    json.dump(t,open("/tmp/tldr-stack-retain.json","w"))')
+
+# 3. Update the stack with the retain-only template (CFN may report drift
+#    from Terraform's role/tag updates — that is expected and harmless)
+aws cloudformation update-stack --stack-name TldrStack \
+  --template-body file:///tmp/tldr-stack-retain.json --capabilities CAPABILITY_IAM
+
+# 4. Delete the stack; resources are retained
+aws cloudformation delete-stack --stack-name TldrStack
+aws cloudformation wait stack-delete-complete --stack-name TldrStack
+
+# 5. Verify production is still serving
+aws lambda get-function --function-name tldr-bolt
+curl -s -o /dev/null -w '%{http_code}\n' \
+  https://qp4xsgi1h7.execute-api.us-east-2.amazonaws.com/prod/slack/events  # 403 = alive (no Slack signature)
+```
+
+After deletion, clean up CDK leftovers that Terraform does not manage: the
+orphaned `TldrStack-TldrBoltFunctionServiceRole-*` execution role, CDK's
+per-method Lambda invoke permissions (statement ids prefixed `TldrStack-`),
+and — once nothing else uses them — the `cdk-hnb659fds-*` bootstrap roles.
+
+**Never run `cdk deploy` against these resources again** — CloudFormation
+would fight Terraform over every imported resource.
+
 ## Deploy
 
 Deploys normally run in CI (`.github/workflows/deploy.yml`). To run locally:
