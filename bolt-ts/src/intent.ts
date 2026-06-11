@@ -9,16 +9,48 @@
  *     "help" or "summarize" without being misrouted)
  *  3. summarize (any phrasing that asks for a summary wins over "help",
  *     so "help me summarize" runs a summary instead of printing the manual)
- *  4. help
+ *  4. help (the bare command or a capability question — not any message
+ *     that merely contains the word "help")
  *  5. unknown (the handler answers it as general chat via the model,
  *     falling back to a friendly nudge on failure — never silence)
+ *
+ * Chat is the default. "tldr" is also this app's NAME, so users address it
+ * in conversation ("hey tldr, can you write a haiku?"); the name only counts
+ * as a summarize command when the message *is* the command ("tldr",
+ * "tldr #general last 50"). Same for bare counts: "last 100" alone is a
+ * command, "in the last 2 weeks I read 3 books" is not.
  */
 
 import { UserIntent } from './types';
 
-/** Phrasings that mean "summarize", beyond the literal verb. */
+/** Phrasings that ask for a summary, wherever they appear in a message. */
 const SUMMARIZE_PHRASES =
-  /summar|tl;?dr|recap|catch\s+me\s+up|fill\s+me\s+in|what\s+did\s+i\s+miss|what\s+happened/i;
+  /summar|recap|catch\s+me\s+up|fill\s+me\s+in|what\s+did\s+i\s+miss|what\s+happened/i;
+
+/** A message that is just "last N [messages]" is a quick summarize command. */
+const BARE_COUNT_COMMAND = /^\s*last\s+\d+(?:\s+(?:messages?|msgs?))?\s*[.!?]*\s*$/i;
+
+/**
+ * True when the message *is* the tl;dr command: bare ("tldr", "tl;dr!") or
+ * followed only by command arguments ("tldr #general", "tldr last 50
+ * please", "tldr with style: be funny"). Any other trailing text means the
+ * user is talking *to* TLDR, not commanding it — that stays general chat,
+ * and greetings like "hey tldr" never anchor as a command at all.
+ */
+function isTldrCommand(text: string): boolean {
+  const lead = text.match(/^\s*tl;?dr\b[\s,:!.?-]*/i);
+  if (!lead) {
+    return false;
+  }
+  const residue = text
+    .slice(lead[0].length)
+    .replace(/\bwith\s+style\s*:[\s\S]*$/i, ' ')
+    .replace(/<#[A-Z0-9]+(?:\|[^>]*)?>/g, ' ')
+    .replace(/\blast\s+\d+\b/gi, ' ')
+    .replace(/\b(?:messages?|msgs?|please|pls|now|here|post\s+here|public|this\s+channel|the\s+channel)\b/gi, ' ')
+    .replace(/[\s,.!?]+/g, '');
+  return residue.length === 0;
+}
 
 /**
  * Parse user intent from message text.
@@ -84,7 +116,8 @@ export function parseUserIntent(text: string): UserIntent {
     targetChannel = channelMatch[1];
   }
 
-  const askedToRun = SUMMARIZE_PHRASES.test(textLower) || count !== null;
+  const askedToRun =
+    SUMMARIZE_PHRASES.test(textLower) || isTldrCommand(text) || BARE_COUNT_COMMAND.test(text);
 
   if (askedToRun) {
     return {
@@ -96,8 +129,13 @@ export function parseUserIntent(text: string): UserIntent {
     };
   }
 
-  // Help intent — word-boundary match so "helpful" doesn't trigger it.
-  if (/\bhelp\b/.test(textLower) || textLower === '?' || textLower.includes('what can')) {
+  // Help intent — the bare command or a capability question. A message that
+  // merely contains the word ("help me write an email") is general chat.
+  if (
+    /^\s*(?:please\s+)?help(?:\s+(?:me|please|pls))?\s*[.!?]*\s*$/i.test(text) ||
+    textLower === '?' ||
+    /\bwhat\s+can\s+(?:you|tldr|this\s+app|it)\b/i.test(textLower)
+  ) {
     return { type: 'help' };
   }
 

@@ -35,6 +35,25 @@ describe('parseUserIntent', () => {
       const result = parseUserIntent('help me summarize this channel');
       expect(result).toMatchObject({ type: 'summarize' });
     });
+
+    it('should recognize bare "help me"', () => {
+      const result = parseUserIntent('help me');
+      expect(result).toEqual({ type: 'help' });
+    });
+
+    it('should answer capability questions addressed by name', () => {
+      const result = parseUserIntent('tldr what can you do');
+      expect(result).toEqual({ type: 'help' });
+    });
+
+    it.each([
+      'help me write an email to my team',
+      'can you help me brainstorm names for a project?',
+      'what can I cook tonight',
+    ])('should leave %j to general chat, not the manual', (phrase) => {
+      const result = parseUserIntent(phrase);
+      expect(result).toEqual({ type: 'unknown' });
+    });
   });
 
   describe('style intent', () => {
@@ -152,6 +171,26 @@ describe('parseUserIntent', () => {
       }
     );
 
+    it.each([
+      'TLDR?',
+      'tldr please',
+      'tldr last 50 messages please',
+      'tldr post here',
+    ])('should treat the bare command %j as summarize', (phrase) => {
+      const result = parseUserIntent(phrase);
+      expect(result).toMatchObject({ type: 'summarize' });
+    });
+
+    it('should parse channel and count given to the tldr command', () => {
+      const result = parseUserIntent('tldr <#C123ABC|general> last 50');
+      expect(result).toMatchObject({ type: 'summarize', targetChannel: 'C123ABC', count: 50 });
+    });
+
+    it('should parse a style override given to the tldr command', () => {
+      const result = parseUserIntent('tldr with style: be funny');
+      expect(result).toMatchObject({ type: 'summarize', styleOverride: 'be funny' });
+    });
+
     it('should parse count alongside natural phrasing', () => {
       const result = parseUserIntent('catch me up on the last 200');
       expect(result).toMatchObject({ type: 'summarize', count: 200 });
@@ -233,6 +272,31 @@ describe('parseUserIntent', () => {
     it('should return unknown for empty string', () => {
       const result = parseUserIntent('');
       expect(result).toEqual({ type: 'unknown' });
+    });
+  });
+
+  describe('open-ended chat from the jump', () => {
+    // "tldr" is the app's name — addressing it must start a conversation,
+    // not hijack the message into a summarize (which dead-ends with
+    // "I don't know which channel you're viewing yet" on a fresh thread).
+    it.each([
+      'hey tldr',
+      'hi tldr!',
+      'hey tldr, can you write a haiku about standups?',
+      'tldr do you know any good lunch spots?',
+    ])('should treat %j as general chat', (phrase) => {
+      const result = parseUserIntent(phrase);
+      expect(result).toEqual({ type: 'unknown' });
+    });
+
+    it('should not treat a conversational "last N" as a summarize command', () => {
+      const result = parseUserIntent('I read 3 books in the last 2 weeks, recommend a 4th?');
+      expect(result).toEqual({ type: 'unknown' });
+    });
+
+    it('should still summarize when an addressed message asks for it', () => {
+      const result = parseUserIntent('hey tldr, catch me up');
+      expect(result).toMatchObject({ type: 'summarize' });
     });
   });
 });
