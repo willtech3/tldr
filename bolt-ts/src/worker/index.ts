@@ -1,3 +1,4 @@
+export * from './chat';
 export * from './chunks';
 export * from './links';
 export * from './deliver';

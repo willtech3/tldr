@@ -46,11 +46,37 @@ async function initialize(): Promise<AwsLambdaReceiver> {
   return attempt;
 }
 
+/**
+ * True when this request is a Slack retry caused by us not responding within
+ * Slack's 3-second event window. Summarization (and chat) run inline in the
+ * Lambda, so the original invocation is still working when these retries
+ * arrive — processing them again produces duplicate replies. Retries with any
+ * other reason (e.g. a 5xx from a cold-start failure) are still processed, as
+ * they are our only recovery path.
+ */
+export function isSlackTimeoutRetry(event: AwsEvent): boolean {
+  const headers = (event as { headers?: Record<string, string | undefined> }).headers ?? {};
+  let retryNum: string | undefined;
+  let retryReason: string | undefined;
+  for (const [key, value] of Object.entries(headers)) {
+    const lower = key.toLowerCase();
+    if (lower === 'x-slack-retry-num') {
+      retryNum = value;
+    } else if (lower === 'x-slack-retry-reason') {
+      retryReason = value;
+    }
+  }
+  return Boolean(retryNum) && retryReason === 'http_timeout';
+}
+
 export const handler = async (
   event: AwsEvent,
   context: unknown,
   callback: AwsCallback
 ): Promise<AwsResponse> => {
+  if (isSlackTimeoutRetry(event)) {
+    return { statusCode: 200, body: '' };
+  }
   const awsReceiver = await initialize();
   const boltHandler = awsReceiver.toHandler();
   return boltHandler(event, context, callback);

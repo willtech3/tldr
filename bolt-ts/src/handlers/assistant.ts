@@ -14,7 +14,6 @@ import { App, Assistant } from '@slack/bolt';
 import {
   buildHelpBlocks,
   buildStyleConfirmationBlocks,
-  buildUnknownIntentBlocks,
   buildWelcomeBlocks,
 } from '../blocks';
 import { parseUserIntent } from '../intent';
@@ -30,6 +29,7 @@ import {
   type SlackWebApiClient,
 } from '../thread_state';
 import type { AppConfig } from '../config';
+import { runGeneralChat } from '../worker/chat';
 import { guardAndRunSummarization } from './run_summary';
 
 const WELCOME_TEXT = 'Welcome to TLDR';
@@ -371,18 +371,24 @@ export function createAssistant(config: AppConfig): Assistant {
 
           case 'unknown':
           default: {
-            // Never leave the user on read — nudge them toward a next step.
+            // Not a command — treat it as general chat and let the model
+            // answer (it falls back to the old nudge if the call fails).
             const state = await loadThreadStateWithFallback({
               client: client as unknown as SlackWebApiClient,
               assistantChannelId: channelId,
               assistantThreadTs: threadTs,
               logger,
             });
-            await client.chat.postMessage({
-              channel: channelId,
-              thread_ts: threadTs,
-              text: "I didn't catch that. Try `summarize`, or tap a button below.",
-              blocks: buildUnknownIntentBlocks(state.viewingChannelId),
+            await runGeneralChat({
+              client,
+              config,
+              userId,
+              assistantChannelId: channelId,
+              assistantThreadTs: threadTs,
+              userText: text,
+              userMessageTs: msg.ts as string,
+              viewingChannelId: state.viewingChannelId,
+              logger,
             });
             break;
           }
