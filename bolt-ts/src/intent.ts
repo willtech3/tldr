@@ -10,7 +10,8 @@
  *  3. summarize (any phrasing that asks for a summary wins over "help",
  *     so "help me summarize" runs a summary instead of printing the manual)
  *  4. help
- *  5. unknown (the handler replies with a friendly nudge, never silence)
+ *  5. unknown (the handler answers it as general chat via the model,
+ *     falling back to a friendly nudge on failure — never silence)
  */
 
 import { UserIntent } from './types';

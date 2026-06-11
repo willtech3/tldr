@@ -63,13 +63,13 @@ worker split has been removed.
 - `src/config.ts` — Env + SSM Parameter Store loader (cached).
 - `src/handlers/` — Assistant middleware, style modal, summary action buttons (registered via `handlers/index.ts` barrel).
 - `src/blocks.ts` — Block Kit builders for welcome / help / style modal / confirmations.
-- `src/intent.ts` — Natural-language command parser (`help`, `style`, `clear_style`, `summarize`, `unknown`).
+- `src/intent.ts` — Natural-language command parser (`help`, `style`, `clear_style`, `summarize`, `unknown`). `unknown` messages are answered as general chat via the model.
 - `src/loading_messages.ts` — Rotating progress strings shown via `setStatus({ loading_messages })` while a summary streams.
 - `src/security.ts` — Rate limiting, channel-membership check, style validation, generated-text sanitisers.
 - `src/thread_state.ts` — Persists thread state via Slack message metadata.
 - `src/slack/` — Web client wrappers, `chat.*Stream` helpers, generated-text sanitiser, image fetch.
 - `src/ai/` — Anthropic Messages API client (`@anthropic-ai/sdk`), XML-structured prompt builder, image helpers.
-- `src/worker/` — Inline summarisation pipeline: chunker, link extractor, prompt builder, deliver buttons, streaming orchestrator, top-level `runSummarization`.
+- `src/worker/` — Inline summarisation pipeline: chunker, link extractor, prompt builder, deliver buttons, streaming orchestrator, top-level `runSummarization`. Also `chat.ts` (`runGeneralChat`), which streams model replies to non-command messages.
 - `tests/` — Jest tests for every module above.
 
 ### Key Design Patterns
