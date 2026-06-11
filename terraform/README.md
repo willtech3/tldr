@@ -75,15 +75,26 @@ and its template does NOT set `DeletionPolicy: Retain` — a plain
 aws cloudformation get-template --stack-name TldrStack \
   --query TemplateBody --output json > /tmp/tldr-stack.json
 
-# 2. Add  "DeletionPolicy": "Retain"  to EVERY entry under "Resources"
-#    (python3 -c 'import json;t=json.load(open("/tmp/tldr-stack.json"));
-#    [r.update(DeletionPolicy="Retain") for r in t["Resources"].values()];
-#    json.dump(t,open("/tmp/tldr-stack-retain.json","w"))')
+# 2. Add  "DeletionPolicy": "Retain"  to EVERY entry under "Resources".
+#    Depending on CLI version/template format, TemplateBody arrives either as
+#    a parsed object or as a JSON-encoded string — unwrap both:
+python3 - <<'PYEOF'
+import json
+raw = json.load(open("/tmp/tldr-stack.json"))
+t = json.loads(raw) if isinstance(raw, str) else raw
+for r in t["Resources"].values():
+    r["DeletionPolicy"] = "Retain"
+json.dump(t, open("/tmp/tldr-stack-retain.json", "w"), indent=1)
+print(f'retain set on {len(t["Resources"])} resources')
+PYEOF
 
-# 3. Update the stack with the retain-only template (CFN may report drift
-#    from Terraform's role/tag updates — that is expected and harmless)
+# 3. Update the stack with the retain-only template and WAIT for it to
+#    complete — if the update rolls back, Retain was never committed and
+#    deleting would destroy production. (Terraform's role/tag changes may
+#    show up in CFN drift detection; drift does not affect this update.)
 aws cloudformation update-stack --stack-name TldrStack \
   --template-body file:///tmp/tldr-stack-retain.json --capabilities CAPABILITY_IAM
+aws cloudformation wait stack-update-complete --stack-name TldrStack
 
 # 4. Delete the stack; resources are retained
 aws cloudformation delete-stack --stack-name TldrStack

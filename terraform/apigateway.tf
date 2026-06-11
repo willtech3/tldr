@@ -86,19 +86,27 @@ resource "aws_lambda_permission" "api_gateway_invoke" {
 resource "aws_api_gateway_deployment" "tldr" {
   rest_api_id = aws_api_gateway_rest_api.tldr.id
 
-  # Hash the full resource objects, not their ids: ids are stable identifiers,
-  # so an in-place change (e.g. an integration uri repointed at a new Lambda)
-  # would never alter an id-based hash and the stage would silently keep
-  # serving the old snapshot.
+  # Hash the attributes that define the routing surface. Ids alone are not
+  # enough — an in-place change (e.g. an integration uri repointed at a new
+  # Lambda) never alters an id, so the stage would silently keep serving the
+  # old snapshot. Whole-object hashing is also wrong: computed attributes are
+  # unknown at plan time during replacements and trip "Provider produced
+  # inconsistent final plan" (hashicorp/terraform-provider-aws#17341).
   triggers = {
     redeployment = sha1(jsonencode([
-      aws_api_gateway_resource.slack,
-      aws_api_gateway_resource.interactive,
-      aws_api_gateway_resource.events,
-      aws_api_gateway_method.interactive_post,
-      aws_api_gateway_method.events_post,
-      aws_api_gateway_integration.interactive,
-      aws_api_gateway_integration.events,
+      aws_api_gateway_resource.slack.id,
+      aws_api_gateway_resource.interactive.id,
+      aws_api_gateway_resource.events.id,
+      aws_api_gateway_method.interactive_post.id,
+      aws_api_gateway_method.interactive_post.authorization,
+      aws_api_gateway_method.events_post.id,
+      aws_api_gateway_method.events_post.authorization,
+      aws_api_gateway_integration.interactive.id,
+      aws_api_gateway_integration.interactive.uri,
+      aws_api_gateway_integration.interactive.type,
+      aws_api_gateway_integration.events.id,
+      aws_api_gateway_integration.events.uri,
+      aws_api_gateway_integration.events.type,
     ]))
   }
 
@@ -113,6 +121,12 @@ resource "aws_api_gateway_stage" "prod" {
   rest_api_id   = aws_api_gateway_rest_api.tldr.id
   deployment_id = aws_api_gateway_deployment.tldr.id
   stage_name    = "prod"
+
+  # "prod" is part of the public invoke URL; replacing the stage is a brief
+  # outage. Like the REST API above, force replacements to be deliberate.
+  lifecycle {
+    prevent_destroy = true
+  }
 
   depends_on = [aws_api_gateway_account.this]
 }
