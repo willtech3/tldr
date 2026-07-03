@@ -30,6 +30,7 @@ TLDR uses the **AI App split-view** interface as its primary (and only) user sur
 Navigate to **OAuth & Permissions** and add these bot token scopes:
 
 ### Required Bot Scopes
+- `app_mentions:read` - Receive @TLDR mentions in channels (chat replies)
 - `assistant:write` - Required for AI App features
 - `im:history`, `im:read`, `im:write` - Read/write DM conversations
 - `channels:history`, `channels:read` - Read public channel messages
@@ -119,6 +120,7 @@ Navigate to **Event Subscriptions**:
 1. Toggle **Enable Events** ON
 2. Set **Request URL**: `https://{api-gateway}/slack/events`
 3. Subscribe to Bot Events:
+   - `app_mention`
    - `assistant_thread_started`
    - `assistant_thread_context_changed`
    - `message.im`

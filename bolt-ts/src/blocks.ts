@@ -284,6 +284,7 @@ export function buildHelpBlocks(): KnownBlock[] {
           '*⚡ Tips*\n' +
           '• Each summary comes with *📤 Share to channel*, *🔥 Roast This*, and *📜 Pull Receipts* buttons.\n' +
           '• Right-click any message → *Summarize Thread* for an instant, private thread recap.\n' +
+          '• `@TLDR <question>` in any channel I\'m in gets a chat reply in that thread.\n' +
           '• Use the dropdown in the welcome message to change how many messages I read.\n' +
           '• Styles only apply to this thread — start a new one to reset.\n' +
           '• I can only summarize channels *you* are a member of.',

@@ -65,7 +65,7 @@ worker split has been removed.
 - `src/index.ts` — Lambda entry point (`AwsLambdaReceiver` + lazy init).
 - `src/app.ts` — Bolt app factory; registers Assistant, style modal, action handlers.
 - `src/config.ts` — Env + SSM Parameter Store loader (cached).
-- `src/handlers/` — Assistant middleware, style modal, summary action buttons (registered via `handlers/index.ts` barrel).
+- `src/handlers/` — Assistant middleware, channel @-mention chat, style modal, summary action buttons (registered via `handlers/index.ts` barrel).
 - `src/blocks.ts` — Block Kit builders for welcome / help / style modal / confirmations.
 - `src/intent.ts` — Natural-language command parser (`help`, `style`, `clear_style`, `summarize`, `unknown`). `unknown` messages are answered as general chat via the model.
 - `src/loading_messages.ts` — Rotating progress strings shown via `setStatus({ loading_messages })` while a summary streams.
@@ -73,7 +73,7 @@ worker split has been removed.
 - `src/thread_state.ts` — Persists thread state via Slack message metadata.
 - `src/slack/` — Web client wrappers, `chat.*Stream` helpers, generated-text sanitiser, image fetch.
 - `src/ai/` — Anthropic Messages API client (`@anthropic-ai/sdk`), XML-structured prompt builder, image helpers.
-- `src/worker/` — Inline summarisation pipeline: chunker, link extractor, prompt builder, deliver buttons, streaming orchestrator, top-level `runSummarization`. Also `chat.ts` (`runGeneralChat`), which streams model replies to non-command messages.
+- `src/worker/` — Inline summarisation pipeline: chunker, link extractor, prompt builder, deliver buttons, streaming orchestrator, top-level `runSummarization`. Also `chat.ts` (`runGeneralChat`), the text-in/text-out chat engine behind both non-command assistant messages and channel `@TLDR` mentions.
 - `tests/` — Jest tests for every module above.
 
 ### Key Design Patterns
