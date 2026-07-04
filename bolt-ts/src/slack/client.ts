@@ -190,7 +190,14 @@ export async function getMessagePermalink(
  */
 export async function startStream(
   client: WebClient,
-  args: { channel: string; threadTs: string; markdownText?: string }
+  args: {
+    channel: string;
+    threadTs: string;
+    markdownText?: string;
+    /** Slack requires both recipient fields when streaming outside a DM. */
+    recipientTeamId?: string;
+    recipientUserId?: string;
+  }
 ): Promise<string> {
   const params: Record<string, unknown> = {
     channel: args.channel,
@@ -198,6 +205,12 @@ export async function startStream(
   };
   if (args.markdownText !== undefined) {
     params.markdown_text = args.markdownText;
+  }
+  if (args.recipientTeamId !== undefined) {
+    params.recipient_team_id = args.recipientTeamId;
+  }
+  if (args.recipientUserId !== undefined) {
+    params.recipient_user_id = args.recipientUserId;
   }
   const resp = (await client.chat.startStream(params as never)) as { ts?: string };
   if (!resp.ts) {

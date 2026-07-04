@@ -20,6 +20,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 
 interface ClientSpies {
   postMessage: jest.Mock;
+  postEphemeral: jest.Mock;
   startStream: jest.Mock;
   appendStream: jest.Mock;
   stopStream: jest.Mock;
@@ -28,11 +29,13 @@ interface ClientSpies {
   conversationsReplies: jest.Mock;
   conversationsInfo: jest.Mock;
   authTest: jest.Mock;
+  usersInfo: jest.Mock;
 }
 
 function makeWebClient(threadMessages: unknown[] = []): { client: WebClient; spies: ClientSpies } {
   const spies: ClientSpies = {
     postMessage: jest.fn().mockResolvedValue({ ok: true, ts: '9.9' }),
+    postEphemeral: jest.fn().mockResolvedValue({ ok: true }),
     startStream: jest.fn().mockResolvedValue({ ok: true, ts: '5.5' }),
     appendStream: jest.fn().mockResolvedValue({ ok: true }),
     stopStream: jest.fn().mockResolvedValue({ ok: true }),
@@ -41,10 +44,14 @@ function makeWebClient(threadMessages: unknown[] = []): { client: WebClient; spi
     conversationsReplies: jest.fn().mockResolvedValue({ messages: threadMessages }),
     conversationsInfo: jest.fn().mockResolvedValue({ channel: { name: 'demo' } }),
     authTest: jest.fn().mockResolvedValue({ user_id: 'UBOT' }),
+    usersInfo: jest.fn().mockImplementation(({ user }: { user: string }) =>
+      Promise.resolve({ user: { profile: { real_name: `name-${user}` } } })
+    ),
   };
   const client = {
     chat: {
       postMessage: spies.postMessage,
+      postEphemeral: spies.postEphemeral,
       startStream: spies.startStream,
       appendStream: spies.appendStream,
       stopStream: spies.stopStream,
@@ -53,6 +60,7 @@ function makeWebClient(threadMessages: unknown[] = []): { client: WebClient; spi
     assistant: { threads: { setStatus: spies.setStatus } },
     conversations: { replies: spies.conversationsReplies, info: spies.conversationsInfo },
     auth: { test: spies.authTest },
+    users: { info: spies.usersInfo },
   } as unknown as WebClient;
   return { client, spies };
 }
@@ -86,8 +94,9 @@ function baseArgs(client: WebClient, llm: LlmClient, overrides: Record<string, u
     client,
     config: makeConfig(),
     userId: 'U1',
-    assistantChannelId: 'D1',
-    assistantThreadTs: '1.0',
+    surface: 'assistant' as const,
+    channelId: 'D1',
+    threadTs: '1.0',
     userText: 'hey, who are you?',
     userMessageTs: '2.0',
     viewingChannelId: null,
@@ -95,6 +104,17 @@ function baseArgs(client: WebClient, llm: LlmClient, overrides: Record<string, u
     llm,
     ...overrides,
   };
+}
+
+function channelArgs(client: WebClient, llm: LlmClient, overrides: Record<string, unknown> = {}) {
+  return baseArgs(client, llm, {
+    surface: 'channel' as const,
+    channelId: 'C42',
+    threadTs: '10.0',
+    userMessageTs: '11.0',
+    recipientTeamId: 'T1',
+    ...overrides,
+  });
 }
 
 beforeEach(() => {
@@ -244,5 +264,121 @@ describe('runGeneralChat (rate limiting)', () => {
     expect(spies.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ text: expect.stringContaining('Easy there') })
     );
+  });
+
+  it('rate-limits ephemerally on the channel surface — no channel noise', async () => {
+    const { client, spies } = makeWebClient();
+    const llm = makeLlm(makeStream([{ kind: 'text_delta', delta: 'hi' }, { kind: 'completed' }]));
+
+    for (let i = 0; i < RATE_LIMIT_MAX_PER_MINUTE; i++) {
+      await runGeneralChat(channelArgs(client, llm));
+    }
+    spies.postMessage.mockClear();
+    const outcome = await runGeneralChat(channelArgs(client, llm));
+
+    expect(outcome).toBe('rate_limited');
+    expect(spies.postMessage).not.toHaveBeenCalled();
+    expect(spies.postEphemeral).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'C42',
+        user: 'U1',
+        thread_ts: '10.0',
+        text: expect.stringContaining('Easy there'),
+      })
+    );
+  });
+});
+
+describe('runGeneralChat (channel surface)', () => {
+  it('streams into the channel thread with recipient routing and no assistant status', async () => {
+    const { client, spies } = makeWebClient();
+    const llm = makeLlm(
+      makeStream([{ kind: 'text_delta', delta: 'Sure thing.' }, { kind: 'completed' }])
+    );
+
+    const outcome = await runGeneralChat(channelArgs(client, llm));
+
+    expect(outcome).toBe('delivered');
+    expect(spies.setStatus).not.toHaveBeenCalled();
+    expect(spies.startStream).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'C42',
+        thread_ts: '10.0',
+        recipient_user_id: 'U1',
+        recipient_team_id: 'T1',
+      })
+    );
+  });
+
+  it('names thread participants in the prompt so the model can attribute turns', async () => {
+    const { client } = makeWebClient([
+      { ts: '9.0', user: 'UA', text: 'I think we should ship Friday' },
+      { ts: '9.5', user: 'UB', text: 'strong disagree' },
+      { ts: '9.8', user: 'UBOT', text: 'Earlier bot reply' },
+      { ts: '11.0', user: 'U1', text: '<@UBOT> who is right?' }, // trigger — excluded
+    ]);
+    const llm = makeLlm(makeStream([{ kind: 'text_delta', delta: 'hi' }, { kind: 'completed' }]));
+
+    await runGeneralChat(channelArgs(client, llm));
+
+    const prompt = (llm.generateSummaryStream as jest.Mock).mock.calls[0][0];
+    const text = prompt.userContent[0].text as string;
+    expect(text).toContain('name-UA: I think we should ship Friday');
+    expect(text).toContain('name-UB: strong disagree');
+    expect(text).toContain('TLDR: Earlier bot reply');
+    expect(text).toContain('@-mentioned in a message thread');
+    expect(text).toContain('#demo');
+  });
+
+  it('never attributes user-less messages (webhooks/integrations) to TLDR', async () => {
+    const { client } = makeWebClient([
+      { ts: '9.0', text: 'Build #42 failed: exit code 1' }, // no `user` — CI webhook
+      { ts: '11.0', user: 'U1', text: '<@UBOT> what does this mean?' }, // trigger
+    ]);
+    const llm = makeLlm(makeStream([{ kind: 'text_delta', delta: 'hi' }, { kind: 'completed' }]));
+
+    await runGeneralChat(channelArgs(client, llm));
+
+    const prompt = (llm.generateSummaryStream as jest.Mock).mock.calls[0][0];
+    const text = prompt.userContent[0].text as string;
+    expect(text).toContain('User: Build #42 failed: exit code 1');
+    expect(text).not.toContain('TLDR: Build #42 failed');
+  });
+
+  it('falls back to a single message when chat.startStream is unavailable', async () => {
+    const { client, spies } = makeWebClient();
+    spies.startStream.mockRejectedValue(new Error('streaming_not_allowed'));
+    const llm = makeLlm(
+      makeStream([
+        { kind: 'text_delta', delta: 'Full ' },
+        { kind: 'text_delta', delta: 'reply.' },
+        { kind: 'completed' },
+      ])
+    );
+
+    const outcome = await runGeneralChat(channelArgs(client, llm));
+
+    expect(outcome).toBe('delivered');
+    expect(spies.appendStream).not.toHaveBeenCalled();
+    expect(spies.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'C42',
+        thread_ts: '10.0',
+        blocks: [{ type: 'markdown', text: 'Full reply.' }],
+      })
+    );
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it('posts a plain-text failure fallback — assistant nudge buttons stay off channels', async () => {
+    const { client, spies } = makeWebClient();
+    const llm = makeLlm(makeStream([{ kind: 'failed', message: 'boom' }]));
+
+    const outcome = await runGeneralChat(channelArgs(client, llm));
+
+    expect(outcome).toBe('failed');
+    const fallback = spies.postMessage.mock.calls.find((c) => c[0].text === CHAT_FAILURE_TEXT);
+    expect(fallback).toBeDefined();
+    expect(fallback?.[0].blocks).toBeUndefined();
   });
 });

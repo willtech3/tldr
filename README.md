@@ -10,6 +10,7 @@ TLDR is a serverless Slack bot that turns a wall of unread messages into a conci
 - **AI-Generated Summaries** – Uses Anthropic Claude Opus 4.8 to distill channel messages into digestible summaries with links, image highlights, and receipts (message permalinks).
 - **Custom Styles** – Preset personas (Roast, Receipts, Executive brief, Haiku) or write your own; per-thread or one-off.
 - **Summarize Thread Shortcut** – Right-click any message → *Summarize Thread* for a private, in-channel thread recap.
+- **Standard Chatbot** – Ask TLDR anything: non-command messages in the assistant pane and `@TLDR` mentions in channels get streamed chat replies (text in, text out — no tools or actions).
 - **Engagement Built In** – Post-summary follow-up prompts, thumbs up/down feedback, share-to-channel with confirmation, retry buttons on every failure.
 - **Single TypeScript Service** – One Bolt.js Lambda hosts the Slack event surface *and* the streaming summarizer.
 - **Streaming Replies** – Summaries stream into the assistant thread token-by-token via Slack's `chat.startStream` / `chat.appendStream` / `chat.stopStream` APIs.
@@ -30,7 +31,8 @@ TLDR is a serverless Slack bot that turns a wall of unread messages into a conci
    - `help` – Show available commands
 
 That's it! TLDR automatically tracks which channel you're viewing and summarizes it.
-You can also right-click any message → **Summarize Thread** for a private thread recap.
+You can also right-click any message → **Summarize Thread** for a private thread recap,
+or `@TLDR <question>` in any channel it's been invited to for a chat reply in that thread.
 
 ---
 
