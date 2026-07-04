@@ -205,9 +205,12 @@ async function loadChatHistory(args: GeneralChatArgs): Promise<ChatHistoryEntry[
 
     return recent.map((m) => {
       const speaker = m.user ? nameByUserId.get(m.user) : undefined;
+      // Only the bot's own turns are 'assistant': a message with no user at
+      // all (webhook/integration posts, common in channel threads) must not
+      // be attributed to TLDR.
+      const isSelf = m.user !== null && m.user === botUserId;
       return {
-        role:
-          m.user && m.user !== botUserId ? ('user' as const) : ('assistant' as const),
+        role: isSelf ? ('assistant' as const) : ('user' as const),
         text: [...m.text].slice(0, HISTORY_MESSAGE_MAX_CHARS).join(''),
         ...(speaker ? { speaker } : {}),
       };

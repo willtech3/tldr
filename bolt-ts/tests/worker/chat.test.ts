@@ -330,6 +330,21 @@ describe('runGeneralChat (channel surface)', () => {
     expect(text).toContain('#demo');
   });
 
+  it('never attributes user-less messages (webhooks/integrations) to TLDR', async () => {
+    const { client } = makeWebClient([
+      { ts: '9.0', text: 'Build #42 failed: exit code 1' }, // no `user` — CI webhook
+      { ts: '11.0', user: 'U1', text: '<@UBOT> what does this mean?' }, // trigger
+    ]);
+    const llm = makeLlm(makeStream([{ kind: 'text_delta', delta: 'hi' }, { kind: 'completed' }]));
+
+    await runGeneralChat(channelArgs(client, llm));
+
+    const prompt = (llm.generateSummaryStream as jest.Mock).mock.calls[0][0];
+    const text = prompt.userContent[0].text as string;
+    expect(text).toContain('User: Build #42 failed: exit code 1');
+    expect(text).not.toContain('TLDR: Build #42 failed');
+  });
+
   it('falls back to a single message when chat.startStream is unavailable', async () => {
     const { client, spies } = makeWebClient();
     spies.startStream.mockRejectedValue(new Error('streaming_not_allowed'));
