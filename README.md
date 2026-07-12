@@ -19,20 +19,89 @@ TLDR is a serverless Slack bot that turns a wall of unread messages into a conci
 
 ## 🚀 Quick Start
 
-### Using TLDR
-
 1. **Open TLDR** – Click the AI Apps icon in the top-right corner of Slack, then select TLDR.
 2. **Navigate to a channel** – Switch to any channel in Slack's main view.
-3. **Summarize** – Tap *⚡ Summarize now*, click a suggested prompt, or type:
-   - `summarize` (or `catch me up`, `what did I miss`, `tldr`) – Summarize the channel you're viewing
-   - `summarize last 100` – Summarize last 100 messages
-   - `summarize #general` – Summarize a specific channel
-   - `style: write as haiku` – Change the summary style for this thread
-   - `help` – Show available commands
+3. **Summarize** – Tap *⚡ Summarize now* or type `summarize`.
 
-That's it! TLDR automatically tracks which channel you're viewing and summarizes it.
-You can also right-click any message → **Summarize Thread** for a private thread recap,
-or `@TLDR <question>` in any channel it's been invited to for a chat reply in that thread.
+That's it — TLDR tracks which channel you're viewing and summarizes it. The full
+tour of every way in is below.
+
+---
+
+## 📖 Usage Guide
+
+TLDR has four front doors. Pick whichever fits the moment:
+
+| Entrypoint | Where | Best for |
+|------------|-------|----------|
+| [Assistant pane](#-assistant-pane--summaries--chat) | AI Apps sidebar | Summaries, styles, and follow-up chat |
+| [Buttons](#-buttons--the-no-typing-path) | Welcome card & under every summary | Zero-typing workflows |
+| [Summarize Thread](#-summarize-thread-shortcut) | *⋯ More actions* on any message | A private recap of one thread |
+| [`@TLDR` mentions](#-tldr-in-channels) | Any channel the bot is in | Quick questions without leaving the conversation |
+
+### 💬 Assistant pane — summaries & chat
+
+Open TLDR from the AI Apps icon and talk to it in plain English:
+
+```text
+summarize                        → the channel you're currently viewing
+catch me up                      → same thing ("what did I miss" and "tldr" work too)
+summarize last 200               → reach further back
+summarize #design                → a specific channel (you must be a member)
+summarize #design last 25 with style: executive brief
+help                             → the command reference card
+```
+
+Every summary streams in live and always ends with four sections: **Summary**,
+**Links shared**, **Image highlights**, and **Receipts** — permalinks back to the
+messages that matter, so you can jump straight to the source.
+
+Anything that *isn't* a command is just conversation. Ask "explain the RFC
+linked above" or "draft a short reply I can post" and TLDR answers in the same
+thread, with the recent thread context in mind.
+
+### ⚡ Buttons — the no-typing path
+
+- **⚡ Summarize now** on the welcome card summarizes the channel you're viewing;
+  the dropdown beside it sets your default message count (5–500, default 50).
+- **🎨 Set style** opens a modal with ready-made personas — 🔥 *Roast*,
+  📜 *Receipts*, 💼 *Executive brief*, 🌸 *Haiku* — or space to write your own
+  (up to 4,000 characters). Save, then hit *⚡ Try it now*.
+- Under every summary: **📤 Share to channel** (asks for confirmation first,
+  posts with your name on it), one-tap **🔥 Roast This** / **📜 Pull Receipts**
+  re-runs, and *Good summary* / *Off the mark* feedback.
+- Every failure comes with a **Retry** button — including *Try last 50* when a
+  channel is too large to summarize in one go.
+
+### 🎨 Styles you can type
+
+Prefer the keyboard? Styles are commands too:
+
+```text
+style: bullet points only, dry humor    → sticks for this thread
+summarize with style: sea shanty        → one-off, doesn't stick
+clear style                             → back to default
+```
+
+### 🧵 Summarize Thread shortcut
+
+Long thread you don't want to scroll? Hover any message → **⋯ More actions** →
+**Summarize Thread**. The recap is ephemeral — only you see it, right there in
+the channel. TLDR needs to be in the channel (`/invite @TLDR`) to read the thread.
+
+### 📣 `@TLDR` in channels
+
+Mention the bot anywhere it's been invited and it replies in that message's
+thread — a quick, streamed chat answer (kept to ~250 words) without anyone
+switching to the assistant pane:
+
+```text
+@TLDR what's the difference between our staging and prod deploy steps?
+@TLDR settle it: tabs or spaces?
+```
+
+Mentions are chat-only — for channel summaries, use the assistant pane, which
+keeps them private to you.
 
 ---
 

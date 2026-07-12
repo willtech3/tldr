@@ -19,6 +19,9 @@ features:
       type: message
       callback_id: summarize_thread
       description: Summarize this message thread
+  assistant_view:
+    assistant_description: TLDR summarizes recent messages from any channel and provides the results in this thread. You can then share summaries with custom style prompts to other channels.
+    suggested_prompts: []
 
 oauth_config:
   scopes:
@@ -28,6 +31,8 @@ oauth_config:
       - channels:history
       - channels:read
       - chat:write
+      # Required by Slack manifest validation whenever shortcuts are declared.
+      - commands
       - files:read
       - groups:history
       - groups:read
