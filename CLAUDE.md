@@ -131,6 +131,12 @@ For local-only runs the function still accepts direct `SLACK_BOT_TOKEN`,
 - Terraform (`terraform/`) provisions API Gateway, the Lambda, IAM, and CloudWatch logs; state lives in S3.
 - GitHub Actions automates PR checks (Bolt lint/build/test + `terraform fmt`/`validate`) and main-branch `terraform apply` deploys.
 
+## Live Slack Testing
+
+The TLDR app runs in the 3kp Slack workspace. If you post to any public
+channel in that workspace (bot mentions, test summaries, anything), it MUST
+be `#testing-bots` — never any other public channel.
+
 ## Security Considerations
 
 - Bolt verifies Slack signatures automatically via `AwsLambdaReceiver`.
