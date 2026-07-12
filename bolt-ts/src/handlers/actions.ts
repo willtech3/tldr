@@ -13,7 +13,6 @@ import {
   checkChannelMembership,
   isValidSlackChannelId,
   normalizeMessageCount,
-  sanitizeGeneratedSlackText,
   type ConversationsMembersClient,
 } from '../security';
 import type { ThreadContext } from '../types';
@@ -27,7 +26,7 @@ import {
   type RetrySummaryValue,
 } from '../blocks';
 import { ACTION_SUMMARY_FEEDBACK, type StyleKind } from '../worker/deliver';
-import { truncateForMarkdownBlock } from '../slack/sanitize';
+import { sanitizeGeneratedSlackMrkdwn, truncateForMarkdownBlock } from '../slack/sanitize';
 import { RECEIPTS_STYLE, ROAST_STYLE } from '../styles';
 import {
   buildThreadStateMetadata,
@@ -93,7 +92,7 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
       }
 
       const summaryText = stripSummaryHeader(
-        sanitizeGeneratedSlackText(extractSummaryBody(message))
+        sanitizeGeneratedSlackMrkdwn(extractSummaryBody(message))
       );
       if (summaryText.length === 0) {
         await client.chat.postMessage({
