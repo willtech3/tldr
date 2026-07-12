@@ -63,25 +63,25 @@ worker split has been removed.
 
 ### bolt-ts/ Layout
 - `src/index.ts` — Lambda entry point (`AwsLambdaReceiver` + lazy init).
-- `src/app.ts` — Bolt app factory; registers Assistant, style modal, action handlers.
+- `src/app.ts` — Bolt app factory; registers Assistant, style modal, action, message-shortcut, and channel-mention handlers.
 - `src/config.ts` — Env + SSM Parameter Store loader (cached).
-- `src/handlers/` — Assistant middleware, channel @-mention chat, style modal, summary action buttons (registered via `handlers/index.ts` barrel).
+- `src/handlers/` — Assistant middleware (`assistant.ts`), channel @-mention chat (`mention.ts`), style modal (`style.ts`), summary action buttons (`actions.ts`), the "Summarize Thread" message shortcut (`shortcuts.ts`), and `run_summary.ts` — the shared `guardAndRunSummarization` guard → status → run → follow-ups pipeline every summarization entry point funnels through (registered via `handlers/index.ts` barrel).
 - `src/blocks.ts` — Block Kit builders for welcome / help / style modal / confirmations.
 - `src/intent.ts` — Natural-language command parser (`help`, `style`, `clear_style`, `summarize`, `unknown`). `unknown` messages are answered as general chat via the model.
 - `src/loading_messages.ts` — Rotating progress strings shown via `setStatus({ loading_messages })` while a summary streams.
-- `src/security.ts` — Rate limiting, channel-membership check, style validation, generated-text sanitisers.
+- `src/security.ts` — Rate limiting, channel-membership check, style validation.
 - `src/thread_state.ts` — Persists thread state via Slack message metadata.
-- `src/slack/` — Web client wrappers, `chat.*Stream` helpers, generated-text sanitiser, image fetch.
+- `src/slack/` — Web client wrappers, `chat.*Stream` helpers, the generated-text sanitiser (`sanitize.ts`, the single implementation — import from here rather than duplicating the mention regexes), image fetch.
 - `src/ai/` — Anthropic Messages API client (`@anthropic-ai/sdk`), XML-structured prompt builder, image helpers.
 - `src/worker/` — Inline summarisation pipeline: chunker, link extractor, prompt builder, deliver buttons, streaming orchestrator, top-level `runSummarization`. Also `chat.ts` (`runGeneralChat`), the text-in/text-out chat engine behind both non-command assistant messages and channel `@TLDR` mentions.
-- `tests/` — Jest tests for every module above.
+- `tests/` — Jest tests mirroring the `src/` layout. Known gaps: no tests yet for `app.ts`, `handlers/assistant.ts`, `handlers/run_summary.ts`, or `handlers/style.ts`, and `index.test.ts` covers only `isSlackTimeoutRetry`. Add coverage when touching those modules.
 
 ### Key Design Patterns
 - **Single Lambda** — One Node.js function hosts both the Slack signal layer and the Anthropic streaming worker.
 - **Streaming first** — Set `ENABLE_STREAMING=true` (default) so summaries token-stream into the assistant thread.
 - **Lazy init** — Module-level singletons cache config, the Bolt receiver, and the SSM client across warm Lambda invocations.
-- **Safety net** — `applySafetyNetSections` guarantees every summary contains *Summary / Links shared / Image highlights / Receipts* even if the model omits them.
-- **Error containment** — Streaming failures replace the partial Slack message with a canonical error string via `chat.update` (or delete + repost when update fails).
+- **Safety net** — `applySafetyNetSections` appends any of the *Links shared / Image highlights / Receipts* sections the model omitted. The leading summary prose is requested via the prompt only — no *Summary* header is ever enforced.
+- **Error containment** — On the summary path, streaming failures overwrite the partial Slack message with a canonical error string via `chat.update`, falling back to delete + repost (`streaming.ts` `ensureCanonicalFailure`). The general-chat path (`worker/chat.ts`) instead always deletes the partial message and posts a fresh fallback.
 
 ## Important Guidelines
 
@@ -102,6 +102,7 @@ worker split has been removed.
 - `ENABLE_STREAMING` — `true` / `false` (default `true`).
 - `STREAM_MAX_CHUNK_CHARS` — Per-append chunk size (default 8 000, capped at 12 000).
 - `STREAM_MIN_APPEND_INTERVAL_MS` — Floor between appends (default 500 ms).
+- `LOG_LEVEL` — Optional; `debug` enables Bolt debug logging, anything else (or unset) means info.
 
 For local-only runs the function still accepts direct `SLACK_BOT_TOKEN`,
 `SLACK_SIGNING_SECRET`, and `ANTHROPIC_API_KEY` env vars.

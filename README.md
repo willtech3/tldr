@@ -129,6 +129,7 @@ Deployment variables:
 | `ENABLE_STREAMING` | `true` to stream summaries into the thread (recommended, default) |
 | `STREAM_MAX_CHUNK_CHARS` | Per-append chunk size for `chat.appendStream` (default 8 000, max 12 000) |
 | `STREAM_MIN_APPEND_INTERVAL_MS` | Floor between appends to respect rate limits (default 500 ms) |
+| `LOG_LEVEL` | Optional. `debug` enables Bolt debug logging; anything else (or unset) means info |
 | `AWS_ACCOUNT_ID` | Optional. If set, Terraform refuses to apply against any other AWS account |
 
 For local-only runs the Lambda also accepts direct `SLACK_BOT_TOKEN`,
@@ -149,11 +150,11 @@ For local-only runs the Lambda also accepts direct `SLACK_BOT_TOKEN`,
 │   │   ├─ loading_messages.ts
 │   │   ├─ security.ts       # Rate limit, membership check, style validation
 │   │   ├─ thread_state.ts   # Persists state via Slack message metadata
-│   │   ├─ handlers/         # Assistant, style, and action handlers
+│   │   ├─ handlers/         # Assistant, style, action, shortcut, and mention handlers
 │   │   ├─ slack/            # Web client wrappers, streaming helpers, sanitiser
 │   │   ├─ ai/               # Anthropic Messages client + XML-structured prompt + image helpers
 │   │   └─ worker/           # Inline summarisation, chunking, link extraction
-│   └─ tests/                # Jest tests for every module above
+│   └─ tests/                # Jest tests mirroring src/ (see CLAUDE.md for known gaps)
 ├─ terraform/       # Infrastructure as code (Terraform)
 ├─ docs/            # Additional documentation
 └─ README.md

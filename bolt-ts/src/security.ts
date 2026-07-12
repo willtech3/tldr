@@ -190,13 +190,6 @@ export function resetMembershipCacheForTests(): void {
   membershipCache.clear();
 }
 
-export function sanitizeGeneratedSlackText(text: string): string {
-  return text
-    .replace(/<!(channel|here|everyone)>/g, '`$&`')
-    .replace(/<!subteam\^[^>]+>/g, '`$&`')
-    .replace(/<@[UW][A-Z0-9]+>/g, '`$&`');
-}
-
 /**
  * Membership check result. `unknown` means we couldn't verify (API error or
  * pagination limit) — callers should say so instead of falsely telling a

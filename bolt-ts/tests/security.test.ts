@@ -6,7 +6,6 @@ import {
   normalizeMessageCount,
   resetMembershipCacheForTests,
   resetRateLimitForTests,
-  sanitizeGeneratedSlackText,
   validateAndSanitizeStyle,
 } from '../src/security';
 
@@ -40,12 +39,6 @@ describe('security helpers', () => {
     expect(denied.allowed).toBe(false);
     expect(denied.retryAfterMs).toBe(59_000);
     expect(checkSummarizeRateLimit('U123', 62_000).allowed).toBe(true);
-  });
-
-  it('sanitizes generated Slack mentions before sharing', () => {
-    expect(sanitizeGeneratedSlackText('Ping <!channel> and <@U123ABC456>')).toBe(
-      'Ping `<!channel>` and `<@U123ABC456>`'
-    );
   });
 
   it('validates Slack timestamps from trusted metadata boundaries', () => {
