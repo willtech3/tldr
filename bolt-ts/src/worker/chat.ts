@@ -9,8 +9,8 @@
  *
  * Both fetch the thread history for context, build a chat prompt, and stream
  * the reply via the same chat.*Stream helpers the summarizer uses. Chat is
- * text in / text out only — no tools, no actions. Failures fall back to a
- * friendly nudge so the user is never left on read.
+ * text in / text out only — no tools, no actions. A failed stream is retried
+ * as a complete model response before the user sees a failure nudge.
  */
 
 import type { WebClient } from '@slack/web-api';
@@ -149,7 +149,18 @@ export async function runGeneralChat(args: GeneralChatArgs): Promise<ChatOutcome
       return 'delivered';
     }
 
-    return await streamChatReply(args, llm, prompt);
+    try {
+      return await streamChatReply(args, llm, prompt);
+    } catch (error) {
+      // A transient Anthropic SSE failure or Slack streaming transport error
+      // should not turn an ordinary question into a canned response. The
+      // streaming helper has already cleaned up any partial message, so make
+      // one fresh model request and deliver it through chat.postMessage.
+      logger.warn('Streaming chat failed; retrying as a full reply:', error);
+      const reply = await llm.generateSummary(prompt);
+      await postFullReply(args, reply);
+      return 'delivered';
+    }
   } catch (error) {
     logger.error('General chat reply failed:', error);
     try {
@@ -350,8 +361,8 @@ async function streamChatReply(
       throw new Error('Anthropic chat stream completed without any output');
     }
   } catch (error) {
-    // Stop and remove the partial (or empty) message before surfacing the
-    // failure fallback.
+    // Stop and remove the partial (or empty) message before the caller retries
+    // delivery as a complete response.
     await stopStream(args.client, {
       channel: args.channelId,
       ts: streamTs,

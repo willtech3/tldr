@@ -244,7 +244,7 @@ function truncateStyle(style: string): string {
   return chars.slice(0, 97).join('') + '...';
 }
 
-/** Help blocks shown when the user types `help` / `?` / "what can you do". */
+/** Command reference shown when the user types the explicit `help` / `?` command. */
 export function buildHelpBlocks(): KnownBlock[] {
   return [
     {
@@ -283,6 +283,7 @@ export function buildHelpBlocks(): KnownBlock[] {
         text:
           '*⚡ Tips*\n' +
           '• Each summary comes with *📤 Share to channel*, *🔥 Roast This*, and *📜 Pull Receipts* buttons.\n' +
+          '• Ask any ordinary question here and I\'ll answer it as a chat.\n' +
           '• Right-click any message → *Summarize Thread* for an instant, private thread recap.\n' +
           '• `@TLDR <question>` in any channel I\'m in gets a chat reply in that thread.\n' +
           '• Use the dropdown in the welcome message to change how many messages I read.\n' +

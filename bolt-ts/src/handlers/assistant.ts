@@ -372,7 +372,8 @@ export function createAssistant(config: AppConfig): Assistant {
           case 'unknown':
           default: {
             // Not a command — treat it as general chat and let the model
-            // answer (it falls back to the old nudge if the call fails).
+            // answer. The chat worker retries a failed stream before showing
+            // a failure nudge.
             const state = await loadThreadStateWithFallback({
               client: client as unknown as SlackWebApiClient,
               assistantChannelId: channelId,

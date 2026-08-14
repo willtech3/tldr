@@ -21,9 +21,9 @@ describe('parseUserIntent', () => {
       expect(result).toEqual({ type: 'help' });
     });
 
-    it('should recognize "what can you do"', () => {
+    it('should leave a conversational capability question to general chat', () => {
       const result = parseUserIntent('what can you do');
-      expect(result).toEqual({ type: 'help' });
+      expect(result).toEqual({ type: 'unknown' });
     });
 
     it('should not treat "helpful" as help', () => {
@@ -41,9 +41,9 @@ describe('parseUserIntent', () => {
       expect(result).toEqual({ type: 'help' });
     });
 
-    it('should answer capability questions addressed by name', () => {
+    it('should leave capability questions addressed by name to general chat', () => {
       const result = parseUserIntent('tldr what can you do');
-      expect(result).toEqual({ type: 'help' });
+      expect(result).toEqual({ type: 'unknown' });
     });
 
     it.each([
@@ -292,6 +292,27 @@ describe('parseUserIntent', () => {
     it('should not treat a conversational "last N" as a summarize command', () => {
       const result = parseUserIntent('I read 3 books in the last 2 weeks, recommend a 4th?');
       expect(result).toEqual({ type: 'unknown' });
+    });
+
+    it.each([
+      'what is abstractive summarization?',
+      'which model summarizes legal text best?',
+      'can you explain the difference between a recap and a retrospective?',
+      'what happened in 1999?',
+      'can you summarize how photosynthesis works?',
+      'give me a recap of Hamlet',
+    ])('should not mistake a question about summaries for a summarize command: %j', (phrase) => {
+      const result = parseUserIntent(phrase);
+      expect(result).toEqual({ type: 'unknown' });
+    });
+
+    it.each([
+      'could you summarize this channel?',
+      'please recap the last 20 messages',
+      'help me summarize what I missed',
+    ])('should still recognize an explicit summary request: %j', (phrase) => {
+      const result = parseUserIntent(phrase);
+      expect(result).toMatchObject({ type: 'summarize' });
     });
 
     it('should still summarize when an addressed message asks for it', () => {

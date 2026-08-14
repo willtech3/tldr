@@ -180,7 +180,7 @@ describe('runGeneralChat (streaming)', () => {
     expect(prompt.userContent[0].text).toContain('#demo');
   });
 
-  it('cleans up the stream and posts the nudge fallback when the model fails mid-stream', async () => {
+  it('cleans up a failed stream and retries with a full model reply', async () => {
     const { client, spies } = makeWebClient();
     const llm = makeLlm(
       makeStream([
@@ -188,12 +188,34 @@ describe('runGeneralChat (streaming)', () => {
         { kind: 'failed', message: 'boom' },
       ])
     );
+    jest.spyOn(llm, 'generateSummary').mockResolvedValue('Recovered model reply.');
+
+    const outcome = await runGeneralChat(baseArgs(client, llm));
+
+    expect(outcome).toBe('delivered');
+    expect(spies.stopStream).toHaveBeenCalled();
+    expect(spies.chatDelete).toHaveBeenCalledWith({ channel: 'D1', ts: '5.5' });
+    expect(llm.generateSummary).toHaveBeenCalledTimes(1);
+    expect(spies.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'Recovered model reply.',
+        blocks: [{ type: 'markdown', text: 'Recovered model reply.' }],
+      })
+    );
+    expect(spies.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ text: CHAT_FAILURE_TEXT })
+    );
+  });
+
+  it('only posts the nudge after both streaming and full model attempts fail', async () => {
+    const { client, spies } = makeWebClient();
+    const llm = makeLlm(makeStream([{ kind: 'failed', message: 'stream failed' }]));
+    jest.spyOn(llm, 'generateSummary').mockRejectedValue(new Error('retry failed'));
 
     const outcome = await runGeneralChat(baseArgs(client, llm));
 
     expect(outcome).toBe('failed');
-    expect(spies.stopStream).toHaveBeenCalled();
-    expect(spies.chatDelete).toHaveBeenCalledWith({ channel: 'D1', ts: '5.5' });
+    expect(llm.generateSummary).toHaveBeenCalledTimes(1);
     expect(spies.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ text: CHAT_FAILURE_TEXT })
     );
@@ -373,6 +395,7 @@ describe('runGeneralChat (channel surface)', () => {
   it('posts a plain-text failure fallback — assistant nudge buttons stay off channels', async () => {
     const { client, spies } = makeWebClient();
     const llm = makeLlm(makeStream([{ kind: 'failed', message: 'boom' }]));
+    jest.spyOn(llm, 'generateSummary').mockRejectedValue(new Error('retry failed'));
 
     const outcome = await runGeneralChat(channelArgs(client, llm));
 

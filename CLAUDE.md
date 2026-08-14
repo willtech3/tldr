@@ -81,7 +81,7 @@ worker split has been removed.
 - **Streaming first** — Set `ENABLE_STREAMING=true` (default) so summaries token-stream into the assistant thread.
 - **Lazy init** — Module-level singletons cache config, the Bolt receiver, and the SSM client across warm Lambda invocations.
 - **Safety net** — `applySafetyNetSections` appends any of the *Links shared / Image highlights / Receipts* sections the model omitted. The leading summary prose is requested via the prompt only — no *Summary* header is ever enforced.
-- **Error containment** — On the summary path, streaming failures overwrite the partial Slack message with a canonical error string via `chat.update`, falling back to delete + repost (`streaming.ts` `ensureCanonicalFailure`). The general-chat path (`worker/chat.ts`) instead always deletes the partial message and posts a fresh fallback.
+- **Error containment** — On the summary path, streaming failures overwrite the partial Slack message with a canonical error string via `chat.update`, falling back to delete + repost (`streaming.ts` `ensureCanonicalFailure`). The general-chat path (`worker/chat.ts`) deletes a partial stream, retries once as a complete model response, and only then posts a failure nudge.
 
 ## Important Guidelines
 
