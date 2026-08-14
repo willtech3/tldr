@@ -7,10 +7,9 @@
  *  1. clear/reset/remove style
  *  2. "style: ..." (anchored at start, so instructions may mention
  *     "help" or "summarize" without being misrouted)
- *  3. summarize (any phrasing that asks for a summary wins over "help",
- *     so "help me summarize" runs a summary instead of printing the manual)
- *  4. help (the bare command or a capability question — not any message
- *     that merely contains the word "help")
+ *  3. summarize (an explicit summary request wins over "help", so
+ *     "help me summarize" runs a summary instead of printing the manual)
+ *  4. help (the bare command only — conversational questions go to chat)
  *  5. unknown (the handler answers it as general chat via the model,
  *     falling back to a friendly nudge on failure — never silence)
  *
@@ -23,9 +22,40 @@
 
 import { UserIntent } from './types';
 
-/** Phrasings that ask for a summary, wherever they appear in a message. */
-const SUMMARIZE_PHRASES =
-  /summar|recap|catch\s+me\s+up|fill\s+me\s+in|what\s+did\s+i\s+miss|what\s+happened/i;
+/**
+ * Supported natural-language summary commands. The trailing text is validated
+ * separately so "summarize last 20" remains a command while "summarize how
+ * photosynthesis works" remains an ordinary model query.
+ */
+const SUMMARY_REQUEST_LEAD =
+  /^\s*(?:hey\s+tldr[\s,:!.-]*)?(?:(?:can|could|would|will)\s+you\s+|help\s+me\s+)?(?:please\s+)?(?:summarize|summarise|recap|catch\s+me\s+up|fill\s+me\s+in|what\s+did\s+i\s+miss|what\s+happened|give\s+me\s+(?:a\s+)?(?:summary|recap))\b[\s,:!.-]*/i;
+
+/**
+ * True when a summary verb is being used as a command, not merely discussed
+ * in a question such as "what is abstractive summarization?". Suggested
+ * prompts and typed commands lead with the verb; polite model-style requests
+ * are covered by {@link SUMMARY_REQUEST_LEAD}.
+ */
+function isSummarizeRequest(text: string): boolean {
+  const lead = text.match(SUMMARY_REQUEST_LEAD);
+  if (!lead) {
+    return false;
+  }
+  const residue = text
+    .slice(lead[0].length)
+    .replace(/\bwith\s+style\s*:[\s\S]*$/i, ' ')
+    .replace(/<#[A-Z0-9]+(?:\|[^>]*)?>/g, ' ')
+    .replace(/\blast\s+\d+\b/gi, ' ')
+    .replace(/\bpost\s+here\b/gi, ' ')
+    .replace(/\b(?:this|the|current)\s+channel\b/gi, ' ')
+    .replace(/\bwhat\s+i\s+missed\b/gi, ' ')
+    .replace(
+      /\b(?:messages?|msgs?|please|pls|now|here|public|on|in|from|of|the)\b/gi,
+      ' '
+    )
+    .replace(/[\s,.!?]+/g, '');
+  return residue.length === 0;
+}
 
 /** A message that is just "last N [messages]" is a quick summarize command. */
 const BARE_COUNT_COMMAND = /^\s*last\s+\d+(?:\s+(?:messages?|msgs?))?\s*[.!?]*\s*$/i;
@@ -117,7 +147,7 @@ export function parseUserIntent(text: string): UserIntent {
   }
 
   const askedToRun =
-    SUMMARIZE_PHRASES.test(textLower) || isTldrCommand(text) || BARE_COUNT_COMMAND.test(text);
+    isSummarizeRequest(text) || isTldrCommand(text) || BARE_COUNT_COMMAND.test(text);
 
   if (askedToRun) {
     return {
@@ -129,12 +159,11 @@ export function parseUserIntent(text: string): UserIntent {
     };
   }
 
-  // Help intent — the bare command or a capability question. A message that
-  // merely contains the word ("help me write an email") is general chat.
+  // Help intent — the bare command only. Capability questions and messages
+  // that merely contain the word ("help me write an email") are general chat.
   if (
     /^\s*(?:please\s+)?help(?:\s+(?:me|please|pls))?\s*[.!?]*\s*$/i.test(text) ||
-    textLower === '?' ||
-    /\bwhat\s+can\s+(?:you|tldr|this\s+app|it)\b/i.test(textLower)
+    textLower === '?'
   ) {
     return { type: 'help' };
   }
