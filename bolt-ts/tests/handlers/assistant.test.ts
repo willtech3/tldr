@@ -1,6 +1,7 @@
 import {
   FILE_ATTACHMENT_NOTE,
   FILE_SHARE_NO_CAPTION_REPLY,
+  appContextChannelId,
   routeAssistantUserMessage,
   shouldIgnoreAssistantUserMessage,
 } from '../../src/handlers/assistant';
@@ -73,5 +74,35 @@ describe('routeAssistantUserMessage', () => {
   it('keeps the canned reply and the attachment note honest about being text-only', () => {
     expect(FILE_SHARE_NO_CAPTION_REPLY).toContain("can't open files");
     expect(FILE_ATTACHMENT_NOTE).toContain('cannot see attachments');
+  });
+});
+
+describe('appContextChannelId', () => {
+  it('returns the first channel entity from the message app_context', () => {
+    expect(
+      appContextChannelId({
+        app_context: {
+          entities: [
+            { type: 'slack#/types/thread_ts', value: '123.456' },
+            { type: 'slack#/types/channel_id', value: 'C012345678' },
+            { type: 'slack#/types/channel_id', value: 'C099999999' },
+          ],
+        },
+      })
+    ).toBe('C012345678');
+  });
+
+  it('returns null when the field is absent (legacy assistant_view manifest)', () => {
+    expect(appContextChannelId({})).toBeNull();
+    expect(appContextChannelId({ app_context: {} })).toBeNull();
+    expect(appContextChannelId({ app_context: { entities: [] } })).toBeNull();
+  });
+
+  it('rejects malformed channel ids rather than passing them to Slack calls', () => {
+    expect(
+      appContextChannelId({
+        app_context: { entities: [{ type: 'slack#/types/channel_id', value: 'not-a-channel' }] },
+      })
+    ).toBeNull();
   });
 });

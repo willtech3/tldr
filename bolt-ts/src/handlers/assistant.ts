@@ -17,7 +17,11 @@ import {
   buildWelcomeBlocks,
 } from '../blocks';
 import { parseUserIntent } from '../intent';
-import { normalizeMessageCount, validateAndSanitizeStyle } from '../security';
+import {
+  isValidSlackChannelId,
+  normalizeMessageCount,
+  validateAndSanitizeStyle,
+} from '../security';
 import type { ThreadContext, UserIntent } from '../types';
 import {
   buildThreadStateMetadata,
@@ -66,6 +70,34 @@ export function shouldIgnoreAssistantUserMessage(msg: {
     return true;
   }
   return Boolean(msg.subtype) && msg.subtype !== 'file_share';
+}
+
+/**
+ * Channel the user is viewing according to the message's `app_context`
+ * field, if Slack sent one.
+ *
+ * Slack's new agent experience (manifest `agent_view` + the
+ * `app_context_changed` subscription) stamps `app_context` onto `message.im`
+ * events — context arrives with the message itself, so it can never go
+ * stale the way `assistant_thread_context_changed` state can. Under the
+ * current `assistant_view` manifest the field is absent and this returns
+ * null; wiring it now means context tracking self-heals the moment the app
+ * migrates (see docs/slack_configuration.md).
+ */
+export function appContextChannelId(msg: {
+  app_context?: { entities?: Array<{ type?: string; value?: string }> };
+}): string | null {
+  const entities = msg.app_context?.entities;
+  if (!Array.isArray(entities)) {
+    return null;
+  }
+  for (const entity of entities) {
+    // Entities are ordered by relevance — take the first channel.
+    if (entity?.type === 'slack#/types/channel_id' && isValidSlackChannelId(entity.value)) {
+      return entity.value;
+    }
+  }
+  return null;
 }
 
 /** How an assistant-pane user message gets handled. */
@@ -313,6 +345,9 @@ export function createAssistant(config: AppConfig): Assistant {
       }
 
       const route = routeAssistantUserMessage(msg);
+      // Fresher than any stored state when present (rides the message
+      // itself); null under the legacy assistant_view manifest.
+      const liveViewingChannelId = appContextChannelId(msg);
 
       if (route.kind === 'file_share_no_caption') {
         try {
@@ -362,7 +397,7 @@ export function createAssistant(config: AppConfig): Assistant {
             threadTs,
             userText: route.userText,
             userMessageTs: msg.ts as string,
-            viewingChannelId: state.viewingChannelId,
+            viewingChannelId: liveViewingChannelId ?? state.viewingChannelId,
             logger,
           });
           return;
@@ -446,7 +481,8 @@ export function createAssistant(config: AppConfig): Assistant {
               assistantThreadTs: threadTs,
               logger,
             });
-            const targetChannelId = intent.targetChannel ?? state.viewingChannelId;
+            const targetChannelId =
+              intent.targetChannel ?? liveViewingChannelId ?? state.viewingChannelId;
 
             if (!targetChannelId) {
               await client.chat.postMessage({
