@@ -90,6 +90,10 @@ export async function guardAndRunSummarization(args: GuardedSummarizeArgs): Prom
     return;
   }
 
+  // No explicit clear needed: Slack auto-clears this status as soon as the
+  // pipeline posts its next message in the thread, and every outcome posts
+  // one (the streamed summary header arrives before any tokens; failures
+  // post or repair a message of their own).
   const hasCustomStyle = args.customStyle !== null && args.customStyle.trim().length > 0;
   try {
     await client.assistant.threads.setStatus({

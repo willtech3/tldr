@@ -228,6 +228,57 @@ describe('runGeneralChat (streaming)', () => {
     expect(spies.setStatus).toHaveBeenCalledWith(expect.objectContaining({ status: '' }));
   });
 
+  it('keeps a fully-delivered reply when the final stopStream fails — no duplicate', async () => {
+    const { client, spies } = makeWebClient();
+    spies.stopStream.mockRejectedValue(new Error('fetch timeout'));
+    const llm = makeLlm(
+      makeStream([{ kind: 'text_delta', delta: 'Complete answer.' }, { kind: 'completed' }])
+    );
+    const generateSummary = jest.spyOn(llm, 'generateSummary');
+
+    const outcome = await runGeneralChat(baseArgs(client, llm));
+
+    expect(outcome).toBe('delivered');
+    // Every token reached the message: no delete, no second model call,
+    // no duplicate reply, no failure card.
+    expect(spies.chatDelete).not.toHaveBeenCalled();
+    expect(generateSummary).not.toHaveBeenCalled();
+    expect(spies.postMessage).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it('cleans up and retries as a full reply when a drain-phase append fails', async () => {
+    const { client, spies } = makeWebClient();
+    // A large min-append interval keeps every token in `pending` until the
+    // post-completion drain — whose append then fails hard.
+    spies.appendStream.mockRejectedValue(
+      Object.assign(new Error('internal_error'), { data: { error: 'internal_error' } })
+    );
+    const llm = makeLlm(
+      makeStream([
+        { kind: 'text_delta', delta: 'part one ' },
+        { kind: 'text_delta', delta: 'part two' },
+        { kind: 'completed' },
+      ])
+    );
+    jest.spyOn(llm, 'generateSummary').mockResolvedValue('Recovered full reply.');
+
+    const outcome = await runGeneralChat(
+      baseArgs(client, llm, {
+        config: makeConfig({ streamMinAppendIntervalMs: 10_000 }),
+        sleep: async (): Promise<void> => undefined,
+      })
+    );
+
+    // The partial streamed message is removed and the retry delivers once.
+    expect(outcome).toBe('delivered');
+    expect(spies.chatDelete).toHaveBeenCalledWith({ channel: 'D1', ts: '5.5' });
+    expect(llm.generateSummary).toHaveBeenCalledTimes(1);
+    expect(spies.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Recovered full reply.' })
+    );
+  });
+
   it('treats an append onto a finalised message as a user stop', async () => {
     const { client, spies } = makeWebClient();
     spies.appendStream.mockRejectedValue(
@@ -291,7 +342,7 @@ describe('runGeneralChat (rate limiting)', () => {
 
     expect(outcome).toBe('rate_limited');
     expect(spies.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('Easy there') })
+      expect.objectContaining({ text: expect.stringContaining('requests a minute') })
     );
   });
 
@@ -312,7 +363,7 @@ describe('runGeneralChat (rate limiting)', () => {
         channel: 'C42',
         user: 'U1',
         thread_ts: '10.0',
-        text: expect.stringContaining('Easy there'),
+        text: expect.stringContaining('requests a minute'),
       })
     );
   });

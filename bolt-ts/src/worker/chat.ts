@@ -178,9 +178,14 @@ export async function runGeneralChat(args: GeneralChatArgs): Promise<ChatOutcome
     }
     return 'failed';
   } finally {
-    // Slack keeps the last setStatus visible until it is cleared. Leaving
-    // "Thinking..." up after a reply (or a failure) makes the desktop
-    // assistant pane look stuck.
+    // Slack auto-clears the status when the app posts a message in the
+    // thread, so this explicit clear mostly matters on paths that post
+    // nothing (e.g. the failure card itself failed) — without it the pane
+    // stays stuck on "Thinking...". It is thread-scoped, not run-scoped:
+    // with two runs in flight it can briefly wipe the other run's status.
+    // Accepted — Slack offers no status ownership/CAS, the auto-clear
+    // already stomps in most overlap timelines, and the pane self-heals
+    // when the other run's reply lands.
     if (args.surface === 'assistant') {
       try {
         await client.assistant.threads.setStatus({
@@ -374,6 +379,17 @@ async function streamChatReply(
     if (collected.length === 0) {
       throw new Error('Anthropic chat stream completed without any output');
     }
+
+    // Drain what the append cadence held back. Failures here get the same
+    // cleanup as mid-stream failures — content is still missing from the
+    // Slack message, so the retry-as-full-reply path is correct.
+    while (canAppend && pending.length > 0) {
+      const wait = args.config.streamMinAppendIntervalMs - (Date.now() - lastAppendAt);
+      if (wait > 0) {
+        await sleep(wait);
+      }
+      await appendChunk();
+    }
   } catch (error) {
     // Stop and remove the partial (or empty) message before the caller retries
     // delivery as a complete response.
@@ -389,16 +405,15 @@ async function streamChatReply(
     void stream.cancel();
   }
 
-  while (canAppend && pending.length > 0) {
-    const wait = args.config.streamMinAppendIntervalMs - (Date.now() - lastAppendAt);
-    if (wait > 0) {
-      await sleep(wait);
-    }
-    await appendChunk();
-  }
-
   if (canAppend) {
-    await stopStream(args.client, { channel: args.channelId, ts: streamTs });
+    try {
+      await stopStream(args.client, { channel: args.channelId, ts: streamTs });
+    } catch (error) {
+      // Every token is already in the message. Failing the run here would
+      // delete a fully-delivered reply, spend a second model call, and post
+      // the same text again — worse than leaving the stream to expire.
+      args.logger.warn('chat.stopStream failed after a fully-delivered reply:', error);
+    }
     return 'delivered';
   }
   return 'stopped';

@@ -18,7 +18,7 @@ import {
 } from '../blocks';
 import { parseUserIntent } from '../intent';
 import { normalizeMessageCount, validateAndSanitizeStyle } from '../security';
-import type { ThreadContext } from '../types';
+import type { ThreadContext, UserIntent } from '../types';
 import {
   buildThreadStateMetadata,
   findThreadStateMessage,
@@ -34,15 +34,29 @@ import { guardAndRunSummarization } from './run_summary';
 
 const WELCOME_TEXT = 'Welcome to TLDR';
 
-/** Stands in for the user text when a file is shared with no caption. */
-export const EMPTY_FILE_SHARE_TEXT = '(the user shared a file without any text)';
+/**
+ * Instant reply for a file shared with no caption. Posted directly — no
+ * model call, no rate-limit slot: the answer is always the same sentence,
+ * so the user shouldn't wait several seconds (or spend budget) for it.
+ */
+export const FILE_SHARE_NO_CAPTION_REPLY =
+  "🖼️ I can't open files or attachments — chat here is text-only. Add a caption with your question, or paste the text you'd like me to look at.";
+
+/**
+ * Appended to a file-share caption so the model knows an attachment exists
+ * that it cannot see. Pairs with the text-only rule in CHAT_SYSTEM_PROMPT.
+ */
+export const FILE_ATTACHMENT_NOTE =
+  '(note: the user also attached a file — you cannot see attachments)';
 
 /**
  * Bolt's Assistant middleware only forwards IM thread messages with no
  * subtype or `subtype === 'file_share'`. Bot messages and every other
  * subtype (edits, deletes, channel_join, …) must stay ignored so we
  * don't loop. File shares are real user turns — dropping them leaves
- * the Slack desktop pane on read.
+ * the Slack desktop pane on read. (Rare user-producible subtypes —
+ * `me_message`, `thread_broadcast` — never reach this handler at all;
+ * Bolt drops them upstream, so they go unanswered. Known edge.)
  */
 export function shouldIgnoreAssistantUserMessage(msg: {
   bot_id?: string;
@@ -54,16 +68,34 @@ export function shouldIgnoreAssistantUserMessage(msg: {
   return Boolean(msg.subtype) && msg.subtype !== 'file_share';
 }
 
-/** Caption if the user typed one; otherwise a file-share placeholder. */
-export function assistantUserText(msg: { text?: string; subtype?: string }): string {
+/** How an assistant-pane user message gets handled. */
+export type AssistantRoute =
+  | { kind: 'file_share_no_caption' }
+  | { kind: 'chat'; userText: string }
+  | { kind: 'command'; intent: UserIntent };
+
+/**
+ * File shares never go through the command parser: a caption like `tldr`
+ * or `summarize` almost certainly refers to the attachment — which chat
+ * cannot read — so running a channel summary would confidently answer the
+ * wrong question. Captions go to chat with an attachment note instead.
+ */
+export function routeAssistantUserMessage(msg: {
+  text?: string;
+  subtype?: string;
+}): AssistantRoute {
   const text = (msg.text ?? '').trim();
-  if (text.length > 0) {
-    return text;
-  }
   if (msg.subtype === 'file_share') {
-    return EMPTY_FILE_SHARE_TEXT;
+    if (text.length === 0) {
+      return { kind: 'file_share_no_caption' };
+    }
+    return { kind: 'chat', userText: `${text}\n${FILE_ATTACHMENT_NOTE}` };
   }
-  return '';
+  const intent = parseUserIntent(text);
+  if (intent.type === 'unknown') {
+    return { kind: 'chat', userText: text };
+  }
+  return { kind: 'command', intent };
 }
 
 const CHANNEL_PROMPTS: Array<{ title: string; message: string }> = [
@@ -108,7 +140,6 @@ export function createAssistant(config: AppConfig): Assistant {
       say,
       setSuggestedPrompts,
       setTitle,
-      saveThreadContext,
     }): Promise<void> => {
       const assistantThread = event.assistant_thread;
       if (!assistantThread) {
@@ -135,7 +166,6 @@ export function createAssistant(config: AppConfig): Assistant {
           prompts: prompts as [(typeof prompts)[number], ...typeof prompts],
         });
         await setTitle('TLDR');
-        await saveThreadContext();
 
         const welcome = await say({
           text: WELCOME_TEXT,
@@ -161,7 +191,14 @@ export function createAssistant(config: AppConfig): Assistant {
       }
     },
 
-    threadContextChanged: async ({ event, client, logger, saveThreadContext }): Promise<void> => {
+    // NOTE: we never call Bolt's saveThreadContext() here (or in
+    // threadStarted). Nothing in this app reads Bolt's context store, and
+    // its default implementation chat.update's the first bot message in the
+    // thread — our welcome card — replacing the `tldr_thread_state` metadata
+    // that cold starts depend on. The welcome card is the single source of
+    // truth for thread state; skipping the store also saves two Slack
+    // round-trips on every channel switch.
+    threadContextChanged: async ({ event, client, logger }): Promise<void> => {
       const assistantThread = event.assistant_thread;
       if (!assistantThread) {
         return;
@@ -193,64 +230,70 @@ export function createAssistant(config: AppConfig): Assistant {
         defaultMessageCount: cached?.state.defaultMessageCount ?? null,
       };
 
-      await saveThreadContext();
-
+      // Await both writes: this Lambda is async, so fire-and-forget `void`
+      // calls can be dropped when the handler returns and the container
+      // freezes. The welcome card is the only store
+      // `loadThreadStateWithFallback` reads on a cold start. The two calls
+      // are independent, so they run concurrently — the suggested-prompt
+      // chips shouldn't queue behind the metadata write.
       const stateMessageTs = cached?.state_message_ts;
-      if (!stateMessageTs) {
-        try {
-          const welcome = await client.chat.postMessage({
-            channel: channelId,
-            thread_ts: threadTs,
-            text: WELCOME_TEXT,
-            blocks: buildWelcomeBlocks(
-              nextState.viewingChannelId,
-              nextState.customStyle,
-              nextState.defaultMessageCount
-            ),
-            metadata: buildThreadStateMetadata(nextState),
-          });
-          if (welcome.ts) {
-            setCachedThreadState({ threadKey, stateMessageTs: welcome.ts, state: nextState });
+      const persistState = async (): Promise<void> => {
+        if (!stateMessageTs) {
+          try {
+            const welcome = await client.chat.postMessage({
+              channel: channelId,
+              thread_ts: threadTs,
+              text: WELCOME_TEXT,
+              blocks: buildWelcomeBlocks(
+                nextState.viewingChannelId,
+                nextState.customStyle,
+                nextState.defaultMessageCount
+              ),
+              metadata: buildThreadStateMetadata(nextState),
+            });
+            if (welcome.ts) {
+              setCachedThreadState({ threadKey, stateMessageTs: welcome.ts, state: nextState });
+            }
+          } catch (error) {
+            logger.error('Failed to create thread state message:', error);
           }
-        } catch (error) {
-          logger.error('Failed to create thread state message:', error);
+        } else {
+          try {
+            await client.chat.update({
+              channel: channelId,
+              ts: stateMessageTs,
+              text: WELCOME_TEXT,
+              blocks: buildWelcomeBlocks(
+                nextState.viewingChannelId,
+                nextState.customStyle,
+                nextState.defaultMessageCount
+              ),
+              metadata: buildThreadStateMetadata(nextState),
+            });
+            setCachedThreadState({ threadKey, stateMessageTs, state: nextState });
+            logger.info(`Context changed: viewing_channel_id=${viewingChannelId}`);
+          } catch (err) {
+            logger.error('Failed to persist thread context:', err);
+          }
         }
-      } else {
-        // Await the write: this Lambda is async, so fire-and-forget
-        // `void` updates can be dropped when the handler returns and
-        // the container freezes. The welcome card is the only store
-        // `loadThreadStateWithFallback` reads on a cold start.
-        try {
-          await client.chat.update({
-            channel: channelId,
-            ts: stateMessageTs,
-            text: WELCOME_TEXT,
-            blocks: buildWelcomeBlocks(
-              nextState.viewingChannelId,
-              nextState.customStyle,
-              nextState.defaultMessageCount
-            ),
-            metadata: buildThreadStateMetadata(nextState),
-          });
-          setCachedThreadState({ threadKey, stateMessageTs, state: nextState });
-          logger.info(`Context changed: viewing_channel_id=${viewingChannelId}`);
-        } catch (err) {
-          logger.error('Failed to persist thread context:', err);
-        }
-      }
+      };
 
       // A channel is in view now — swap any onboarding prompts for the real ones.
-      const prompts = buildThreadStartPrompts(viewingChannelId);
-      try {
-        await client.assistant.threads.setSuggestedPrompts({
-          channel_id: channelId,
-          thread_ts: threadTs,
-          title: 'Pick your poison:',
-          prompts: prompts as [(typeof prompts)[number], ...typeof prompts],
-        });
-      } catch (err) {
-        logger.warn('Failed to refresh suggested prompts:', err);
-      }
+      const refreshPrompts = async (): Promise<void> => {
+        const prompts = buildThreadStartPrompts(viewingChannelId);
+        try {
+          await client.assistant.threads.setSuggestedPrompts({
+            channel_id: channelId,
+            thread_ts: threadTs,
+            title: 'Pick your poison:',
+            prompts: prompts as [(typeof prompts)[number], ...typeof prompts],
+          });
+        } catch (err) {
+          logger.warn('Failed to refresh suggested prompts:', err);
+        }
+      };
+
+      await Promise.all([persistState(), refreshPrompts()]);
     },
 
     userMessage: async ({ client, message, logger }): Promise<void> => {
@@ -263,14 +306,27 @@ export function createAssistant(config: AppConfig): Assistant {
 
       const channelId = msg.channel as string | undefined;
       const threadTs = (msg.thread_ts ?? msg.ts) as string | undefined;
-      const text = assistantUserText(msg);
       const userId = msg.user as string | undefined;
 
       if (!channelId || !userId || !threadTs) {
         return;
       }
 
-      const intent = parseUserIntent(text);
+      const route = routeAssistantUserMessage(msg);
+
+      if (route.kind === 'file_share_no_caption') {
+        try {
+          await client.chat.postMessage({
+            channel: channelId,
+            thread_ts: threadTs,
+            text: FILE_SHARE_NO_CAPTION_REPLY,
+          });
+        } catch (error) {
+          logger.error('Failed to answer captionless file share:', error);
+        }
+        return;
+      }
+
       const threadKey = makeThreadKey(channelId, threadTs);
 
       const getCachedOrEmpty = (): {
@@ -288,6 +344,31 @@ export function createAssistant(config: AppConfig): Assistant {
       };
 
       try {
+        if (route.kind === 'chat') {
+          // Not a command — let the model answer. The chat worker retries a
+          // failed stream before showing a failure nudge.
+          const state = await loadThreadStateWithFallback({
+            client: client as unknown as SlackWebApiClient,
+            assistantChannelId: channelId,
+            assistantThreadTs: threadTs,
+            logger,
+          });
+          await runGeneralChat({
+            client,
+            config,
+            userId,
+            surface: 'assistant',
+            channelId,
+            threadTs,
+            userText: route.userText,
+            userMessageTs: msg.ts as string,
+            viewingChannelId: state.viewingChannelId,
+            logger,
+          });
+          return;
+        }
+
+        const intent = route.intent;
         switch (intent.type) {
           case 'help': {
             await client.chat.postMessage({
@@ -405,31 +486,7 @@ export function createAssistant(config: AppConfig): Assistant {
             break;
           }
 
-          case 'unknown':
-          default: {
-            // Not a command — treat it as general chat and let the model
-            // answer. The chat worker retries a failed stream before showing
-            // a failure nudge.
-            const state = await loadThreadStateWithFallback({
-              client: client as unknown as SlackWebApiClient,
-              assistantChannelId: channelId,
-              assistantThreadTs: threadTs,
-              logger,
-            });
-            await runGeneralChat({
-              client,
-              config,
-              userId,
-              surface: 'assistant',
-              channelId,
-              threadTs,
-              userText: text,
-              userMessageTs: msg.ts as string,
-              viewingChannelId: state.viewingChannelId,
-              logger,
-            });
-            break;
-          }
+          // 'unknown' is routed to chat above and never reaches this switch.
         }
       } catch (error) {
         logger.error('Error handling message:', error);

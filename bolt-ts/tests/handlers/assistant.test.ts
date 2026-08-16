@@ -1,6 +1,7 @@
 import {
-  EMPTY_FILE_SHARE_TEXT,
-  assistantUserText,
+  FILE_ATTACHMENT_NOTE,
+  FILE_SHARE_NO_CAPTION_REPLY,
+  routeAssistantUserMessage,
   shouldIgnoreAssistantUserMessage,
 } from '../../src/handlers/assistant';
 
@@ -22,21 +23,55 @@ describe('shouldIgnoreAssistantUserMessage', () => {
   });
 });
 
-describe('assistantUserText', () => {
-  it('uses the caption when the user typed one', () => {
-    expect(assistantUserText({ text: '  what is this?  ', subtype: 'file_share' })).toBe(
-      'what is this?'
-    );
-    expect(assistantUserText({ text: 'hello' })).toBe('hello');
+describe('routeAssistantUserMessage', () => {
+  it('answers a captionless file share with the canned no-caption reply', () => {
+    expect(routeAssistantUserMessage({ subtype: 'file_share' })).toEqual({
+      kind: 'file_share_no_caption',
+    });
+    expect(routeAssistantUserMessage({ text: '   ', subtype: 'file_share' })).toEqual({
+      kind: 'file_share_no_caption',
+    });
   });
 
-  it('uses a placeholder when a file is shared with no caption', () => {
-    expect(assistantUserText({ subtype: 'file_share' })).toBe(EMPTY_FILE_SHARE_TEXT);
-    expect(assistantUserText({ text: '   ', subtype: 'file_share' })).toBe(EMPTY_FILE_SHARE_TEXT);
+  it('sends captioned file shares to chat with the attachment note', () => {
+    const route = routeAssistantUserMessage({
+      text: '  what color is this?  ',
+      subtype: 'file_share',
+    });
+    expect(route).toEqual({
+      kind: 'chat',
+      userText: `what color is this?\n${FILE_ATTACHMENT_NOTE}`,
+    });
   });
 
-  it('returns empty for a blank ordinary message', () => {
-    expect(assistantUserText({ text: '' })).toBe('');
-    expect(assistantUserText({})).toBe('');
+  it('never runs command captions on a file share — "tldr" means the file, not the channel', () => {
+    for (const caption of ['tldr', 'summarize', 'summarize #general', 'help', 'style: be brief']) {
+      const route = routeAssistantUserMessage({ text: caption, subtype: 'file_share' });
+      expect(route.kind).toBe('chat');
+    }
+  });
+
+  it('parses typed commands exactly as before', () => {
+    const summarize = routeAssistantUserMessage({ text: 'summarize' });
+    expect(summarize.kind).toBe('command');
+    expect(summarize.kind === 'command' && summarize.intent.type).toBe('summarize');
+
+    const help = routeAssistantUserMessage({ text: 'help' });
+    expect(help.kind === 'command' && help.intent.type).toBe('help');
+
+    const style = routeAssistantUserMessage({ text: 'style: write as a haiku' });
+    expect(style.kind === 'command' && style.intent.type).toBe('style');
+  });
+
+  it('routes non-command text to chat unchanged', () => {
+    expect(routeAssistantUserMessage({ text: 'hey, who are you?' })).toEqual({
+      kind: 'chat',
+      userText: 'hey, who are you?',
+    });
+  });
+
+  it('keeps the canned reply and the attachment note honest about being text-only', () => {
+    expect(FILE_SHARE_NO_CAPTION_REPLY).toContain("can't open files");
+    expect(FILE_ATTACHMENT_NOTE).toContain('cannot see attachments');
   });
 });

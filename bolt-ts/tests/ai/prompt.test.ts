@@ -143,6 +143,17 @@ describe('buildPrompt', () => {
 });
 
 describe('buildChatPrompt', () => {
+  it('tells the model chat is text-only so file-share replies are deterministic', () => {
+    const payload = buildChatPrompt({
+      userMessage: 'hi',
+      history: [],
+      surface: 'assistant',
+      channelName: null,
+    });
+    expect(payload.system).toContain('cannot open or see files');
+    expect(payload.system).toContain('text-only');
+  });
+
   it('frames history, the user message, and the task in order', () => {
     const payload = buildChatPrompt({
       userMessage: 'who are you?',
