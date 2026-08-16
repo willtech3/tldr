@@ -34,6 +34,38 @@ import { guardAndRunSummarization } from './run_summary';
 
 const WELCOME_TEXT = 'Welcome to TLDR';
 
+/** Stands in for the user text when a file is shared with no caption. */
+export const EMPTY_FILE_SHARE_TEXT = '(the user shared a file without any text)';
+
+/**
+ * Bolt's Assistant middleware only forwards IM thread messages with no
+ * subtype or `subtype === 'file_share'`. Bot messages and every other
+ * subtype (edits, deletes, channel_join, …) must stay ignored so we
+ * don't loop. File shares are real user turns — dropping them leaves
+ * the Slack desktop pane on read.
+ */
+export function shouldIgnoreAssistantUserMessage(msg: {
+  bot_id?: string;
+  subtype?: string;
+}): boolean {
+  if (msg.bot_id) {
+    return true;
+  }
+  return Boolean(msg.subtype) && msg.subtype !== 'file_share';
+}
+
+/** Caption if the user typed one; otherwise a file-share placeholder. */
+export function assistantUserText(msg: { text?: string; subtype?: string }): string {
+  const text = (msg.text ?? '').trim();
+  if (text.length > 0) {
+    return text;
+  }
+  if (msg.subtype === 'file_share') {
+    return EMPTY_FILE_SHARE_TEXT;
+  }
+  return '';
+}
+
 const CHANNEL_PROMPTS: Array<{ title: string; message: string }> = [
   { title: '📋 Just the Facts', message: 'summarize' },
   {
@@ -183,51 +215,55 @@ export function createAssistant(config: AppConfig): Assistant {
         } catch (error) {
           logger.error('Failed to create thread state message:', error);
         }
-        return;
-      }
-
-      void client.chat
-        .update({
-          channel: channelId,
-          ts: stateMessageTs,
-          text: WELCOME_TEXT,
-          blocks: buildWelcomeBlocks(
-            nextState.viewingChannelId,
-            nextState.customStyle,
-            nextState.defaultMessageCount
-          ),
-          metadata: buildThreadStateMetadata(nextState),
-        })
-        .then(() => {
+      } else {
+        // Await the write: this Lambda is async, so fire-and-forget
+        // `void` updates can be dropped when the handler returns and
+        // the container freezes. The welcome card is the only store
+        // `loadThreadStateWithFallback` reads on a cold start.
+        try {
+          await client.chat.update({
+            channel: channelId,
+            ts: stateMessageTs,
+            text: WELCOME_TEXT,
+            blocks: buildWelcomeBlocks(
+              nextState.viewingChannelId,
+              nextState.customStyle,
+              nextState.defaultMessageCount
+            ),
+            metadata: buildThreadStateMetadata(nextState),
+          });
           setCachedThreadState({ threadKey, stateMessageTs, state: nextState });
           logger.info(`Context changed: viewing_channel_id=${viewingChannelId}`);
-        })
-        .catch((err) => logger.error('Failed to persist thread context:', err));
+        } catch (err) {
+          logger.error('Failed to persist thread context:', err);
+        }
+      }
 
       // A channel is in view now — swap any onboarding prompts for the real ones.
       const prompts = buildThreadStartPrompts(viewingChannelId);
-      void client.assistant.threads
-        .setSuggestedPrompts({
+      try {
+        await client.assistant.threads.setSuggestedPrompts({
           channel_id: channelId,
           thread_ts: threadTs,
           title: 'Pick your poison:',
           prompts: prompts as [(typeof prompts)[number], ...typeof prompts],
-        })
-        .catch((err) => logger.warn('Failed to refresh suggested prompts:', err));
+        });
+      } catch (err) {
+        logger.warn('Failed to refresh suggested prompts:', err);
+      }
     },
 
     userMessage: async ({ client, message, logger }): Promise<void> => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const msg = message as any;
 
-      // Ignore bot messages and edited/system messages to avoid loops.
-      if (msg.bot_id || msg.subtype) {
+      if (shouldIgnoreAssistantUserMessage(msg)) {
         return;
       }
 
       const channelId = msg.channel as string | undefined;
       const threadTs = (msg.thread_ts ?? msg.ts) as string | undefined;
-      const text = (msg.text as string) || '';
+      const text = assistantUserText(msg);
       const userId = msg.user as string | undefined;
 
       if (!channelId || !userId || !threadTs) {

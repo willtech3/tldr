@@ -156,20 +156,24 @@ export function buildWelcomeBlocks(
   return blocks;
 }
 
+/** Shown (and used as the visible section) when a general-chat reply fails. */
+export const CHAT_FAILURE_TEXT =
+  "😅 I couldn't come up with a reply just now — try again, or ask for a summary.";
+
 /**
- * Friendly fallback for messages that don't parse into a command. Always
- * gives the user a next step — never leave them on read.
+ * Failure card for a general-chat miss. Slack renders `blocks` instead of
+ * top-level `text`, so this section must match {@link CHAT_FAILURE_TEXT} —
+ * not the old "I didn't catch that" copy, which blamed the user's phrasing
+ * for a model/transport failure.
  */
-export function buildUnknownIntentBlocks(viewingChannelId?: string | null): KnownBlock[] {
+export function buildChatFailureBlocks(viewingChannelId?: string | null): KnownBlock[] {
   const target = viewingChannelId ? `<#${viewingChannelId}>` : "the channel you're viewing";
   return [
     {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text:
-          `🤔 I didn't catch that — summarizing is my whole personality.\n` +
-          `Want me to summarize ${target}?`,
+        text: `${CHAT_FAILURE_TEXT}\nWant me to summarize ${target} instead?`,
       },
     },
     {

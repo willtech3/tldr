@@ -74,14 +74,14 @@ worker split has been removed.
 - `src/slack/` — Web client wrappers, `chat.*Stream` helpers, the generated-text sanitiser (`sanitize.ts`, the single implementation — import from here rather than duplicating the mention regexes), image fetch.
 - `src/ai/` — Anthropic Messages API client (`@anthropic-ai/sdk`), XML-structured prompt builder, image helpers.
 - `src/worker/` — Inline summarisation pipeline: chunker, link extractor, prompt builder, deliver buttons, streaming orchestrator, top-level `runSummarization`. Also `chat.ts` (`runGeneralChat`), the text-in/text-out chat engine behind both non-command assistant messages and channel `@TLDR` mentions.
-- `tests/` — Jest tests mirroring the `src/` layout. Known gaps: no tests yet for `app.ts`, `handlers/assistant.ts`, `handlers/run_summary.ts`, or `handlers/style.ts`, and `index.test.ts` covers only `isSlackTimeoutRetry`. Add coverage when touching those modules.
+- `tests/` — Jest tests mirroring the `src/` layout. Known gaps: no tests yet for `app.ts`, `handlers/run_summary.ts`, or `handlers/style.ts`, and `index.test.ts` covers only `isSlackTimeoutRetry`. Add coverage when touching those modules.
 
 ### Key Design Patterns
 - **Single Lambda** — One Node.js function hosts both the Slack signal layer and the Anthropic streaming worker.
 - **Streaming first** — Set `ENABLE_STREAMING=true` (default) so summaries token-stream into the assistant thread.
 - **Lazy init** — Module-level singletons cache config, the Bolt receiver, and the SSM client across warm Lambda invocations.
 - **Safety net** — `applySafetyNetSections` appends any of the *Links shared / Image highlights / Receipts* sections the model omitted. The leading summary prose is requested via the prompt only — no *Summary* header is ever enforced.
-- **Error containment** — On the summary path, streaming failures overwrite the partial Slack message with a canonical error string via `chat.update`, falling back to delete + repost (`streaming.ts` `ensureCanonicalFailure`). The general-chat path (`worker/chat.ts`) deletes a partial stream, retries once as a complete model response, and only then posts a failure nudge.
+- **Error containment** — On the summary path, streaming failures overwrite the partial Slack message with a canonical error string via `chat.update`, falling back to delete + repost (`streaming.ts` `ensureCanonicalFailure`). The general-chat path (`worker/chat.ts`) deletes a partial stream, retries once as a complete model response, and only then posts a failure card (the same copy in `text` and in blocks). It clears assistant `setStatus` when done so the Slack desktop pane doesn't stay on "Thinking...".
 
 ## Important Guidelines
 

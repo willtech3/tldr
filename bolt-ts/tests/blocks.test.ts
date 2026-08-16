@@ -7,7 +7,8 @@ import {
   buildHelpBlocks,
   buildStyleModal,
   buildStyleConfirmationBlocks,
-  buildUnknownIntentBlocks,
+  buildChatFailureBlocks,
+  CHAT_FAILURE_TEXT,
   buildFailureBlocks,
   buildRetryValue,
   ACTION_OPEN_STYLE_MODAL,
@@ -283,19 +284,21 @@ describe('Block Kit builders', () => {
     });
   });
 
-  describe('buildUnknownIntentBlocks', () => {
-    it('should mention the viewing channel when known', () => {
-      const blocks = buildUnknownIntentBlocks('C12345');
+  describe('buildChatFailureBlocks', () => {
+    it('should show the failure copy, not "I didn\'t catch that"', () => {
+      const blocks = buildChatFailureBlocks('C12345');
       const section = blocks.find((b) => b.type === 'section');
       if (section?.type === 'section' && section.text?.type === 'mrkdwn') {
+        expect(section.text.text).toContain(CHAT_FAILURE_TEXT);
         expect(section.text.text).toContain('<#C12345>');
+        expect(section.text.text).not.toContain("didn't catch that");
       } else {
         throw new Error('expected mrkdwn section');
       }
     });
 
     it('should offer summarize and help buttons', () => {
-      const blocks = buildUnknownIntentBlocks(null);
+      const blocks = buildChatFailureBlocks(null);
       expect(findButton(blocks, ACTION_QUICK_SUMMARIZE)).toBeDefined();
       expect(findButton(blocks, ACTION_SHOW_HELP)).toBeDefined();
     });

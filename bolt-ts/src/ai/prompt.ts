@@ -98,10 +98,13 @@ The team decided to ship the new onboarding flow on Friday. Alex agreed to draft
  * codepoints. Used when embedding user-provided style in the prompt.
  */
 export function sanitizeCustomInternal(raw: string): string {
+  const normalized = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const filtered: string[] = [];
-  for (const ch of raw) {
+  for (const ch of normalized) {
     const code = ch.codePointAt(0) ?? 0;
-    if (code < 0x20 || code === 0x7f || (code >= 0x80 && code <= 0x9f)) {
+    // Preserve LF so multi-line styles survive into the prompt. Strip
+    // every other C0 / DEL / C1 control character.
+    if (code !== 0x0a && (code < 0x20 || code === 0x7f || (code >= 0x80 && code <= 0x9f))) {
       continue;
     }
     filtered.push(ch);

@@ -16,7 +16,7 @@
 import type { WebClient } from '@slack/web-api';
 import { LlmClient, type StreamingResponse } from '../ai/anthropic';
 import { buildChatPrompt, type ChatHistoryEntry, type ChatSurface } from '../ai/prompt';
-import { buildUnknownIntentBlocks } from '../blocks';
+import { buildChatFailureBlocks, CHAT_FAILURE_TEXT } from '../blocks';
 import type { AppConfig } from '../config';
 import { buildRateLimitMessage } from '../handlers/run_summary';
 import { checkSummarizeRateLimit } from '../security';
@@ -32,9 +32,7 @@ import {
 } from '../slack/client';
 import { takeStreamChunk } from './chunks';
 
-/** Shown (with the nudge buttons on the assistant surface) when the model call fails. */
-export const CHAT_FAILURE_TEXT =
-  "😅 I couldn't come up with a reply just now — try again, or ask for a summary.";
+export { CHAT_FAILURE_TEXT };
 
 /** How many prior thread messages we hand the model as context. */
 const HISTORY_LIMIT = 30;
@@ -169,15 +167,31 @@ export async function runGeneralChat(args: GeneralChatArgs): Promise<ChatOutcome
         thread_ts: args.threadTs,
         text: CHAT_FAILURE_TEXT,
         // The nudge buttons only exist on the assistant surface; a channel
-        // thread gets plain text.
+        // thread gets plain text. Blocks must repeat the failure copy —
+        // Slack hides top-level `text` when blocks are present.
         ...(args.surface === 'assistant'
-          ? { blocks: buildUnknownIntentBlocks(args.viewingChannelId ?? null) }
+          ? { blocks: buildChatFailureBlocks(args.viewingChannelId ?? null) }
           : {}),
       });
     } catch (followup) {
       logger.error('Failed to post chat failure fallback:', followup);
     }
     return 'failed';
+  } finally {
+    // Slack keeps the last setStatus visible until it is cleared. Leaving
+    // "Thinking..." up after a reply (or a failure) makes the desktop
+    // assistant pane look stuck.
+    if (args.surface === 'assistant') {
+      try {
+        await client.assistant.threads.setStatus({
+          channel_id: args.channelId,
+          thread_ts: args.threadTs,
+          status: '',
+        });
+      } catch (error) {
+        logger.warn('Failed to clear assistant thread status after chat:', error);
+      }
+    }
   }
 }
 

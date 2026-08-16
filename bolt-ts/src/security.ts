@@ -100,10 +100,14 @@ export function validateAndSanitizeStyle(raw: string | null | undefined):
     return { ok: true, value: null };
   }
 
-  const trimmed = Array.from(raw)
+  // Keep newlines — the style modal is a textarea, and a multi-line
+  // persona jammed into one line ("be funny\nand mean" → "be funnyand mean")
+  // is not what the user wrote. Other C0 / DEL still go.
+  const normalized = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const trimmed = Array.from(normalized)
     .filter((char) => {
       const code = char.charCodeAt(0);
-      return code >= 32 && code !== 127;
+      return code === 10 || (code >= 32 && code !== 127);
     })
     .join('')
     .trim();

@@ -79,6 +79,14 @@ describe('parseUserIntent', () => {
         instructions: 'write helpful, friendly summaries',
       });
     });
+
+    it('should keep a multi-line style persona', () => {
+      const result = parseUserIntent('style: be funny\nand a little mean');
+      expect(result).toEqual({
+        type: 'style',
+        instructions: 'be funny\nand a little mean',
+      });
+    });
   });
 
   describe('clear_style intent', () => {
@@ -115,7 +123,6 @@ describe('parseUserIntent', () => {
         type: 'summarize',
         count: null,
         targetChannel: null,
-        postHere: false,
         styleOverride: null,
       });
     });
@@ -126,7 +133,6 @@ describe('parseUserIntent', () => {
         type: 'summarize',
         count: 50,
         targetChannel: null,
-        postHere: false,
         styleOverride: null,
       });
     });
@@ -137,7 +143,6 @@ describe('parseUserIntent', () => {
         type: 'summarize',
         count: 100,
         targetChannel: null,
-        postHere: false,
         styleOverride: null,
       });
     });
@@ -148,7 +153,6 @@ describe('parseUserIntent', () => {
         type: 'summarize',
         count: null,
         targetChannel: 'C123ABC',
-        postHere: false,
         styleOverride: null,
       });
     });
@@ -196,26 +200,18 @@ describe('parseUserIntent', () => {
       expect(result).toMatchObject({ type: 'summarize', count: 200 });
     });
 
-    it('should recognize "post here" flag', () => {
-      const result = parseUserIntent('summarize post here');
-      expect(result).toEqual({
+    it('should still summarize when the leftover public-post phrasing is used', () => {
+      // "post here" / "public" used to flip a dest_public_post flag that
+      // no handler reads. They remain valid command residue so the
+      // message still summarizes privately; Share-to-channel is the
+      // supported public path.
+      expect(parseUserIntent('summarize post here')).toEqual({
         type: 'summarize',
         count: null,
         targetChannel: null,
-        postHere: true,
         styleOverride: null,
       });
-    });
-
-    it('should recognize "public" flag', () => {
-      const result = parseUserIntent('summarize public');
-      expect(result).toEqual({
-        type: 'summarize',
-        count: null,
-        targetChannel: null,
-        postHere: true,
-        styleOverride: null,
-      });
+      expect(parseUserIntent('summarize public')).toMatchObject({ type: 'summarize' });
     });
 
     it('should parse complex command with all options', () => {
@@ -224,7 +220,6 @@ describe('parseUserIntent', () => {
         type: 'summarize',
         count: 25,
         targetChannel: 'C789XYZ',
-        postHere: true,
         styleOverride: null,
       });
     });
@@ -235,7 +230,6 @@ describe('parseUserIntent', () => {
         type: 'summarize',
         count: null,
         targetChannel: null,
-        postHere: false,
         styleOverride: 'be funny',
       });
     });
@@ -246,7 +240,6 @@ describe('parseUserIntent', () => {
         type: 'summarize',
         count: 50,
         targetChannel: null,
-        postHere: false,
         styleOverride: 'write as haiku',
       });
     });
@@ -257,8 +250,17 @@ describe('parseUserIntent', () => {
         type: 'summarize',
         count: null,
         targetChannel: null,
-        postHere: false,
         styleOverride: 'extremely concise',
+      });
+    });
+
+    it('should keep a multi-line style override instead of dropping it', () => {
+      const result = parseUserIntent('summarize with style: be funny\nand a little mean');
+      expect(result).toEqual({
+        type: 'summarize',
+        count: null,
+        targetChannel: null,
+        styleOverride: 'be funny\nand a little mean',
       });
     });
   });

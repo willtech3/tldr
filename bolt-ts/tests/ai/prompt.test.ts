@@ -35,6 +35,11 @@ describe('sanitizeCustomInternal', () => {
     expect(sanitizeCustomInternal(dirty)).toBe('abc');
   });
 
+  it('preserves newlines in multi-line styles and normalizes CRLF', () => {
+    expect(sanitizeCustomInternal('be funny\nand mean')).toBe('be funny\nand mean');
+    expect(sanitizeCustomInternal('be funny\r\nand mean')).toBe('be funny\nand mean');
+  });
+
   it('hard-truncates to the max length', () => {
     const long = 'a'.repeat(MAX_CUSTOM_STYLE_LENGTH + 50);
     expect(sanitizeCustomInternal(long)).toHaveLength(MAX_CUSTOM_STYLE_LENGTH);

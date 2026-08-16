@@ -104,7 +104,8 @@ export function parseUserIntent(text: string): UserIntent {
   // Examples:
   // - "style: write as a haiku"
   // - "style : extremely concise"
-  const styleMatch = text.match(/^\s*style\s*:\s*(.+?)\s*$/i);
+  // [\s\S] so a multi-line persona from a paste still saves as style.
+  const styleMatch = text.match(/^\s*style\s*:\s*([\s\S]+?)\s*$/i);
   if (styleMatch) {
     const instructions = styleMatch[1]?.trim() ?? '';
     if (instructions.length > 0) {
@@ -113,15 +114,13 @@ export function parseUserIntent(text: string): UserIntent {
     return { type: 'help' };
   }
 
-  // Parse summarize intent
-  const postHere = textLower.includes('post here') || textLower.includes('public');
-
   // Parse per-run style override (doesn't persist)
   // Examples:
   // - "summarize with style: be funny"
   // - "summarize last 50 with style: write as haiku"
+  // [\s\S] so a multi-line override is kept, not silently dropped.
   let styleOverride: string | null = null;
-  const styleOverrideMatch = text.match(/with\s+style\s*:\s*(.+?)$/i);
+  const styleOverrideMatch = text.match(/with\s+style\s*:\s*([\s\S]+?)\s*$/i);
   if (styleOverrideMatch) {
     styleOverride = styleOverrideMatch[1]?.trim() || null;
   }
@@ -154,7 +153,6 @@ export function parseUserIntent(text: string): UserIntent {
       type: 'summarize',
       count,
       targetChannel,
-      postHere,
       styleOverride,
     };
   }

@@ -136,7 +136,10 @@ describe('runGeneralChat (streaming)', () => {
     const outcome = await runGeneralChat(baseArgs(client, llm));
 
     expect(outcome).toBe('delivered');
-    expect(spies.setStatus).toHaveBeenCalled();
+    expect(spies.setStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ status: '💬 Thinking...' })
+    );
+    expect(spies.setStatus).toHaveBeenCalledWith(expect.objectContaining({ status: '' }));
     expect(spies.startStream).toHaveBeenCalledWith(
       expect.objectContaining({ channel: 'D1', thread_ts: '1.0' })
     );
@@ -219,6 +222,10 @@ describe('runGeneralChat (streaming)', () => {
     expect(spies.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ text: CHAT_FAILURE_TEXT })
     );
+    const posted = spies.postMessage.mock.calls.find((c) => c[0].text === CHAT_FAILURE_TEXT);
+    expect(JSON.stringify(posted?.[0].blocks)).toContain(CHAT_FAILURE_TEXT);
+    expect(JSON.stringify(posted?.[0].blocks)).not.toContain("didn't catch that");
+    expect(spies.setStatus).toHaveBeenCalledWith(expect.objectContaining({ status: '' }));
   });
 
   it('treats an append onto a finalised message as a user stop', async () => {

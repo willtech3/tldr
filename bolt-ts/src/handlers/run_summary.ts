@@ -29,7 +29,7 @@ export const INVALID_CHANNEL_MESSAGE =
 
 export function buildRateLimitMessage(retryAfterMs: number): string {
   const seconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
-  return `⏳ Easy there — I cap at ${RATE_LIMIT_MAX_PER_MINUTE} summaries a minute. Try again in ~${seconds}s.`;
+  return `⏳ Easy there — I cap at ${RATE_LIMIT_MAX_PER_MINUTE} requests a minute. Try again in ~${seconds}s.`;
 }
 
 interface HandlerLogger {
