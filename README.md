@@ -44,13 +44,21 @@ TLDR has four front doors. Pick whichever fits the moment:
 Open TLDR from the AI Apps icon and talk to it in plain English:
 
 ```text
-summarize                        → the channel you're currently viewing
+summarize                        → the channel you're currently viewing¹
 catch me up                      → same thing ("what did I miss" and "tldr" work too)
 summarize last 200               → reach further back
 summarize #design                → a specific channel (you must be a member)
 summarize #design last 25 with style: executive brief
 help                             → the command reference card
 ```
+
+¹ Newer Slack desktop clients no longer tell legacy assistant apps which
+channel you're viewing as you switch around, so the tracked channel can lag
+behind (it's captured when the assistant thread starts). The summary header
+always names the channel actually summarized; name one explicitly
+(`summarize #channel`) when precision matters. See
+`docs/slack_configuration.md` for the agent-experience migration that fixes
+this.
 
 Every summary streams in live and always ends with four sections: **Summary**,
 **Links shared**, **Image highlights**, and **Receipts** — permalinks back to the

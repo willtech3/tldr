@@ -198,8 +198,44 @@ Reference: [Slack Request Verification](https://api.slack.com/authentication/ver
 - ☐ Custom styles are applied correctly
 - ☐ Error messages display correctly for failures
 
+## Known Limitation: Viewing-Channel Context Goes Stale
+
+Slack's new agent experience (rolled out to clients during 2026) stopped
+delivering `assistant_thread_context_changed` to apps still on the legacy
+`assistant_view` surface. Verified live (Aug 2026, Slack desktop): switching
+channels with the TLDR pane docked never fires the event, so the stored
+"channel you're viewing" only reflects the channel in view when the thread
+*started*. A bare `summarize` can therefore target a stale channel; the
+summary header always names its actual source channel, and
+`summarize #channel` is always exact.
+
+## Migrating to the new Agent experience (fixes the above)
+
+Slack's July 2026 "[Agent context](https://docs.slack.dev/changelog/2026/07/02/app-context/)"
+change replaces thread-scoped context events with app-scoped ones:
+
+1. Manifest: swap `assistant_view` for `agent_view` (`assistant_description`
+   → `agent_description`). **This cannot be reversed** — see caution below.
+2. Event Subscriptions: add `app_context_changed` (scope `assistant:write`,
+   already granted).
+3. Once subscribed, `message.im` events carry an `app_context` field with the
+   entities the user is viewing. The code already consumes it
+   (`appContextChannelId` in `bolt-ts/src/handlers/assistant.ts`) and prefers
+   it over stored state, so context tracking starts working — race-free —
+   with no further code changes.
+
+**Caution before migrating:**
+- `agent_view` is irreversible once saved.
+- `assistant_thread_started` stops firing under `agent_view`; the welcome
+  card + suggested-prompts flow must be reworked onto `app_home_opened`
+  (`tab === 'messages'`) first. Conversations move from the app's Chat tab
+  into the Messages tab timeline.
+- `assistant.threads.setStatus` / `setTitle` / `setSuggestedPrompts` keep
+  working (prompts render at the top of the Messages tab instead).
+
 ## Related Documentation
 
 - [Slack API: AI Apps](https://api.slack.com/docs/apps/ai)
 - [Slack API: Events](https://api.slack.com/events)
 - [Slack API: Interactivity](https://api.slack.com/interactivity)
+- [Slack changelog: Agent context](https://docs.slack.dev/changelog/2026/07/02/app-context/)

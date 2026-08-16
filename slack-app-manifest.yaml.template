@@ -19,6 +19,15 @@ features:
       type: message
       callback_id: summarize_thread
       description: Summarize this message thread
+  # LEGACY SURFACE — Slack's new agent experience no longer delivers
+  # assistant_thread_context_changed to assistant_view apps, so "the channel
+  # you're viewing" can go stale on current desktop clients (July 2026
+  # platform change). The durable fix is migrating to `agent_view` +
+  # subscribing to `app_context_changed` (the code already reads the
+  # resulting `app_context` field on message.im). CAUTION: switching to
+  # agent_view is IRREVERSIBLE and retires assistant_thread_started (the
+  # welcome-card flow needs reworking onto app_home_opened first). See
+  # docs/slack_configuration.md → "Migrating to the new Agent experience".
   assistant_view:
     assistant_description: TLDR summarizes recent messages from any channel and provides the results in this thread. You can then share summaries with custom style prompts to other channels.
     suggested_prompts: []
