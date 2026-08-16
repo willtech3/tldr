@@ -16,7 +16,7 @@
 import type { WebClient } from '@slack/web-api';
 import { LlmClient, type StreamingResponse } from '../ai/anthropic';
 import { buildChatPrompt, type ChatHistoryEntry, type ChatSurface } from '../ai/prompt';
-import { buildUnknownIntentBlocks } from '../blocks';
+import { buildChatFailureBlocks, CHAT_FAILURE_TEXT } from '../blocks';
 import type { AppConfig } from '../config';
 import { buildRateLimitMessage } from '../handlers/run_summary';
 import { checkSummarizeRateLimit } from '../security';
@@ -32,9 +32,7 @@ import {
 } from '../slack/client';
 import { takeStreamChunk } from './chunks';
 
-/** Shown (with the nudge buttons on the assistant surface) when the model call fails. */
-export const CHAT_FAILURE_TEXT =
-  "😅 I couldn't come up with a reply just now — try again, or ask for a summary.";
+export { CHAT_FAILURE_TEXT };
 
 /** How many prior thread messages we hand the model as context. */
 const HISTORY_LIMIT = 30;
@@ -169,15 +167,36 @@ export async function runGeneralChat(args: GeneralChatArgs): Promise<ChatOutcome
         thread_ts: args.threadTs,
         text: CHAT_FAILURE_TEXT,
         // The nudge buttons only exist on the assistant surface; a channel
-        // thread gets plain text.
+        // thread gets plain text. Blocks must repeat the failure copy —
+        // Slack hides top-level `text` when blocks are present.
         ...(args.surface === 'assistant'
-          ? { blocks: buildUnknownIntentBlocks(args.viewingChannelId ?? null) }
+          ? { blocks: buildChatFailureBlocks(args.viewingChannelId ?? null) }
           : {}),
       });
     } catch (followup) {
       logger.error('Failed to post chat failure fallback:', followup);
     }
     return 'failed';
+  } finally {
+    // Slack auto-clears the status when the app posts a message in the
+    // thread, so this explicit clear mostly matters on paths that post
+    // nothing (e.g. the failure card itself failed) — without it the pane
+    // stays stuck on "Thinking...". It is thread-scoped, not run-scoped:
+    // with two runs in flight it can briefly wipe the other run's status.
+    // Accepted — Slack offers no status ownership/CAS, the auto-clear
+    // already stomps in most overlap timelines, and the pane self-heals
+    // when the other run's reply lands.
+    if (args.surface === 'assistant') {
+      try {
+        await client.assistant.threads.setStatus({
+          channel_id: args.channelId,
+          thread_ts: args.threadTs,
+          status: '',
+        });
+      } catch (error) {
+        logger.warn('Failed to clear assistant thread status after chat:', error);
+      }
+    }
   }
 }
 
@@ -360,6 +379,17 @@ async function streamChatReply(
     if (collected.length === 0) {
       throw new Error('Anthropic chat stream completed without any output');
     }
+
+    // Drain what the append cadence held back. Failures here get the same
+    // cleanup as mid-stream failures — content is still missing from the
+    // Slack message, so the retry-as-full-reply path is correct.
+    while (canAppend && pending.length > 0) {
+      const wait = args.config.streamMinAppendIntervalMs - (Date.now() - lastAppendAt);
+      if (wait > 0) {
+        await sleep(wait);
+      }
+      await appendChunk();
+    }
   } catch (error) {
     // Stop and remove the partial (or empty) message before the caller retries
     // delivery as a complete response.
@@ -375,16 +405,15 @@ async function streamChatReply(
     void stream.cancel();
   }
 
-  while (canAppend && pending.length > 0) {
-    const wait = args.config.streamMinAppendIntervalMs - (Date.now() - lastAppendAt);
-    if (wait > 0) {
-      await sleep(wait);
-    }
-    await appendChunk();
-  }
-
   if (canAppend) {
-    await stopStream(args.client, { channel: args.channelId, ts: streamTs });
+    try {
+      await stopStream(args.client, { channel: args.channelId, ts: streamTs });
+    } catch (error) {
+      // Every token is already in the message. Failing the run here would
+      // delete a fully-delivered reply, spend a second model call, and post
+      // the same text again — worse than leaving the stream to expire.
+      args.logger.warn('chat.stopStream failed after a fully-delivered reply:', error);
+    }
     return 'delivered';
   }
   return 'stopped';

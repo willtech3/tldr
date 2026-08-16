@@ -31,6 +31,17 @@ describe('security helpers', () => {
     }
   });
 
+  it('preserves newlines in multi-line styles and normalizes CRLF', () => {
+    expect(validateAndSanitizeStyle('be funny\nand mean')).toEqual({
+      ok: true,
+      value: 'be funny\nand mean',
+    });
+    expect(validateAndSanitizeStyle('be funny\r\nand mean')).toEqual({
+      ok: true,
+      value: 'be funny\nand mean',
+    });
+  });
+
   it('limits summarize requests per warm container window with a countdown', () => {
     for (let i = 0; i < 5; i += 1) {
       expect(checkSummarizeRateLimit('U123', 1000)).toEqual({ allowed: true, retryAfterMs: 0 });

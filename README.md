@@ -58,7 +58,8 @@ messages that matter, so you can jump straight to the source.
 
 Anything that *isn't* a command is just conversation. Ask "explain the RFC
 linked above" or "draft a short reply I can post" and TLDR answers in the same
-thread, with the recent thread context in mind.
+thread, with the recent thread context in mind. Sharing a file still gets a
+reply — chat is text-only, so TLDR will say it can't see the attachment.
 
 ### ⚡ Buttons — the no-typing path
 

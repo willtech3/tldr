@@ -52,7 +52,7 @@ If installation is not possible (e.g., no root in the container), the scripts em
 Quality checks and tests run without external secrets. For local integration runs or deployments, provide:
 
 - `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`
-- `ANTHROPIC_API_KEY` (optionally `ANTHROPIC_MODEL` to override the default `claude-sonnet-4-6`)
+- `ANTHROPIC_API_KEY` (optionally `ANTHROPIC_MODEL` to override the default `claude-opus-4-8`)
 
 For Terraform workflows, see `terraform/terraform.tfvars.example` and `terraform/README.md`.
 

@@ -35,6 +35,11 @@ describe('sanitizeCustomInternal', () => {
     expect(sanitizeCustomInternal(dirty)).toBe('abc');
   });
 
+  it('preserves newlines in multi-line styles and normalizes CRLF', () => {
+    expect(sanitizeCustomInternal('be funny\nand mean')).toBe('be funny\nand mean');
+    expect(sanitizeCustomInternal('be funny\r\nand mean')).toBe('be funny\nand mean');
+  });
+
   it('hard-truncates to the max length', () => {
     const long = 'a'.repeat(MAX_CUSTOM_STYLE_LENGTH + 50);
     expect(sanitizeCustomInternal(long)).toHaveLength(MAX_CUSTOM_STYLE_LENGTH);
@@ -138,6 +143,17 @@ describe('buildPrompt', () => {
 });
 
 describe('buildChatPrompt', () => {
+  it('tells the model chat is text-only so file-share replies are deterministic', () => {
+    const payload = buildChatPrompt({
+      userMessage: 'hi',
+      history: [],
+      surface: 'assistant',
+      channelName: null,
+    });
+    expect(payload.system).toContain('cannot open or see files');
+    expect(payload.system).toContain('text-only');
+  });
+
   it('frames history, the user message, and the task in order', () => {
     const payload = buildChatPrompt({
       userMessage: 'who are you?',

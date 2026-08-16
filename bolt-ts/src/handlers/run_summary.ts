@@ -29,7 +29,7 @@ export const INVALID_CHANNEL_MESSAGE =
 
 export function buildRateLimitMessage(retryAfterMs: number): string {
   const seconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
-  return `⏳ Easy there — I cap at ${RATE_LIMIT_MAX_PER_MINUTE} summaries a minute. Try again in ~${seconds}s.`;
+  return `⏳ Easy there — I cap at ${RATE_LIMIT_MAX_PER_MINUTE} requests a minute. Try again in ~${seconds}s.`;
 }
 
 interface HandlerLogger {
@@ -90,6 +90,10 @@ export async function guardAndRunSummarization(args: GuardedSummarizeArgs): Prom
     return;
   }
 
+  // No explicit clear needed: Slack auto-clears this status as soon as the
+  // pipeline posts its next message in the thread, and every outcome posts
+  // one (the streamed summary header arrives before any tokens; failures
+  // post or repair a message of their own).
   const hasCustomStyle = args.customStyle !== null && args.customStyle.trim().length > 0;
   try {
     await client.assistant.threads.setStatus({
