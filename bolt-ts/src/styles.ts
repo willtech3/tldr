@@ -1,6 +1,6 @@
 /**
  * Preset summary styles shared by the suggested prompts, the per-summary
- * action buttons, and the post-summary follow-up prompts.
+ * action buttons, and the fresh-message menu.
  */
 
 export const ROAST_STYLE =

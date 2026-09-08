@@ -21,7 +21,7 @@ import {
   isPromptTooLargeError,
 } from '../ai/anthropic';
 import { buildFailureBlocks, buildRetryValue } from '../blocks';
-import { sanitizeGeneratedSlackMrkdwn } from '../slack/sanitize';
+import { MARKDOWN_BLOCK_CHAR_LIMIT, sanitizeGeneratedSlackMrkdwn } from '../slack/sanitize';
 import {
   BotNotInChannelError,
   appendStream,
@@ -344,6 +344,8 @@ async function consumeStream(args: ConsumeStreamArgs): Promise<{ stopped: boolea
       sourceChannelName: args.promptData.channelName,
       window: args.window,
       shorter: args.shorter,
+      summaryText: finalised,
+      logger: args.logger,
     });
   }
 
@@ -398,6 +400,8 @@ async function finalizeStreamSuccess(args: {
   sourceChannelName: string;
   window?: SummaryWindow;
   shorter?: boolean;
+  summaryText: string;
+  logger: Logger;
 }): Promise<void> {
   const delivery = {
     sourceChannelId: args.sourceChannelId,
@@ -415,6 +419,28 @@ async function finalizeStreamSuccess(args: {
     blocks,
     metadata: buildSummaryMetadata(delivery),
   });
+  // Slack can replace streamed `text` with an accessibility transcript of
+  // every block. Give future Share/Shorter clicks a canonical visible body.
+  // Some stream types reject this update; keep the already-delivered recap
+  // intact and let structured rich-text extraction handle those messages.
+  const body = sanitizeGeneratedSlackMrkdwn(
+    buildStreamPrefix(args.sourceChannelName, args.customStyle, args.coverage) + args.summaryText
+  );
+  // A stream can exceed the Markdown block cap. Never replace a fully
+  // delivered long recap with a truncated update just to normalize its shape.
+  if (body.length > MARKDOWN_BLOCK_CHAR_LIMIT) { return; }
+  try {
+    await args.client.chat.update({
+      channel: args.channel,
+      ts: args.streamTs,
+      text: body.slice(0, 4000),
+      blocks: [{ type: 'markdown', text: body }, ...blocks],
+      metadata: buildSummaryMetadata(delivery),
+    });
+  } catch {
+    // Avoid logging Slack's request/response object: it can contain recap text.
+    args.logger.warn('Delivered summary could not be normalized for follow-up actions');
+  }
 }
 
 interface EnsureCanonicalFailureArgs {

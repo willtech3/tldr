@@ -4,7 +4,7 @@
  * Every entry point that starts a summarization (typed commands, the welcome
  * button, retry buttons, roast/receipts reruns) funnels through here so rate
  * limiting, membership checks, the animated thread status, and post-summary
- * follow-up prompts behave identically everywhere.
+ * thread titles behave identically everywhere.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -63,7 +63,7 @@ export interface GuardedSummarizeArgs {
 }
 
 /**
- * Validate, show progress, run the summary, then refresh follow-up prompts.
+ * Validate, show progress, run the summary, then update the thread title.
  * Posts a user-facing message for every refusal; never throws.
  */
 export async function guardAndRunSummarization(args: GuardedSummarizeArgs): Promise<void> {
@@ -172,8 +172,6 @@ export async function guardAndRunSummarization(args: GuardedSummarizeArgs): Prom
       assistantChannelId: args.assistantChannelId,
       assistantThreadTs: args.assistantThreadTs,
       sourceChannelId: args.sourceChannelId,
-      style: args.customStyle,
-      messageCount: args.messageCount,
       logger,
     });
   }

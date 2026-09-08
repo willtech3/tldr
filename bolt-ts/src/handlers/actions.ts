@@ -28,8 +28,10 @@ import {
 } from '../blocks';
 import { ACTION_SUMMARY_FEEDBACK, type StyleKind, type SummaryTransformValue } from '../worker/deliver';
 import { parseSummaryWindow } from '../summary_window';
+import { ACTION_SUMMARY_LATEST, parseSummaryLatestValue } from '../summary_latest';
 import { buildSourcePrompts } from '../followups';
 import { getMessagePermalink } from '../slack/client';
+import { extractSummaryBody } from '../slack/summary_body';
 import { isValidSummaryToShorten } from '../ai/prompt';
 import { sanitizeGeneratedSlackMrkdwn, truncateForMarkdownBlock } from '../slack/sanitize';
 import { RECEIPTS_STYLE, ROAST_STYLE, STYLE_PRESETS, DEFAULT_STYLE_PRESET_KEY, resolveStylePreset } from '../styles';
@@ -151,6 +153,35 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
   app.action<BlockAction>('rerun_shorter', async (args) =>
     handleRerun({ ...args, config, transformAction: 'rerun_shorter', style: null, statusText: 'Making that recap shorter...' })
   );
+
+  app.action<BlockAction>(ACTION_SUMMARY_LATEST, async ({ ack, body, action, client, logger }) => {
+    await ack();
+    const message = 'message' in body ? body.message : null;
+    const channel = 'channel' in body ? body.channel : null;
+    if (!message || !channel || action.type !== 'overflow') {
+      return;
+    }
+    const threadTs = message.thread_ts ?? message.ts;
+    try {
+      const value = parseSummaryLatestValue(action.selected_option?.value);
+      if (!value) {
+        await client.chat.postMessage({ channel: channel.id, thread_ts: threadTs,
+          text: 'That latest-message request has invalid settings. Type `summarize #channel` to choose a source again.' });
+        return;
+      }
+      // Fresh requests keep this result's explicit source and preset. Do not
+      // inherit its old bounds, prior recap, or the thread's changed defaults.
+      await guardAndRunSummarization({
+        client, config, userId: body.user.id, sourceChannelId: value.channelId,
+        assistantChannelId: channel.id, assistantThreadTs: threadTs,
+        messageCount: value.count,
+        customStyle: value.styleKey === 'default' ? null : resolveStylePreset(value.styleKey),
+        statusText: `Catching up on the latest ${value.count} messages...`, logger,
+      });
+    } catch (error) {
+      logger.error('Failed to request latest source messages:', error);
+    }
+  });
 
   // One-tap summarize from the welcome message, style confirmations, and the
   // unknown-intent nudge. Uses the thread's saved defaults at click time.
@@ -420,24 +451,6 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
       }
     }
   );
-}
-
-/**
- * Pull the summary body out of a summary message. Non-streaming summaries
- * carry the body in a markdown block (their `text` is only a notification
- * fallback); streamed summaries keep it in `text`.
- */
-function extractSummaryBody(message: {
-  text?: string;
-  blocks?: Array<{ type?: string; text?: unknown }>;
-}): string {
-  const markdownBlock = message.blocks?.find(
-    (b) => b?.type === 'markdown' && typeof b.text === 'string'
-  );
-  if (markdownBlock) {
-    return markdownBlock.text as string;
-  }
-  return message.text ?? '';
 }
 
 /**

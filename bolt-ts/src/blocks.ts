@@ -260,7 +260,7 @@ export function buildHelpBlocks(): KnownBlock[] {
           '*Work with a summary*\n' +
           '*Shorter*, *Roast*, and *Receipts* use that summary’s source and date window; ' +
           'message edits and deletions may still change the result. ' +
-          '*Refresh latest* and *Expand to latest* fetch the newest messages at the stated count. ' +
+          'The *⋯ menu* offers *Refresh latest* and *Expand to latest* for new messages at the stated count and style. ' +
           '*Share to #channel* shows a confirmation with the destination before posting.',
       },
     },
