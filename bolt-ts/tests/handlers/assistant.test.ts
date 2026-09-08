@@ -2,9 +2,11 @@ import {
   FILE_ATTACHMENT_NOTE,
   FILE_SHARE_NO_CAPTION_REPLY,
   appContextChannelId,
+  buildThreadStartPrompts,
   routeAssistantUserMessage,
   shouldIgnoreAssistantUserMessage,
 } from '../../src/handlers/assistant';
+import { buildSourcePrompts } from '../../src/followups';
 
 describe('shouldIgnoreAssistantUserMessage', () => {
   it('drops bot messages so we cannot loop on our own posts', () => {
@@ -105,4 +107,12 @@ describe('appContextChannelId', () => {
       })
     ).toBeNull();
   });
+});
+
+describe('buildThreadStartPrompts', () => {
+  it.each([null, 'C012345678', 'C099999999'])(
+    'uses the shared source choices for %p', (channelId) => {
+      expect(buildThreadStartPrompts(channelId)).toEqual(buildSourcePrompts(channelId));
+    }
+  );
 });

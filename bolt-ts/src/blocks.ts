@@ -4,8 +4,8 @@
  * UI design notes:
  *  - The welcome message doubles as the canonical thread-state message —
  *    metadata on it persists viewingChannelId / customStyle / defaultMessageCount.
- *  - Dropdown and the "Set style" button are the primary controls, so they
- *    sit immediately under the intro with a divider above them.
+ *  - The source stays beside the primary action; count and style are compact
+ *    controls above it.
  *  - Slack's contextual status (suggested prompts, setStatus) is handled in
  *    the Assistant middleware, not in the welcome blocks.
  */
@@ -15,6 +15,7 @@ import { types } from '@slack/bolt';
 import type { View } from '@slack/types';
 import { normalizeMessageCount } from './security';
 import { DEFAULT_STYLE_PRESET_KEY, STYLE_PRESETS } from './styles';
+import type { SummaryWindow } from './types';
 
 type KnownBlock = types.KnownBlock;
 
@@ -34,29 +35,43 @@ export const INPUT_ACTION_STYLE_PRESET = 'style_preset_action';
 export interface RetrySummaryValue {
   channelId: string;
   count: number;
-  /** Inlined style when short enough for Slack's 2,000-char button value cap. */
-  style: string | null;
-  /** When true the style was too long to inline — re-read it from thread state. */
+  /** Legacy payloads may inline a style; new buttons only carry preset keys. */
+  style?: string | null;
+  styleKey?: string;
+  /** Legacy retries may request the saved thread style. */
   useThreadStyle?: boolean;
+  /** Custom-style retries must return to the original request or summary. */
+  requiresOriginal?: boolean;
+  window?: SummaryWindow;
+  shorter?: boolean;
 }
 
-/** Longest style we inline in a button value (Slack caps values at 2,000 chars). */
-const MAX_INLINE_BUTTON_STYLE_CHARS = 1_500;
-
 /**
- * Build a retry payload that always fits Slack's button value limit. Long
- * styles aren't inlined; the retry handler falls back to the thread's saved
- * style instead.
+ * Keep retry buttons compact and free of arbitrary style instructions. A
+ * custom-style request cannot recover its exact style from mutable thread
+ * defaults, so failure copy points back to the original request or summary.
  */
 export function buildRetryValue(
   channelId: string,
   count: number,
-  style: string | null
+  style: string | null,
+  options: { window?: SummaryWindow; shorter?: boolean; requiresOriginal?: boolean } = {}
 ): RetrySummaryValue {
-  if (style && style.length > MAX_INLINE_BUTTON_STYLE_CHARS) {
-    return { channelId, count, style: null, useThreadStyle: true };
+  const retry: RetrySummaryValue = {
+    channelId,
+    count,
+    ...(options.window !== undefined ? { window: options.window } : {}),
+    ...(options.shorter !== undefined ? { shorter: options.shorter } : {}),
+  };
+  if (options.requiresOriginal) {
+    return { ...retry, requiresOriginal: true };
   }
-  return { channelId, count, style };
+  const trimmedStyle = style?.trim();
+  const preset = STYLE_PRESETS.find((candidate) => candidate.value === trimmedStyle);
+  if (!trimmedStyle || preset) {
+    return { ...retry, styleKey: preset?.key ?? DEFAULT_STYLE_PRESET_KEY };
+  }
+  return { ...retry, requiresOriginal: true };
 }
 
 export const MESSAGE_COUNT_OPTIONS = [5, 10, 15, 20, 25, 30, 40, 50, 75, 100, 150, 200, 300, 500];
@@ -79,7 +94,7 @@ export function buildWelcomeBlocks(
   return [
     {
       type: 'section',
-      text: { type: 'mrkdwn', text: "Catch up on the conversation. Ask a question here anytime." },
+      text: { type: 'mrkdwn', text: 'Catch up on the conversation.' },
     },
     {
       type: 'section',
@@ -99,11 +114,11 @@ export function buildWelcomeBlocks(
         type: 'static_select',
         action_id: ACTION_SELECT_MESSAGE_COUNT,
         initial_option: {
-          text: { type: 'plain_text', text: String(effectiveCount) },
+          text: { type: 'plain_text', text: `${effectiveCount} messages` },
           value: String(effectiveCount),
         },
         options: MESSAGE_COUNT_OPTIONS.map((count) => ({
-          text: { type: 'plain_text', text: String(count) },
+          text: { type: 'plain_text', text: `${count} messages` },
           value: String(count),
         })),
       },
@@ -119,6 +134,7 @@ export function buildWelcomeBlocks(
         type: 'button' as const,
         style: 'primary' as const,
         text: { type: 'plain_text' as const, text: 'Catch up' },
+        accessibility_label: 'Catch up on the selected source channel',
         action_id: ACTION_QUICK_SUMMARIZE,
       },
     }] : []),
@@ -144,7 +160,7 @@ export const CHAT_FAILURE_TEXT =
  * for a model/transport failure.
  */
 export function buildChatFailureBlocks(viewingChannelId?: string | null): KnownBlock[] {
-  const target = viewingChannelId ? `<#${viewingChannelId}>` : "the channel you're viewing";
+  const target = viewingChannelId ? `<#${viewingChannelId}>` : 'your selected source';
   return [
     {
       type: 'section',
@@ -159,12 +175,12 @@ export function buildChatFailureBlocks(viewingChannelId?: string | null): KnownB
         {
           type: 'button',
           style: 'primary',
-          text: { type: 'plain_text', text: '⚡ Summarize now', emoji: true },
+          text: { type: 'plain_text', text: 'Catch up' },
           action_id: ACTION_QUICK_SUMMARIZE,
         },
         {
           type: 'button',
-          text: { type: 'plain_text', text: '📖 Show me everything', emoji: true },
+          text: { type: 'plain_text', text: 'Help' },
           action_id: ACTION_SHOW_HELP,
         },
       ],
@@ -191,15 +207,17 @@ export function buildFailureBlocks(
   text?: string,
   buttonLabel = '🔄 Try again'
 ): KnownBlock[] {
+  const failureText = text ?? "That summary didn't come together. Please try again.";
+  if (retry.requiresOriginal) {
+    const recovery = retry.window
+      ? 'Use the action on the original summary to retry with its saved style and time window.'
+      : 'Repeat your original request to retry with the same custom style.';
+    return [{ type: 'section', text: { type: 'mrkdwn', text: `${failureText}\n${recovery}` } }];
+  }
   return [
     {
       type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text:
-          text ??
-          `😅 That summary didn't come together — something hiccuped on my end.\nGive it another shot?`,
-      },
+      text: { type: 'mrkdwn', text: failureText },
     },
     {
       type: 'actions',
@@ -216,61 +234,54 @@ export function buildFailureBlocks(
   ];
 }
 
-/** Command reference shown when the user types the explicit `help` / `?` command. */
+/** Concise guidance for the controls and their source-window behavior. */
 export function buildHelpBlocks(): KnownBlock[] {
   return [
     {
       type: 'header',
-      text: { type: 'plain_text', text: 'TLDR — Command Reference', emoji: true },
+      text: { type: 'plain_text', text: 'Using TLDR' },
     },
     {
       type: 'section',
       text: {
         type: 'mrkdwn',
         text:
-          '*🧾 Summarize your selected source*\n' +
-          '• `summarize` (or `catch me up`, `what did I miss`, `tldr`) — your default window.\n' +
-          '• `summarize last 100` — explicit count.\n' +
-          '• `summarize #channel` — set a different source for this thread.\n' +
-          '• `summarize with style: write as a haiku` — one-off style override.',
+          '*Catch up*\n' +
+          'Choose a *Source* channel and *Message limit* above, then click *Catch up*. ' +
+          'Or type `summarize`, `summarize last 100`, or `summarize #channel`. ' +
+          'Your selected source stays set for this thread.',
       },
     },
-    { type: 'divider' },
     {
       type: 'section',
       text: {
         type: 'mrkdwn',
         text:
-          '*🎨 Persistent style for this thread*\n' +
-          '• Click *🎨 Set style* in the welcome message for a multi-line editor.\n' +
-          '• Or type `style: be hyper-critical and roast everyone`.\n' +
-          '• `clear style` to remove it.',
+          '*Work with a summary*\n' +
+          '*Shorter*, *Roast*, and *Receipts* use that summary’s source and date window; ' +
+          'message edits and deletions may still change the result. ' +
+          '*Refresh latest* and *Expand to latest* fetch the newest messages at the stated count. ' +
+          '*Share to #channel* shows a confirmation with the destination before posting.',
       },
     },
-    { type: 'divider' },
     {
       type: 'section',
       text: {
         type: 'mrkdwn',
         text:
-          '*⚡ Tips*\n' +
-          '• Each summary comes with *📤 Share to channel*, *🔥 Roast This*, and *📜 Pull Receipts* buttons.\n' +
-          '• Ask any ordinary question here and I\'ll answer it as a chat.\n' +
-          '• Right-click any message → *Summarize Thread* for an instant, private thread recap.\n' +
-          '• `@TLDR <question>` in any channel I\'m in gets a chat reply in that thread.\n' +
-          '• Use the dropdown in the welcome message to change how many messages I read.\n' +
-          '• Styles only apply to this thread — start a new one to reset.\n' +
-          '• I can only summarize channels *you* are a member of.',
+          '*Set your style*\n' +
+          'Click *Set style* or type `style: write as a haiku`. It applies to this thread. ' +
+          'Choose *Default* in the style menu or type `clear style` to reset. ' +
+          'Use `summarize with style: be brief` for a one-time change.',
       },
     },
     {
       type: 'context',
-      elements: [
-        {
-          type: 'mrkdwn',
-          text: '💡 Tap *Catch up* beside your selected source, or just type `summarize`.',
-        },
-      ],
+      elements: [{
+        type: 'mrkdwn',
+        text: 'You can also ask a question here, or right-click a message → *Summarize Thread*. ' +
+          'TLDR can only summarize channels you belong to.',
+      }],
     },
   ];
 }

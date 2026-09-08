@@ -8,6 +8,8 @@
  */
 
 import type { WebClient } from '@slack/web-api';
+import { parseSummaryWindow } from '../summary_window';
+import type { SummaryWindow } from '../types';
 
 /** Slack-documented per-call character limit for `markdown_text` in chat.*Stream APIs. */
 export const STREAM_MARKDOWN_TEXT_LIMIT = 12_000;
@@ -78,16 +80,25 @@ function isNotInChannelApiError(err: unknown): boolean {
   return data?.error === 'not_in_channel' || ((err as Error).message ?? '').includes('not_in_channel');
 }
 
-/** Fetch the latest `count` messages in a channel. */
+/** Fetch up to `count` channel messages, optionally inside an inclusive source window. */
 export async function getRecentMessages(
   client: WebClient,
   channelId: string,
-  count: number
+  count: number,
+  window?: SummaryWindow
 ): Promise<RecentMessage[]> {
-  const limit = Math.min(Math.max(count, 1), 1000);
+  const bounds = window === undefined ? undefined : parseSummaryWindow(window);
+  if (bounds === null) {
+    throw new Error('Invalid summary window');
+  }
+  const limit = Number.isFinite(count) ? Math.min(Math.max(Math.floor(count), 1), 500) : 1;
   let response;
   try {
-    response = await client.conversations.history({ channel: channelId, limit });
+    response = await client.conversations.history({
+      channel: channelId,
+      limit,
+      ...(bounds ? { oldest: bounds.oldestTs, latest: bounds.latestTs, inclusive: true } : {}),
+    });
   } catch (err) {
     if (isNotInChannelApiError(err)) {
       throw new BotNotInChannelError(channelId);

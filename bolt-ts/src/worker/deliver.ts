@@ -15,8 +15,9 @@ import type {
   KnownBlock,
   MessageMetadata,
 } from '@slack/types';
-import { isReceiptsStyle, isRoastStyle } from '../styles';
-import type { SummaryCoverage } from '../types';
+import { isReceiptsStyle, isRoastStyle, STYLE_PRESETS } from '../styles';
+import type { SummaryCoverage, SummaryWindow } from '../types';
+import { parseSummaryWindow } from '../summary_window';
 
 export const ACTION_SUMMARY_FEEDBACK = 'summary_feedback';
 
@@ -40,10 +41,23 @@ interface ShareButtonValue {
   styleKind: StyleKind;
 }
 
-interface RerunButtonValue {
-  action: 'rerun_roast' | 'rerun_receipts';
+export type SummaryStyleKey = 'default' | 'custom' | 'roast' | 'receipts' | 'exec_brief' | 'haiku';
+
+export interface SummaryTransformValue {
+  v: 2;
+  action: 'rerun_roast' | 'rerun_receipts' | 'rerun_shorter';
   channelId: string;
   count: number;
+  window: SummaryWindow;
+  styleKey: SummaryStyleKey;
+  shorter: boolean;
+}
+
+export function toSummaryStyleKey(style: string | null): SummaryStyleKey {
+  if (!style?.trim()) {
+    return 'default';
+  }
+  return (STYLE_PRESETS.find((preset) => preset.value === style.trim())?.key as SummaryStyleKey | undefined) ?? 'custom';
 }
 
 export interface SummaryActionButtonsArgs {
@@ -51,6 +65,10 @@ export interface SummaryActionButtonsArgs {
   messageCount: number;
   /** Actual included count and dates; requested count stays available for refresh. */
   coverage?: SummaryCoverage;
+  /** Original time window; preserve it even if messages were edited or removed. */
+  window?: SummaryWindow;
+  shorter?: boolean;
+  sourceChannelName?: string;
   /** The style applied to the summary, if any. Drives which rerun buttons render. */
   currentStyle: string | null;
   /** Delivery timestamp (ms). Injectable for tests; defaults to now. */
@@ -65,47 +83,50 @@ export interface SummaryActionButtonsArgs {
 export function buildSummaryActionButtons(args: SummaryActionButtonsArgs): KnownBlock[] {
   const { sourceChannelId, messageCount, currentStyle } = args;
   const elements: Button[] = [];
+  const window = args.window ?? parseSummaryWindow(args.coverage);
+  const sourceLabel = args.sourceChannelName && args.sourceChannelName !== sourceChannelId
+    ? `#${args.sourceChannelName}` : sourceChannelId;
 
-  const shareValue: ShareButtonValue = {
-    action: 'share_summary',
-    sourceChannelId,
-    count: args.coverage?.messageCount ?? messageCount,
-    styleKind: toStyleKind(currentStyle),
-  };
-  elements.push({
-    type: 'button',
-    text: { type: 'plain_text', text: '📤 Share to channel', emoji: true },
-    action_id: 'share_summary',
-    value: JSON.stringify(shareValue),
-    confirm: {
-      title: { type: 'plain_text', text: 'Share this summary?' },
-      text: {
-        type: 'mrkdwn',
-        text: `This posts the full summary to <#${sourceChannelId}> with your name on it.`,
-      },
-      confirm: { type: 'plain_text', text: 'Share it' },
-      deny: { type: 'plain_text', text: 'Cancel' },
-    },
-  });
-
-  if (!isRoastStyle(currentStyle)) {
-    const value: RerunButtonValue = { action: 'rerun_roast', channelId: sourceChannelId, count: messageCount };
+  const addTransform = (action: SummaryTransformValue['action'], label: string): void => {
+    if (!window) {
+      return;
+    }
+    const value: SummaryTransformValue = {
+      v: 2, action, channelId: sourceChannelId, count: messageCount, window,
+      styleKey: toSummaryStyleKey(currentStyle), shorter: args.shorter === true,
+    };
     elements.push({
-      type: 'button',
-      text: { type: 'plain_text', text: '🔥 Roast This', emoji: true },
-      action_id: 'rerun_roast',
+      type: 'button', text: { type: 'plain_text', text: label }, action_id: action,
+      accessibility_label: `${label} using the same channel and time window`,
       value: JSON.stringify(value),
     });
+  };
+  if (!args.shorter) {
+    addTransform('rerun_shorter', 'Shorter');
+  }
+  if (!isRoastStyle(currentStyle)) {
+    addTransform('rerun_roast', 'Roast');
   }
   if (!isReceiptsStyle(currentStyle)) {
-    const value: RerunButtonValue = { action: 'rerun_receipts', channelId: sourceChannelId, count: messageCount };
-    elements.push({
-      type: 'button',
-      text: { type: 'plain_text', text: '📜 Pull Receipts', emoji: true },
-      action_id: 'rerun_receipts',
-      value: JSON.stringify(value),
-    });
+    addTransform('rerun_receipts', 'Receipts');
   }
+
+  const shareValue: ShareButtonValue = {
+    action: 'share_summary', sourceChannelId,
+    count: args.coverage?.messageCount ?? messageCount, styleKind: toStyleKind(currentStyle),
+  };
+  const shareLabel = `Share to ${sourceLabel}`;
+  elements.push({
+    type: 'button',
+    text: { type: 'plain_text', text: shareLabel.length > 75 ? shareLabel.slice(0, 72) + '...' : shareLabel },
+    accessibility_label: 'Share this summary to its source channel',
+    action_id: 'share_summary', value: JSON.stringify(shareValue),
+    confirm: {
+      title: { type: 'plain_text', text: 'Share this summary?' },
+      text: { type: 'mrkdwn', text: `This posts the full summary to <#${sourceChannelId}> with your name on it.` },
+      confirm: { type: 'plain_text', text: 'Share' }, deny: { type: 'plain_text', text: 'Cancel' },
+    },
+  });
 
   const actions: ActionsBlock = { type: 'actions', elements };
   return [actions, buildProvenanceBlock(args), buildFeedbackBlock(args)];
@@ -160,6 +181,8 @@ function buildFeedbackBlock(args: SummaryActionButtonsArgs): ContextActionsBlock
 
 /** Shared provenance metadata for streaming and non-streaming results. */
 export function buildSummaryMetadata(args: SummaryActionButtonsArgs): MessageMetadata {
+  const window = args.window ?? parseSummaryWindow(args.coverage);
+  const styleKey = toSummaryStyleKey(args.currentStyle);
   return {
     event_type: 'tldr_summary_v1',
     event_payload: {
@@ -167,6 +190,9 @@ export function buildSummaryMetadata(args: SummaryActionButtonsArgs): MessageMet
       message_count: args.coverage?.messageCount ?? args.messageCount,
       requested_message_count: args.messageCount,
       has_style: Boolean(args.currentStyle?.trim()),
+      style_key: styleKey,
+      shorter: args.shorter === true,
+      ...(window ? { window: { ...window } } : {}),
       ...(args.coverage?.oldestTs ? { oldest_ts: args.coverage.oldestTs } : {}),
       ...(args.coverage?.latestTs ? { latest_ts: args.coverage.latestTs } : {}),
     },

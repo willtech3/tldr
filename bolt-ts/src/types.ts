@@ -36,6 +36,12 @@ export interface ThreadContext {
  */
 export type SummarizeOutcome = 'delivered' | 'empty' | 'too_large' | 'failed' | 'stopped';
 
+/** Inclusive source-time bounds for transformations of an existing summary. */
+export interface SummaryWindow {
+  oldestTs: string;
+  latestTs: string;
+}
+
 /** Messages actually included in a summary, after filtering TLDR's own posts. */
 export interface SummaryCoverage {
   messageCount: number;

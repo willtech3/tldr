@@ -30,7 +30,7 @@ import {
   startStream,
   stopStream,
 } from '../slack/client';
-import type { SummarizeOutcome, SummaryCoverage } from '../types';
+import type { SummarizeOutcome, SummaryCoverage, SummaryWindow } from '../types';
 import { summaryStyleLabel } from '../styles';
 import { takeStreamChunk } from './chunks';
 import { applySafetyNetSections, buildSummarizePromptData } from './prompt_builder';
@@ -40,7 +40,10 @@ export const CANONICAL_FAILURE_MESSAGE =
   "Sorry, I couldn't generate a summary at this time. Please try again later.";
 
 /** Friendly reply when the source channel has no recent messages. */
-export function buildEmptyChannelMessage(sourceChannelId: string): string {
+export function buildEmptyChannelMessage(sourceChannelId: string, window?: SummaryWindow): string {
+  if (window) {
+    return `I couldn't find any remaining messages in this summary's original time window in <#${sourceChannelId}>. Refresh to summarize recent messages.`;
+  }
   return `🪹 Nothing to summarize in <#${sourceChannelId}> yet — I couldn't find any recent messages. Switch to a busier channel and try again.`;
 }
 
@@ -60,6 +63,11 @@ export interface StreamSummaryArgs {
   assistantThreadTs: string;
   messageCount: number;
   customStyle: string | null;
+  /** Omit only for a fresh history request. */
+  window?: SummaryWindow;
+  shorter?: boolean;
+  /** Prior visible recap, excluded from delivery metadata and action payloads. */
+  summaryToShorten?: string;
   correlationId: string;
   /** Streaming knobs. */
   streamMaxChunkChars: number;
@@ -97,7 +105,7 @@ export async function streamSummaryToAssistantThread(
   let streamTs: string | null = null;
 
   try {
-    const messages = await getRecentMessages(args.client, args.sourceChannelId, args.messageCount);
+    const messages = await getRecentMessages(args.client, args.sourceChannelId, args.messageCount, args.window);
 
     // Filter out bot's own messages so it doesn't summarize itself — and
     // treat a bot-only channel as empty rather than summarizing nothing.
@@ -109,7 +117,7 @@ export async function streamSummaryToAssistantThread(
       await args.client.chat.postMessage({
         channel: args.assistantChannelId,
         thread_ts: args.assistantThreadTs,
-        text: buildEmptyChannelMessage(args.sourceChannelId),
+        text: buildEmptyChannelMessage(args.sourceChannelId, args.window),
       });
       return 'empty';
     }
@@ -120,6 +128,8 @@ export async function streamSummaryToAssistantThread(
       channelId: args.sourceChannelId,
       messages: userMessages,
       customStyle: args.customStyle,
+      shorter: args.shorter,
+      summaryToShorten: args.summaryToShorten,
       fetchImpl: args.fetchImpl,
     });
 
@@ -131,7 +141,7 @@ export async function streamSummaryToAssistantThread(
         channel: args.assistantChannelId,
         thread_ts: args.assistantThreadTs,
         text: TOO_LARGE_MESSAGE,
-        blocks: buildTooLargeBlocks(args.sourceChannelId, args.customStyle),
+        blocks: buildTooLargeBlocks(args.sourceChannelId, args.customStyle, { window: args.window, shorter: args.shorter, requiresOriginal: args.summaryToShorten !== undefined }),
       });
       return 'too_large';
     }
@@ -167,7 +177,7 @@ export async function streamSummaryToAssistantThread(
         assistantThreadTs: args.assistantThreadTs,
         streamTs,
         correlationId: args.correlationId,
-        retry: buildRetryValue(args.sourceChannelId, 50, args.customStyle),
+        retry: buildRetryValue(args.sourceChannelId, 50, args.customStyle, { window: args.window, shorter: args.shorter, requiresOriginal: args.summaryToShorten !== undefined }),
         failureText: buildTooLargeText(args.sourceChannelId),
         buttonLabel: '📉 Try last 50',
         logger,
@@ -185,7 +195,7 @@ export async function streamSummaryToAssistantThread(
       assistantThreadTs: args.assistantThreadTs,
       streamTs,
       correlationId: args.correlationId,
-      retry: buildRetryValue(args.sourceChannelId, args.messageCount, args.customStyle),
+      retry: buildRetryValue(args.sourceChannelId, args.messageCount, args.customStyle, { window: args.window, shorter: args.shorter, requiresOriginal: args.summaryToShorten !== undefined }),
       failureText,
       logger,
     });
@@ -200,10 +210,11 @@ function buildTooLargeText(sourceChannelId: string): string {
 /** "Conversation too long" blocks with a one-tap smaller retry. */
 export function buildTooLargeBlocks(
   sourceChannelId: string,
-  style: string | null
+  style: string | null,
+  options: { window?: SummaryWindow; shorter?: boolean; requiresOriginal?: boolean } = {}
 ): ReturnType<typeof buildFailureBlocks> {
   return buildFailureBlocks(
-    buildRetryValue(sourceChannelId, 50, style),
+    buildRetryValue(sourceChannelId, 50, style, options),
     buildTooLargeText(sourceChannelId),
     '📉 Try last 50'
   );
@@ -330,6 +341,9 @@ async function consumeStream(args: ConsumeStreamArgs): Promise<{ stopped: boolea
       messageCount: args.messageCount,
       customStyle: args.customStyle,
       coverage: args.promptData.coverage,
+      sourceChannelName: args.promptData.channelName,
+      window: args.window,
+      shorter: args.shorter,
     });
   }
 
@@ -381,12 +395,18 @@ async function finalizeStreamSuccess(args: {
   messageCount: number;
   customStyle: string | null;
   coverage: SummaryCoverage;
+  sourceChannelName: string;
+  window?: SummaryWindow;
+  shorter?: boolean;
 }): Promise<void> {
   const delivery = {
     sourceChannelId: args.sourceChannelId,
     messageCount: args.messageCount,
     currentStyle: args.customStyle,
     coverage: args.coverage,
+    sourceChannelName: args.sourceChannelName,
+    window: args.window,
+    shorter: args.shorter,
   };
   const blocks = buildSummaryActionButtons(delivery);
   await stopStream(args.client, {
@@ -404,7 +424,7 @@ interface EnsureCanonicalFailureArgs {
   streamTs: string | null;
   correlationId: string;
   /** Original request, embedded in the retry button (pre-bounded via buildRetryValue). */
-  retry: { channelId: string; count: number; style: string | null; useThreadStyle?: boolean };
+  retry: ReturnType<typeof buildRetryValue>;
   /** Override the default apology (e.g. bot-not-in-channel guidance). */
   failureText?: string;
   /** Override the retry button label. */

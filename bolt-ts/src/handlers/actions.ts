@@ -2,17 +2,17 @@
  * Action handlers for the interactive buttons in the assistant thread.
  *
  * Handlers ACK immediately, then either repost a message (Share), show help,
- * or kick off a fresh summarisation inline (quick summarize, retry, Roast,
- * Receipts, message-count selector). All summarisation entry points share the
+ * or run a fresh catch-up or a transformation of a saved summary window. All summarisation entry points share the
  * guard → status → run → follow-ups pipeline in `run_summary.ts`.
  */
 
-import { App, BlockAction } from '@slack/bolt';
+import { App, BlockAction, type AllMiddlewareArgs, type SlackActionMiddlewareArgs } from '@slack/bolt';
 import type { KnownBlock } from '@slack/types';
 import {
   checkChannelMembership,
   isValidSlackChannelId,
   normalizeMessageCount,
+  validateAndSanitizeStyle,
   type ConversationsMembersClient,
 } from '../security';
 import type { ThreadContext } from '../types';
@@ -26,9 +26,13 @@ import {
   buildWelcomeBlocks,
   type RetrySummaryValue,
 } from '../blocks';
-import { ACTION_SUMMARY_FEEDBACK, type StyleKind } from '../worker/deliver';
+import { ACTION_SUMMARY_FEEDBACK, type StyleKind, type SummaryTransformValue } from '../worker/deliver';
+import { parseSummaryWindow } from '../summary_window';
+import { buildSourcePrompts } from '../followups';
+import { getMessagePermalink } from '../slack/client';
+import { isValidSummaryToShorten } from '../ai/prompt';
 import { sanitizeGeneratedSlackMrkdwn, truncateForMarkdownBlock } from '../slack/sanitize';
-import { RECEIPTS_STYLE, ROAST_STYLE } from '../styles';
+import { RECEIPTS_STYLE, ROAST_STYLE, STYLE_PRESETS, DEFAULT_STYLE_PRESET_KEY, resolveStylePreset } from '../styles';
 import {
   buildThreadStateMetadata,
   loadThreadStateWithFallback,
@@ -44,12 +48,6 @@ interface ShareButtonValue {
   sourceChannelId: string;
   count: number;
   styleKind?: StyleKind;
-}
-
-interface RerunButtonValue {
-  action: 'rerun_roast' | 'rerun_receipts';
-  channelId: string;
-  count: number;
 }
 
 export function registerActionHandlers(app: App, config: AppConfig): void {
@@ -111,16 +109,23 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
         { type: 'section', text: { type: 'mrkdwn', text: attribution } },
         { type: 'markdown', text: truncateForMarkdownBlock(summaryText) },
       ];
-      await client.chat.postMessage({
+      const shared = await client.chat.postMessage({
         channel: sourceChannelId,
         text: attribution,
         blocks: shareBlocks,
       });
-      await client.chat.postMessage({
-        channel: assistantChannelId,
-        thread_ts: threadTs,
-        text: `✅ Shared to <#${sourceChannelId}>`,
-      });
+      const permalink = shared.ts ? await getMessagePermalink(client, sourceChannelId, shared.ts) : null;
+      try {
+        await client.chat.postMessage({
+          channel: assistantChannelId,
+          thread_ts: threadTs,
+          text: `Shared to <#${sourceChannelId}>${permalink ? ` · <${permalink}|View message>` : ''}`,
+        });
+      } catch (error) {
+        // The public post succeeded. A failed private confirmation must not
+        // tell the user to retry the public post and create a duplicate.
+        logger.warn('Summary shared, but the private confirmation failed:', error);
+      }
     } catch (error) {
       logger.error('Failed to handle share_summary action:', error);
       try {
@@ -136,11 +141,15 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
   });
 
   app.action<BlockAction>('rerun_roast', async (args) =>
-    handleRerun({ ...args, config, style: ROAST_STYLE, statusText: '🔥 Roasting...' })
+    handleRerun({ ...args, config, transformAction: 'rerun_roast', style: ROAST_STYLE, statusText: 'Roasting the same conversation...' })
   );
 
   app.action<BlockAction>('rerun_receipts', async (args) =>
-    handleRerun({ ...args, config, style: RECEIPTS_STYLE, statusText: '📜 Pulling receipts...' })
+    handleRerun({ ...args, config, transformAction: 'rerun_receipts', style: RECEIPTS_STYLE, statusText: 'Checking the same conversation for receipts...' })
+  );
+
+  app.action<BlockAction>('rerun_shorter', async (args) =>
+    handleRerun({ ...args, config, transformAction: 'rerun_shorter', style: null, statusText: 'Making that recap shorter...' })
   );
 
   // One-tap summarize from the welcome message, style confirmations, and the
@@ -205,17 +214,37 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
       const assistantChannelId = channel.id;
       const threadTs = message.thread_ts ?? message.ts;
 
-      // Styles too long for the button value aren't inlined — recover the
-      // thread's saved style instead.
-      let customStyle = retry.style ?? null;
+      if (!isValidSlackChannelId(retry.channelId) || !Number.isInteger(retry.count) || retry.count < 1 || retry.count > 500 ||
+        (retry.styleKey !== undefined && retry.styleKey !== DEFAULT_STYLE_PRESET_KEY && !STYLE_PRESETS.some((preset) => preset.key === retry.styleKey)) ||
+        (retry.shorter !== undefined && typeof retry.shorter !== 'boolean')) {
+        await client.chat.postMessage({ channel: assistantChannelId, thread_ts: threadTs,
+          text: 'That retry has invalid saved settings. Refresh the source before trying again.' });
+        return;
+      }
+      if (retry.requiresOriginal) {
+        await client.chat.postMessage({ channel: assistantChannelId, thread_ts: threadTs,
+          text: retry.window
+            ? 'Retry the action on the original summary to keep its custom style and saved time window.'
+            : 'Repeat your original request to retry with the same custom style.' });
+        return;
+      }
+      if (retry.window !== undefined && !parseSummaryWindow(retry.window)) {
+        await client.chat.postMessage({ channel: assistantChannelId, thread_ts: threadTs,
+          text: 'That retry has no valid saved time window. Refresh the source before trying again.' });
+        return;
+      }
+      let customStyle = retry.styleKey ? resolveStylePreset(retry.styleKey) : retry.style ?? null;
       if (customStyle === null && retry.useThreadStyle) {
         const state = await loadThreadStateWithFallback({
-          client: client as unknown as SlackWebApiClient,
-          assistantChannelId,
-          assistantThreadTs: threadTs,
-          logger,
+          client: client as unknown as SlackWebApiClient, assistantChannelId,
+          assistantThreadTs: threadTs, logger, requireSuccessfulRead: true,
         });
         customStyle = state.customStyle;
+      }
+      const validatedStyle = validateAndSanitizeStyle(customStyle);
+      if (!validatedStyle.ok) {
+        await client.chat.postMessage({ channel: assistantChannelId, thread_ts: threadTs, text: validatedStyle.reason });
+        return;
       }
 
       await guardAndRunSummarization({
@@ -225,8 +254,10 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
         sourceChannelId: retry.channelId,
         assistantChannelId,
         assistantThreadTs: threadTs,
-        messageCount: normalizeMessageCount(retry.count),
-        customStyle,
+        messageCount: retry.count,
+        customStyle: validatedStyle.value,
+        window: retry.window,
+        shorter: retry.shorter,
         statusText: '🔄 Taking another run at it...',
         logger,
       });
@@ -316,6 +347,14 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
         stateMessageTs: message.ts,
         state: nextState,
       });
+      try {
+        await client.assistant.threads.setSuggestedPrompts({
+          channel_id: channel.id, thread_ts: threadTs, title: 'Catch up on your source',
+          prompts: buildSourcePrompts(selectedChannel),
+        });
+      } catch (error) {
+        logger.warn('Failed to refresh source prompts:', error);
+      }
     } catch (error) {
       logger.error('Failed to save source channel:', error);
       await reply("I couldn't save that source. Please choose it again before summarizing.");
@@ -423,41 +462,80 @@ function buildShareAttribution(userId: string, count: number, kind: StyleKind = 
   return `<@${userId}> asked TLDR to summarize these ${count} messages:`;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type RerunArgs = any & {
+type RerunArgs = SlackActionMiddlewareArgs<BlockAction> & AllMiddlewareArgs & {
   config: AppConfig;
-  style: string;
+  transformAction: SummaryTransformValue['action'];
+  style: string | null;
   statusText: string;
 };
+
+/** Only bounded v2 actions may transform a saved result. Legacy buttons must refresh. */
+export function parseSummaryTransformValue(raw: unknown): SummaryTransformValue | null {
+  if (typeof raw !== 'string' || raw.length > 2000) {
+    return null;
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return null; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return null;
+  }
+  const value = parsed as Record<string, unknown>;
+  const window = parseSummaryWindow(value.window);
+  const styleKeys = ['default', 'custom', ...STYLE_PRESETS.map((preset) => preset.key)];
+  if (value.v !== 2 || !['rerun_shorter', 'rerun_roast', 'rerun_receipts'].includes(String(value.action)) ||
+    typeof value.channelId !== 'string' || !isValidSlackChannelId(value.channelId) ||
+    typeof value.count !== 'number' || !Number.isInteger(value.count) || value.count < 1 || value.count > 500 ||
+    !window || typeof value.styleKey !== 'string' || !styleKeys.includes(value.styleKey) ||
+    typeof value.shorter !== 'boolean') {
+    return null;
+  }
+  return {
+    v: 2, action: value.action as SummaryTransformValue['action'], channelId: value.channelId,
+    count: value.count, window, styleKey: value.styleKey as SummaryTransformValue['styleKey'], shorter: value.shorter,
+  };
+}
 
 async function handleRerun(args: RerunArgs): Promise<void> {
   const { ack, body, action, client, logger, config, style, statusText } = args;
   await ack();
+  const message = 'message' in body ? body.message : null;
+  const channel = 'channel' in body ? body.channel : null;
+  if (!message || !channel || action.type !== 'button') {
+    return;
+  }
+  const reply = async (text: string): Promise<void> => {
+    await client.chat.postMessage({ channel: channel.id, thread_ts: message.thread_ts ?? message.ts, text });
+  };
   try {
-    if (!action || typeof action !== 'object' || !('type' in action) || action.type !== 'button') {
+    const value = parseSummaryTransformValue(action.value);
+    if (!value || value.action !== args.transformAction) {
+      await reply('This older or incomplete summary has no usable saved time window. Refresh the source, then use the controls on the new summary.');
       return;
     }
-    const buttonValue: RerunButtonValue = JSON.parse(action.value || '{}');
-    const { channelId, count: rawCount } = buttonValue;
-    const message = 'message' in body ? body.message : null;
-    const channel = 'channel' in body ? body.channel : null;
-    if (!message || !channel) {
-      return;
+    let customStyle = style;
+    let summaryToShorten: string | undefined;
+    if (args.transformAction === 'rerun_shorter') {
+      const visibleRecap = extractSummaryBody(message).trim();
+      if (!isValidSummaryToShorten(visibleRecap)) {
+        await reply("I couldn't use that summary's text. Refresh the source with a smaller message limit, then try Shorter again.");
+        return;
+      }
+      summaryToShorten = visibleRecap;
+      // The visible recap carries its existing tone. Arbitrary private
+      // instructions must never be recovered from broadly exposed metadata.
+      customStyle = value.styleKey === 'custom' || value.styleKey === 'default'
+        ? null : resolveStylePreset(value.styleKey);
     }
-
     await guardAndRunSummarization({
-      client,
-      config,
-      userId: body.user.id,
-      sourceChannelId: channelId,
-      assistantChannelId: channel.id,
-      assistantThreadTs: message.thread_ts ?? message.ts,
-      messageCount: normalizeMessageCount(rawCount),
-      customStyle: style,
-      statusText,
-      logger,
+      client, config, userId: body.user.id, sourceChannelId: value.channelId,
+      assistantChannelId: channel.id, assistantThreadTs: message.thread_ts ?? message.ts,
+      messageCount: value.count, customStyle, window: value.window,
+      shorter: args.transformAction === 'rerun_shorter' || value.shorter,
+      summaryToShorten,
+      statusText, logger,
     });
   } catch (error) {
-    logger.error('Failed to handle rerun action:', error);
+    logger.error('Failed to transform saved summary:', error);
+    await reply("I couldn't recover that summary's saved settings. Refresh the source before trying again.");
   }
 }

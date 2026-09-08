@@ -20,6 +20,9 @@ import {
   type ConversationsMembersClient,
 } from '../security';
 import { runSummarization } from '../worker/summarize';
+import type { SummaryWindow } from '../types';
+import { parseSummaryWindow } from '../summary_window';
+import { isValidSummaryToShorten, MAX_CUSTOM_STYLE_LENGTH } from '../ai/prompt';
 
 export const NOT_A_MEMBER_MESSAGE = "🔒 I can only summarize channels you're a member of.";
 export const MEMBERSHIP_UNKNOWN_MESSAGE =
@@ -48,6 +51,10 @@ export interface GuardedSummarizeArgs {
   assistantThreadTs: string;
   messageCount: number;
   customStyle: string | null;
+  window?: SummaryWindow;
+  shorter?: boolean;
+  /** Visible original recap, passed transiently to the model only. */
+  summaryToShorten?: string;
   /** Status line Slack shows while rotating loading messages. */
   statusText?: string;
   /** Persist an explicitly selected source only after membership is verified. */
@@ -72,6 +79,26 @@ export async function guardAndRunSummarization(args: GuardedSummarizeArgs): Prom
 
   if (!isValidSlackChannelId(args.sourceChannelId)) {
     await reply(INVALID_CHANNEL_MESSAGE);
+    return;
+  }
+
+  if (args.window !== undefined && !parseSummaryWindow(args.window)) {
+    await reply('This summary has no usable saved time window. Refresh the source before trying again.');
+    return;
+  }
+  if (!Number.isInteger(args.messageCount) || args.messageCount < 1 || args.messageCount > 500) {
+    await reply('Choose a message count from 1 to 500 before summarizing.');
+    return;
+  }
+
+  if ((args.shorter !== undefined && typeof args.shorter !== 'boolean') ||
+      (args.customStyle !== null && (typeof args.customStyle !== 'string' || args.customStyle.length > MAX_CUSTOM_STYLE_LENGTH))) {
+    await reply('These summary settings are invalid. Refresh the source before trying again.');
+    return;
+  }
+  if (args.summaryToShorten !== undefined &&
+      (!isValidSummaryToShorten(args.summaryToShorten) || args.shorter !== true || args.window === undefined)) {
+    await reply('This recap cannot be shortened safely. Use Shorter on the original summary, or refresh the source.');
     return;
   }
 
@@ -133,6 +160,9 @@ export async function guardAndRunSummarization(args: GuardedSummarizeArgs): Prom
       threadTs: args.assistantThreadTs,
       messageCount: args.messageCount,
       customStyle: args.customStyle,
+      window: args.window,
+      shorter: args.shorter,
+      summaryToShorten: args.summaryToShorten,
     },
   });
 
@@ -143,6 +173,7 @@ export async function guardAndRunSummarization(args: GuardedSummarizeArgs): Prom
       assistantThreadTs: args.assistantThreadTs,
       sourceChannelId: args.sourceChannelId,
       style: args.customStyle,
+      messageCount: args.messageCount,
       logger,
     });
   }

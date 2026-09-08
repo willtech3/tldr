@@ -35,8 +35,9 @@ import {
 import type { AppConfig } from '../config';
 import { runGeneralChat } from '../worker/chat';
 import { guardAndRunSummarization } from './run_summary';
+import { buildSourcePrompts, type FollowUpPrompt } from '../followups';
 
-const WELCOME_TEXT = 'Welcome to TLDR';
+const WELCOME_TEXT = 'Catch up on the conversation. Source, message limit, and style are set below.';
 
 /**
  * Instant reply for a file shared with no caption. Posted directly — no
@@ -130,38 +131,9 @@ export function routeAssistantUserMessage(msg: {
   return { kind: 'command', intent };
 }
 
-const CHANNEL_PROMPTS: Array<{ title: string; message: string }> = [
-  { title: '📋 Just the Facts', message: 'summarize' },
-  {
-    title: '🔥 Choose Violence',
-    message:
-      'summarize with style: maximum chaos mode — be theatrically funny, dramatic, and roast everyone with surgical precision. make it actually funny, not just mean. start every bullet with a verdict emoji: 🔥 hot take, 💀 self-own, 🤡 clown moment, 📉 L taken, 🎯 surprisingly valid, 🚨 red flag, 🍿 drama unfolding, 🧠 galaxy brain, ⚰️ buried by their own argument. in the Summary section, tag each named person with one verdict emoji after their name. end the Summary with a one-line "🏆 MVP: <person>" and "🪦 casualty: <person>" awards. mock-outrage, dramatic gasps, and absurdist commentary encouraged. keep all four sections, real links, and real receipts intact.',
-  },
-  {
-    title: '🕵️ Run the Investigation',
-    message:
-      'summarize with style: break down by person. what did each person contribute? be specific about who said what.',
-  },
-  {
-    title: '📜 Pull the Receipts',
-    message:
-      "summarize with style: find contradictions, broken promises, and things people said they would do but didn't. bring the receipts.",
-  },
-];
-
-const ONBOARDING_PROMPTS: Array<{ title: string; message: string }> = [
-  { title: '📖 Show me what you can do', message: 'help' },
-  { title: '⚡ Summarize my current channel', message: 'summarize' },
-];
-
-/**
- * Suggested prompts for a fresh thread. Without a channel in view, every
- * one-tap summarize would fail — offer onboarding prompts instead.
- */
-export function buildThreadStartPrompts(
-  viewingChannelId: string | null
-): Array<{ title: string; message: string }> {
-  return viewingChannelId ? CHANNEL_PROMPTS : ONBOARDING_PROMPTS;
+/** Suggested prompts for a fresh thread, shared with explicit source changes. */
+export function buildThreadStartPrompts(viewingChannelId: string | null): FollowUpPrompt[] {
+  return buildSourcePrompts(viewingChannelId);
 }
 
 export function createAssistant(config: AppConfig): Assistant {
@@ -194,7 +166,7 @@ export function createAssistant(config: AppConfig): Assistant {
       try {
         const prompts = buildThreadStartPrompts(initialState.viewingChannelId);
         await setSuggestedPrompts({
-          title: initialState.viewingChannelId ? 'Pick your poison:' : 'New here? Start with:',
+          title: initialState.viewingChannelId ? 'Start here' : 'Choose a source above',
           prompts: prompts as [(typeof prompts)[number], ...typeof prompts],
         });
         await setTitle('TLDR');
@@ -320,7 +292,7 @@ export function createAssistant(config: AppConfig): Assistant {
           await client.assistant.threads.setSuggestedPrompts({
             channel_id: channelId,
             thread_ts: threadTs,
-            title: 'Pick your poison:',
+            title: 'Start here',
             prompts: prompts as [(typeof prompts)[number], ...typeof prompts],
           });
         } catch (err) {
@@ -507,6 +479,14 @@ export function createAssistant(config: AppConfig): Assistant {
                   state: { ...state, viewingChannelId: targetChannelId },
                   logger,
                 });
+                try {
+                  await client.assistant.threads.setSuggestedPrompts({
+                    channel_id: channelId, thread_ts: threadTs, title: 'Catch up on your source',
+                    prompts: buildThreadStartPrompts(targetChannelId),
+                  });
+                } catch (error) {
+                  logger.warn('Failed to refresh selected-source prompts:', error);
+                }
               } : undefined,
               logger,
             });

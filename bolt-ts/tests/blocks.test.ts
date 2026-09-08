@@ -19,6 +19,7 @@ import {
   INPUT_BLOCK_STYLE,
   INPUT_ACTION_STYLE,
 } from '../src/blocks';
+import { DEFAULT_STYLE_PRESET_KEY, STYLE_PRESETS } from '../src/styles';
 
 function findButton(blocks: ReturnType<typeof buildWelcomeBlocks>, actionId: string) {
   for (const block of blocks) {
@@ -106,6 +107,18 @@ describe('Block Kit builders', () => {
       const sections = blocks.filter((b) => b.type === 'section');
       expect(sections.length).toBeGreaterThan(1);
     });
+
+    it('distinguishes existing-window transforms from explicit fresh requests', () => {
+      const text = JSON.stringify(buildHelpBlocks());
+      for (const label of ['Shorter', 'Roast', 'Receipts', 'Share to #channel', 'Refresh latest', 'Expand to latest']) {
+        expect(text).toContain(label);
+      }
+      expect(text).toContain('source and date window');
+      expect(text).toContain('edits and deletions');
+      expect(text).toContain('newest messages at the stated count');
+      expect(text).toContain('confirmation with the destination before posting');
+      expect(text).not.toContain('Roast This');
+    });
   });
 
   describe('buildStyleModal', () => {
@@ -185,11 +198,12 @@ describe('Block Kit builders', () => {
   });
 
   describe('quick summarize affordances', () => {
-    it('welcome blocks should include a primary Summarize now button', () => {
+    it('welcome blocks should include an accessible primary Catch up button', () => {
       const button = findButton(buildWelcomeBlocks('C012345678'), ACTION_QUICK_SUMMARIZE);
       expect(button).toBeDefined();
       if (button?.type === 'button') {
         expect(button.style).toBe('primary');
+        expect(button.accessibility_label).toBe('Catch up on the selected source channel');
       }
     });
 
@@ -220,25 +234,67 @@ describe('Block Kit builders', () => {
   });
 
   describe('buildFailureBlocks', () => {
-    it('should carry the original request in the retry button value', () => {
-      const blocks = buildFailureBlocks(buildRetryValue('C999', 75, 'roast'));
+    it.each(STYLE_PRESETS)('carries the preset key for $key without instructions', (preset) => {
+      const blocks = buildFailureBlocks(buildRetryValue('C999', 75, preset.value));
       const button = findButton(blocks, ACTION_RETRY_SUMMARY);
       expect(button).toBeDefined();
       if (button?.type === 'button') {
-        expect(JSON.parse(button.value ?? '{}')).toEqual({
-          channelId: 'C999',
-          count: 75,
-          style: 'roast',
-        });
+        expect(JSON.parse(button.value ?? '{}')).toEqual({ channelId: 'C999', count: 75, styleKey: preset.key });
+        expect(button.value).not.toContain(preset.value);
       }
     });
 
-    it('falls back to thread style when the style is too long for a button value', () => {
-      const longStyle = 'x'.repeat(4000);
-      const value = buildRetryValue('C999', 75, longStyle);
-      expect(value).toEqual({ channelId: 'C999', count: 75, style: null, useThreadStyle: true });
+    it('uses the default preset key for a default-style retry', () => {
+      expect(buildRetryValue('C999', 75, null)).toEqual({
+        channelId: 'C999', count: 75, styleKey: DEFAULT_STYLE_PRESET_KEY,
+      });
+    });
+
+    it.each(['brief custom tone', 'x'.repeat(4000), '"'.repeat(4000), '😀'.repeat(2000)])(
+      'keeps fresh custom-style retries compact without serializing instructions', (style) => {
+        const value = buildRetryValue('C999', 75, style);
+        expect(value).toEqual({ channelId: 'C999', count: 75, requiresOriginal: true });
+        expect(JSON.stringify(value).length).toBeLessThanOrEqual(2000);
+      }
+    );
+
+    it('retains the original window and shorter mode for a preset retry', () => {
+      const window = { oldestTs: '1700000000.000001', latestTs: '1700000600.000002' };
+      expect(buildRetryValue('C999', 5, STYLE_PRESETS[0].value, { window, shorter: true })).toEqual({
+        channelId: 'C999', count: 5, styleKey: STYLE_PRESETS[0].key, window, shorter: true,
+      });
+    });
+
+    it('requires the original summary for a frozen custom-style retry', () => {
+      const window = { oldestTs: '1700000000.000001', latestTs: '1700000600.000002' };
+      const value = buildRetryValue('C999', 5, 'x'.repeat(4000), { window, shorter: true });
+      expect(value).toEqual({ channelId: 'C999', count: 5, window, shorter: true, requiresOriginal: true });
+      expect(value.useThreadStyle).toBeUndefined();
       expect(JSON.stringify(value).length).toBeLessThanOrEqual(2000);
+    });
+
+    it('preserves an explicit false shorter flag', () => {
+      expect(buildRetryValue('C999', 5, null, { shorter: false })).toMatchObject({ shorter: false });
     });
   });
 
+});
+
+
+describe('custom-style failure recovery', () => {
+  it('shows direct retry guidance instead of a button that would change a one-off style', () => {
+    const blocks = buildFailureBlocks(buildRetryValue('C012345678', 5, 'Gentle jokes only.'));
+    expect(JSON.stringify(blocks)).toContain('Repeat your original request');
+    expect(blocks.some((block) => block.type === 'actions')).toBe(false);
+    expect(JSON.stringify(blocks)).not.toContain('Gentle jokes only.');
+  });
+});
+
+
+describe('malformed saved window preservation', () => {
+  it('never converts a present null bound into a fresh retry', () => {
+    const retry = buildRetryValue('C012345678', 5, null, { window: null as unknown as NonNullable<ReturnType<typeof buildRetryValue>['window']> });
+    expect(Object.prototype.hasOwnProperty.call(retry, 'window')).toBe(true);
+    expect(retry.window).toBeNull();
+  });
 });
