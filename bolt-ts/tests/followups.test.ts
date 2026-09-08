@@ -3,7 +3,7 @@
  */
 
 import type { WebClient } from '@slack/web-api';
-import { applyPostSummaryFollowUps, buildFollowUpPrompts, buildSourcePrompts } from '../src/followups';
+import { applyPostSummaryFollowUps, buildSourcePrompts } from '../src/followups';
 import { parseUserIntent } from '../src/intent';
 import { RECEIPTS_STYLE, ROAST_STYLE } from '../src/styles';
 
@@ -28,46 +28,6 @@ describe('buildSourcePrompts', () => {
   });
 });
 
-describe('buildFollowUpPrompts', () => {
-  it('offers only explicit latest-message requests, with no duplicate transforms', () => {
-    expect(buildFollowUpPrompts('C012345678', 5)).toEqual([
-      { title: 'Refresh latest 5', message: 'summarize <#C012345678> last 5' },
-      { title: 'Expand to latest 200', message: 'summarize <#C012345678> last 200' },
-    ]);
-  });
-
-  it.each([[50, 200], [199, 200], [200, 300], [250, 300], [300, 400], [499, 500]])(
-    'expands %i to %i, always exceeding the current count', (count, expandedCount) => {
-      const prompts = buildFollowUpPrompts('C012345678', count);
-      expect(prompts[1]).toEqual({
-        title: `Expand to latest ${expandedCount}`,
-        message: `summarize <#C012345678> last ${expandedCount}`,
-      });
-    }
-  );
-
-  it('omits expansion at the maximum count', () => {
-    expect(buildFollowUpPrompts('C012345678', 500)).toEqual([
-      { title: 'Refresh latest 500', message: 'summarize <#C012345678> last 500' },
-    ]);
-  });
-
-  it.each([1, 5, 50, 200, 500, 700, NaN, -1, 12.9])(
-    'keeps count %p requests bounded and parseable for the original source', (count) => {
-      for (const prompt of buildFollowUpPrompts('C012345678', count)) {
-        const intent = parseUserIntent(prompt.message);
-        expect(intent).toMatchObject({ type: 'summarize', targetChannel: 'C012345678', styleOverride: null });
-        if (intent.type !== 'summarize') {
-          throw new Error('Suggested prompt must request a summary');
-        }
-        expect(intent.count).toBeGreaterThanOrEqual(1);
-        expect(intent.count).toBeLessThanOrEqual(500);
-        expect(Number.isInteger(intent.count)).toBe(true);
-      }
-    }
-  );
-});
-
 describe('applyPostSummaryFollowUps', () => {
   function makeClient(overrides: Partial<Record<string, jest.Mock>> = {}) {
     const setSuggestedPrompts =
@@ -82,7 +42,7 @@ describe('applyPostSummaryFollowUps', () => {
     return { client, setSuggestedPrompts, setTitle, conversationsInfo };
   }
 
-  it('refreshes prompts and retitles the thread after the source channel', async () => {
+  it('retitles the source thread without replacing initial suggested prompts', async () => {
     const { client, setSuggestedPrompts, setTitle } = makeClient();
 
     await applyPostSummaryFollowUps({
@@ -90,21 +50,9 @@ describe('applyPostSummaryFollowUps', () => {
       assistantChannelId: 'D1',
       assistantThreadTs: '1.0',
       sourceChannelId: 'C123',
-      messageCount: 75,
-      style: null,
     });
 
-    expect(setSuggestedPrompts).toHaveBeenCalledWith(
-      expect.objectContaining({
-        channel_id: 'D1',
-        thread_ts: '1.0',
-        title: 'Get the latest',
-        prompts: [
-          { title: 'Refresh latest 75', message: 'summarize <#C123> last 75' },
-          { title: 'Expand to latest 200', message: 'summarize <#C123> last 200' },
-        ],
-      })
-    );
+    expect(setSuggestedPrompts).not.toHaveBeenCalled();
     expect(setTitle).toHaveBeenCalledWith(
       expect.objectContaining({
         channel_id: 'D1',
@@ -127,8 +75,6 @@ describe('applyPostSummaryFollowUps', () => {
         assistantChannelId: 'D1',
         assistantThreadTs: '1.0',
         sourceChannelId: 'C123',
-        messageCount: 75,
-        style: null,
         logger: { warn },
       })
     ).resolves.toBeUndefined();

@@ -115,7 +115,8 @@ describe('Block Kit builders', () => {
       }
       expect(text).toContain('source and date window');
       expect(text).toContain('edits and deletions');
-      expect(text).toContain('newest messages at the stated count');
+      expect(text).toContain('new messages at the stated count and style');
+      expect(text).toContain('⋯ menu');
       expect(text).toContain('confirmation with the destination before posting');
       expect(text).not.toContain('Roast This');
     });

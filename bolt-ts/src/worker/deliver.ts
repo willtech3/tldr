@@ -9,7 +9,6 @@
 
 import type {
   ActionsBlock,
-  Button,
   ContextActionsBlock,
   ContextBlock,
   KnownBlock,
@@ -18,6 +17,7 @@ import type {
 import { isReceiptsStyle, isRoastStyle, STYLE_PRESETS } from '../styles';
 import type { SummaryCoverage, SummaryWindow } from '../types';
 import { parseSummaryWindow } from '../summary_window';
+import { buildSummaryLatestMenu } from '../summary_latest';
 
 export const ACTION_SUMMARY_FEEDBACK = 'summary_feedback';
 
@@ -82,7 +82,7 @@ export interface SummaryActionButtonsArgs {
  */
 export function buildSummaryActionButtons(args: SummaryActionButtonsArgs): KnownBlock[] {
   const { sourceChannelId, messageCount, currentStyle } = args;
-  const elements: Button[] = [];
+  const elements: ActionsBlock['elements'] = [];
   const window = args.window ?? parseSummaryWindow(args.coverage);
   const sourceLabel = args.sourceChannelName && args.sourceChannelName !== sourceChannelId
     ? `#${args.sourceChannelName}` : sourceChannelId;
@@ -128,6 +128,11 @@ export function buildSummaryActionButtons(args: SummaryActionButtonsArgs): Known
     },
   });
 
+  const latestMenu = buildSummaryLatestMenu(args);
+  if (latestMenu) {
+    elements.push(latestMenu);
+  }
+
   const actions: ActionsBlock = { type: 'actions', elements };
   return [actions, buildProvenanceBlock(args), buildFeedbackBlock(args)];
 }
@@ -144,7 +149,7 @@ function buildProvenanceBlock(args: SummaryActionButtonsArgs): ContextBlock {
         type: 'mrkdwn',
         text:
           `🤖 AI-generated • <#${args.sourceChannelId}>` +
-          ` • <!date^${unixSeconds}^{time}|${fallback}>`,
+          ` • <!date^${unixSeconds}^{time}|${fallback}> • ⋯ Get latest`,
       },
     ],
   };

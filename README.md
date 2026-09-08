@@ -11,7 +11,7 @@ TLDR is a serverless Slack bot that turns a wall of unread messages into a conci
 - **Custom Styles** – Preset personas (Roast, Receipts, Executive brief, Haiku) or write your own; per-thread or one-off.
 - **Summarize Thread Shortcut** – Right-click any message → *Summarize Thread* for a private, in-channel thread recap.
 - **Standard Chatbot** – Ask TLDR anything: non-command messages in the assistant pane and `@TLDR` mentions in channels get streamed chat replies (text in, text out — no tools or actions).
-- **Engagement Built In** – Post-summary follow-up prompts, thumbs up/down feedback, share-to-channel with confirmation, retry buttons on every failure.
+- **Engagement Built In** – Per-summary refresh menu, thumbs up/down feedback, share-to-channel with confirmation, clear retry guidance when a request fails.
 - **Single TypeScript Service** – One Bolt.js Lambda hosts the Slack event surface *and* the streaming summarizer.
 - **Streaming Replies** – Summaries stream into the assistant thread token-by-token via Slack's `chat.startStream` / `chat.appendStream` / `chat.stopStream` APIs.
 
@@ -75,8 +75,11 @@ reply — chat is text-only, so TLDR will say it can't see the attachment.
 - Under a summary: **Shorter**, **Roast**, and **Receipts** reuse its source
   channel and original time window. Later messages are excluded; edits and
   deletions within that window can still affect the result.
-- **Refresh latest N** fetches new messages; **Expand to latest N** explicitly
-  requests a larger count. These suggested prompts do not duplicate transforms.
+- The **⋯ menu** under each result offers **Refresh latest N** for new messages
+  and **Expand to latest N** for a larger count, up to 500, from that result's
+  source. Each choice names its style: a known preset carries forward; a custom
+  style becomes **Default**. These fresh requests do not change your saved source.
+  Initial suggested prompts remain **Catch up**, **Roast**, and **Receipts**.
 - **Share to #channel** asks for confirmation, posts with your name on it, and
   returns a link to the posted message. Feedback controls stay below the result.
 - Retry cards preserve preset styles and saved windows. Custom-style failures
