@@ -466,13 +466,14 @@ export function stripSummaryHeader(text: string): string {
 }
 
 function buildShareAttribution(userId: string, count: number, kind: StyleKind = 'default'): string {
+  const scope = count === 1 ? 'this message' : `these ${count} messages`;
   if (kind === 'roast') {
-    return `<@${userId}> chose violence and asked TLDR to roast these ${count} messages:`;
+    return `<@${userId}> chose violence and asked TLDR to roast ${scope}:`;
   }
   if (kind === 'receipts') {
-    return `<@${userId}> asked TLDR to pull receipts from these ${count} messages:`;
+    return `<@${userId}> asked TLDR to pull receipts from ${scope}:`;
   }
-  return `<@${userId}> asked TLDR to summarize these ${count} messages:`;
+  return `<@${userId}> asked TLDR to summarize ${scope}:`;
 }
 
 type RerunArgs = SlackActionMiddlewareArgs<BlockAction> & AllMiddlewareArgs & {
