@@ -4,10 +4,10 @@
  */
 
 export const ROAST_STYLE =
-  'Write in a hyper-critical, sarcastic, and roasting tone. Point out inefficiencies, poor decisions, and ridiculous behavior. Be funny but brutal.';
+  'Write a sharp, funny roast of the conversation, like a quick-witted friend in the group chat. Focus on specific jokes, self-owns, and ridiculous takes in the messages. Be sarcastic and playful; do not invent failures or claims.';
 
 export const RECEIPTS_STYLE =
-  'Focus on finding contradictions, broken promises, and receipts. Point out when someone said they would do something and did not, or when people contradicted themselves. Be specific with timestamps and quotes.';
+  'Pull receipts from the conversation: highlight contradictions or commitments only when the supplied messages demonstrate them. Use specific quotes and source links. If there is no clear contradiction or broken promise, say so briefly instead of manufacturing drama.';
 
 export const HAIKU_STYLE = 'Write the entire summary as a short series of haiku. Keep useful source links.';
 

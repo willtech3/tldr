@@ -71,12 +71,17 @@ reply — chat is text-only, so TLDR will say it can't see the attachment.
   the dropdown beside it sets your default message count (5–500, default 50).
 - **🎨 Set style** opens a modal with ready-made personas — 🔥 *Roast*,
   📜 *Receipts*, 💼 *Executive brief*, 🌸 *Haiku* — or space to write your own
-  (up to 4,000 characters). Save, then hit *⚡ Try it now*.
-- Under every summary: **📤 Share to channel** (asks for confirmation first,
-  posts with your name on it), one-tap **🔥 Roast This** / **📜 Pull Receipts**
-  re-runs, and *Good summary* / *Off the mark* feedback.
-- Every failure comes with a **Retry** button — including *Try last 50* when a
-  channel is too large to summarize in one go.
+  (up to 3,000 characters in the modal; 4,000 with a typed `style:` command).
+- Under a summary: **Shorter**, **Roast**, and **Receipts** reuse its source
+  channel and original time window. Later messages are excluded; edits and
+  deletions within that window can still affect the result.
+- **Refresh latest N** fetches new messages; **Expand to latest N** explicitly
+  requests a larger count. These suggested prompts do not duplicate transforms.
+- **Share to #channel** asks for confirmation, posts with your name on it, and
+  returns a link to the posted message. Feedback controls stay below the result.
+- Retry cards preserve preset styles and saved windows. Custom-style failures
+  direct you back to the original request or result so a retry cannot silently
+  use a different style.
 
 ### 🎨 Styles you can type
 

@@ -1,4 +1,5 @@
 import type { WebClient } from '@slack/web-api';
+import type { SummaryWindow } from '../../src/types';
 import {
   appendStream,
   downloadImageBytes,
@@ -19,14 +20,43 @@ function makeWebClient(overrides: Record<string, unknown>): WebClient {
 }
 
 describe('Slack client wrappers', () => {
-  it('clamps message count to Slack limits', async () => {
+  it('clamps message count to the 500-message summary limit', async () => {
     const history = jest.fn().mockResolvedValue({
       messages: [{ ts: '1', user: 'U1', text: 'hi', files: [] }],
     });
     const client = makeWebClient({ conversations: { history } });
     await getRecentMessages(client, 'C1', 10_000);
-    expect(history).toHaveBeenCalledWith({ channel: 'C1', limit: 1000 });
+    expect(history).toHaveBeenCalledWith({ channel: 'C1', limit: 500 });
   });
+
+  it.each([[0, 1], [-12, 1], [25.9, 25], [NaN, 1], [Infinity, 1]])(
+    'bounds history count %p to the integer %p', async (count, limit) => {
+      const history = jest.fn().mockResolvedValue({ messages: [] });
+      await getRecentMessages(makeWebClient({ conversations: { history } }), 'C1', count);
+      expect(history).toHaveBeenCalledWith({ channel: 'C1', limit });
+    }
+  );
+
+  it('passes both inclusive bounds for a frozen single-message window', async () => {
+    const history = jest.fn().mockResolvedValue({ messages: [] });
+    await getRecentMessages(makeWebClient({ conversations: { history } }), 'C1', 1000, {
+      oldestTs: '1788825600.000001', latestTs: '1788825600.000001',
+    });
+    expect(history).toHaveBeenCalledWith({
+      channel: 'C1', limit: 500, inclusive: true,
+      oldest: '1788825600.000001', latest: '1788825600.000001',
+    });
+  });
+
+  it.each([null, {}, { oldestTs: 'bad', latestTs: '1788825600.000001' },
+    { oldestTs: '1788825600.000002', latestTs: '1788825600.000001' }])(
+    'rejects malformed supplied bounds before a history request: %p', async (window) => {
+      const history = jest.fn();
+      await expect(getRecentMessages(makeWebClient({ conversations: { history } }), 'C1', 25,
+        window as unknown as SummaryWindow)).rejects.toThrow('Invalid summary window');
+      expect(history).not.toHaveBeenCalled();
+    }
+  );
 
   it('maps Slack history messages onto the simplified shape', async () => {
     const history = jest.fn().mockResolvedValue({

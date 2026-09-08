@@ -2,48 +2,53 @@
  * Post-summary follow-up touches.
  *
  * After a summary is delivered we refresh the assistant thread's suggested
- * prompts so the obvious next actions (roast, receipts, go deeper, refresh)
- * are one tap away, and retitle the thread after its source channel so it is
- * findable in the AI pane's history. Both calls are best-effort — a failure
+ * prompts for explicitly fetching newer or more messages, and retitle the
+ * thread after its source channel so it is findable in the AI pane's history. Both calls are best-effort — a failure
  * never affects the delivered summary.
  */
 
 import type { WebClient } from '@slack/web-api';
 import { getChannelName } from './slack/client';
-import { isReceiptsStyle, isRoastStyle, RECEIPTS_STYLE, ROAST_STYLE } from './styles';
+import { normalizeMessageCount } from './security';
+import { RECEIPTS_STYLE, ROAST_STYLE } from './styles';
 
 export interface FollowUpPrompt {
   title: string;
   message: string;
 }
 
-/** Slack shows at most 4 suggested prompts. */
-const MAX_PROMPTS = 4;
+/** Initial choices always name their source, even if thread context changes. */
+export function buildSourcePrompts(channelId: string | null): FollowUpPrompt[] {
+  if (!channelId) {
+    return [{ title: 'How to use TLDR', message: 'help' }];
+  }
+  const summarize = `summarize <#${channelId}>`;
+  return [
+    { title: 'Catch up', message: summarize },
+    { title: 'Roast', message: `${summarize} with style: ${ROAST_STYLE}` },
+    { title: 'Receipts', message: `${summarize} with style: ${RECEIPTS_STYLE}` },
+  ];
+}
 
 /**
- * Build follow-up prompts for the just-delivered summary. The prompt that
- * matches the style we just used is dropped (no point offering a rerun of the
- * same thing) and replaced with a plain refresh.
+ * The summary's buttons transform its original window. Suggested prompts
+ * instead make an explicit fresh request, with a source and count that do
+ * not depend on mutable thread defaults.
  */
-export function buildFollowUpPrompts(style: string | null): FollowUpPrompt[] {
-  const prompts: FollowUpPrompt[] = [];
-
-  if (!isRoastStyle(style)) {
+export function buildFollowUpPrompts(sourceChannelId: string, messageCount: number): FollowUpPrompt[] {
+  const count = normalizeMessageCount(messageCount);
+  const prompts = [{
+    title: `Refresh latest ${count}`,
+    message: `summarize <#${sourceChannelId}> last ${count}`,
+  }];
+  if (count < 500) {
+    const expandedCount = Math.min(500, Math.max(200, (Math.floor(count / 100) + 1) * 100));
     prompts.push({
-      title: '🔥 Roast it instead',
-      message: `summarize with style: ${ROAST_STYLE}`,
+      title: `Expand to latest ${expandedCount}`,
+      message: `summarize <#${sourceChannelId}> last ${expandedCount}`,
     });
   }
-  if (!isReceiptsStyle(style)) {
-    prompts.push({
-      title: '📜 Pull the receipts',
-      message: `summarize with style: ${RECEIPTS_STYLE}`,
-    });
-  }
-  prompts.push({ title: '🔍 Go deeper — last 200', message: 'summarize last 200' });
-  prompts.push({ title: '🔄 Fresh take', message: 'summarize' });
-
-  return prompts.slice(0, MAX_PROMPTS);
+  return prompts;
 }
 
 export interface PostSummaryFollowUpArgs {
@@ -51,8 +56,9 @@ export interface PostSummaryFollowUpArgs {
   assistantChannelId: string;
   assistantThreadTs: string;
   sourceChannelId: string;
-  /** Style used for the summary that was just delivered. */
-  style: string | null;
+  messageCount: number;
+  /** Accepted for callers that still supply the delivered summary's style. */
+  style?: string | null;
   logger?: { warn(message: string, meta?: unknown): void };
 }
 
@@ -61,15 +67,15 @@ export interface PostSummaryFollowUpArgs {
  * Never throws.
  */
 export async function applyPostSummaryFollowUps(args: PostSummaryFollowUpArgs): Promise<void> {
-  const { client, assistantChannelId, assistantThreadTs, sourceChannelId, style } = args;
+  const { client, assistantChannelId, assistantThreadTs, sourceChannelId, messageCount } = args;
   const warn = (message: string, meta?: unknown): void => args.logger?.warn(message, meta);
 
   const results = await Promise.allSettled([
     client.assistant.threads.setSuggestedPrompts({
       channel_id: assistantChannelId,
       thread_ts: assistantThreadTs,
-      title: 'What next?',
-      prompts: buildFollowUpPrompts(style) as [FollowUpPrompt, ...FollowUpPrompt[]],
+      title: 'Get the latest',
+      prompts: buildFollowUpPrompts(sourceChannelId, messageCount) as [FollowUpPrompt, ...FollowUpPrompt[]],
     }),
     (async (): Promise<void> => {
       const channelName = await getChannelName(client, sourceChannelId);

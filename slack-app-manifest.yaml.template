@@ -29,7 +29,7 @@ features:
   # welcome-card flow needs reworking onto app_home_opened first). See
   # docs/slack_configuration.md → "Migrating to the new Agent experience".
   assistant_view:
-    assistant_description: TLDR summarizes recent messages from any channel and provides the results in this thread. You can then share summaries with custom style prompts to other channels.
+    assistant_description: Catch up, get a roast, or check the receipts.
     suggested_prompts: []
 
 oauth_config:

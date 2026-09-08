@@ -12,7 +12,7 @@ import { buildFailureBlocks, buildRetryValue } from '../blocks';
 import type { AppConfig } from '../config';
 import { sanitizeGeneratedSlackMrkdwn, truncateForMarkdownBlock } from '../slack/sanitize';
 import { BotNotInChannelError, getRecentMessages, getBotUserId } from '../slack/client';
-import type { SummarizeOutcome } from '../types';
+import type { SummarizeOutcome, SummaryWindow } from '../types';
 import { applySafetyNetSections, buildSummarizePromptData } from './prompt_builder';
 import { buildSummaryActionButtons, buildSummaryMetadata } from './deliver';
 import {
@@ -35,6 +35,11 @@ export interface SummarizeRequest {
   threadTs: string;
   messageCount: number;
   customStyle: string | null;
+  /** Omit only for a fresh history request. */
+  window?: SummaryWindow;
+  shorter?: boolean;
+  /** Prior visible recap, excluded from delivery metadata and action payloads. */
+  summaryToShorten?: string;
 }
 
 interface RunArgs {
@@ -73,6 +78,9 @@ export async function runSummarization(args: RunArgs): Promise<SummarizeOutcome>
       assistantThreadTs: request.threadTs,
       messageCount: request.messageCount,
       customStyle: request.customStyle,
+      window: request.window,
+      shorter: request.shorter,
+      summaryToShorten: request.summaryToShorten,
       correlationId: request.correlationId,
       streamMaxChunkChars: config.streamMaxChunkChars,
       streamMinAppendIntervalMs: config.streamMinAppendIntervalMs,
@@ -81,14 +89,14 @@ export async function runSummarization(args: RunArgs): Promise<SummarizeOutcome>
   }
 
   try {
-    const messages = await getRecentMessages(client, request.channelId, request.messageCount);
+    const messages = await getRecentMessages(client, request.channelId, request.messageCount, request.window);
     const botUserId = await getBotUserId(client);
     const userMessages = botUserId ? messages.filter((m) => m.user !== botUserId) : messages;
     if (userMessages.length === 0) {
       await client.chat.postMessage({
         channel: request.originChannelId,
         thread_ts: request.threadTs,
-        text: buildEmptyChannelMessage(request.channelId),
+        text: buildEmptyChannelMessage(request.channelId, request.window),
       });
       return 'empty';
     }
@@ -98,6 +106,8 @@ export async function runSummarization(args: RunArgs): Promise<SummarizeOutcome>
       channelId: request.channelId,
       messages: userMessages,
       customStyle: request.customStyle,
+      shorter: request.shorter,
+      summaryToShorten: request.summaryToShorten,
       fetchImpl: args.fetchImpl,
     });
     const summary = await llm.generateSummary(promptData.prompt);
@@ -114,6 +124,9 @@ export async function runSummarization(args: RunArgs): Promise<SummarizeOutcome>
       messageCount: request.messageCount,
       currentStyle: request.customStyle,
       coverage: promptData.coverage,
+      sourceChannelName: promptData.channelName,
+      window: request.window,
+      shorter: request.shorter,
     };
     const blocks: KnownBlock[] = [
       { type: 'markdown', text: truncateForMarkdownBlock(body) },
@@ -139,7 +152,7 @@ export async function runSummarization(args: RunArgs): Promise<SummarizeOutcome>
           channel: request.originChannelId,
           thread_ts: request.threadTs,
           text: TOO_LARGE_MESSAGE,
-          blocks: buildTooLargeBlocks(request.channelId, request.customStyle),
+          blocks: buildTooLargeBlocks(request.channelId, request.customStyle, { window: request.window, shorter: request.shorter, requiresOriginal: request.summaryToShorten !== undefined }),
         });
       } catch (followup) {
         console.error('Failed to post too-large message', followup);
@@ -157,7 +170,7 @@ export async function runSummarization(args: RunArgs): Promise<SummarizeOutcome>
         thread_ts: request.threadTs,
         text: CANONICAL_FAILURE_MESSAGE,
         blocks: buildFailureBlocks(
-          buildRetryValue(request.channelId, request.messageCount, request.customStyle),
+          buildRetryValue(request.channelId, request.messageCount, request.customStyle, { window: request.window, shorter: request.shorter, requiresOriginal: request.summaryToShorten !== undefined }),
           failureText
         ),
       });

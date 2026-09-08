@@ -51,6 +51,8 @@ export interface BuildPromptDataArgs {
   channelId: string;
   messages: RecentMessage[];
   customStyle: string | null;
+  shorter?: boolean;
+  summaryToShorten?: string;
   /** Injected for tests. */
   fetchImpl?: typeof fetch;
 }
@@ -105,6 +107,8 @@ export async function buildSummarizePromptData(
     receipts,
     images,
     customStyle,
+    shorter: args.shorter,
+    summaryToShorten: args.summaryToShorten,
   });
 
   return {

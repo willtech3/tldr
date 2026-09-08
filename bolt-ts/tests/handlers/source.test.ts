@@ -54,6 +54,8 @@ describe('source selection', () => {
     const handlers = actions();
     await handlers.select_source({ ...f, ack: jest.fn(), action: { type: 'conversations_select', selected_conversation: replacement } });
     expect(f.current()).toEqual({ ...f.state, viewingChannelId: replacement });
+    const prompts = f.client.assistant.threads.setSuggestedPrompts.mock.calls.at(-1)![0].prompts;
+    expect(prompts.every((prompt: { message: string }) => prompt.message.includes(`<#${replacement}>`))).toBe(true);
     expect(f.client.chat.update).toHaveBeenCalledWith(expect.objectContaining({
       metadata: expect.objectContaining({ event_payload: expect.objectContaining({ viewing_channel_id: replacement }) }),
     }));
