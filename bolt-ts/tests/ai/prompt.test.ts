@@ -53,14 +53,16 @@ describe('sanitizeCustomInternal', () => {
 });
 
 describe('buildPrompt', () => {
-  it('emits a TLDR-bot system prompt with rule + output_format + example XML blocks', () => {
+  it('asks for a proportionate recap with contextual links and no empty sections', () => {
     const payload = buildPrompt(baseArgs());
-    expect(payload.system).toContain('You are TLDR-bot');
+    expect(payload.system).toContain('You are TLDR');
     expect(payload.system).toContain('<rules>');
     expect(payload.system).toContain('<output_format>');
     expect(payload.system).toContain('<example>');
-    expect(payload.system).toContain('*Summary*');
-    expect(payload.system).toContain('*Receipts*');
+    expect(payload.system).toContain('1-3 short sentences');
+    expect(payload.system).toContain('Omit empty sections');
+    expect(payload.system).toContain("never a person's name alone");
+    expect(payload.system).not.toContain('Always include all four sections');
   });
 
   it('wraps channel name and messages in XML tags', () => {
@@ -113,12 +115,14 @@ describe('buildPrompt', () => {
         data: 'AAAA',
       },
     };
-    const payload = buildPrompt(baseArgs({ images: [fakeImage] }));
-    expect(payload.userContent.length).toBe(3);
+    const payload = buildPrompt(baseArgs({ images: [{
+      image: fakeImage, messageTs: '100.001', author: '<Alice>', permalink: 'https://slack.test/p1',
+    }] }));
+    expect(payload.userContent.length).toBe(4);
     expect(payload.userContent[0].type).toBe('text');
-    expect(payload.userContent[1]).toEqual(fakeImage);
-    expect(payload.userContent[2].type).toBe('text');
-    expect((payload.userContent[2] as { text: string }).text).toContain('<task>');
+    expect((payload.userContent[1] as { text: string }).text).toContain('[100.001] &lt;Alice&gt; — https://slack.test/p1');
+    expect(payload.userContent[2]).toEqual(fakeImage);
+    expect((payload.userContent[3] as { text: string }).text).toContain('<task>');
   });
 
   it('escapes < and > inside channel/messages to keep XML framing safe', () => {

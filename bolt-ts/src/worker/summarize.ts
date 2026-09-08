@@ -14,7 +14,7 @@ import { sanitizeGeneratedSlackMrkdwn, truncateForMarkdownBlock } from '../slack
 import { BotNotInChannelError, getRecentMessages, getBotUserId } from '../slack/client';
 import type { SummarizeOutcome } from '../types';
 import { applySafetyNetSections, buildSummarizePromptData } from './prompt_builder';
-import { buildSummaryActionButtons } from './deliver';
+import { buildSummaryActionButtons, buildSummaryMetadata } from './deliver';
 import {
   CANONICAL_FAILURE_MESSAGE,
   buildBotNotInChannelMessage,
@@ -103,25 +103,28 @@ export async function runSummarization(args: RunArgs): Promise<SummarizeOutcome>
     const summary = await llm.generateSummary(promptData.prompt);
     const safetyNetted = applySafetyNetSections(summary, promptData);
     const body = sanitizeGeneratedSlackMrkdwn(
-      buildStreamPrefix(promptData.channelName, request.customStyle) + safetyNetted
+      buildStreamPrefix(promptData.channelName, request.customStyle, promptData.coverage) + safetyNetted
     );
     // The body is standard Markdown — deliver it via a markdown block so it
     // renders, with `text` as the short notification fallback. The full body
     // also goes in `text` so the Share button (and notifications) can recover
     // it — Slack treats `text` purely as fallback when blocks are present.
+    const delivery = {
+      sourceChannelId: request.channelId,
+      messageCount: request.messageCount,
+      currentStyle: request.customStyle,
+      coverage: promptData.coverage,
+    };
     const blocks: KnownBlock[] = [
       { type: 'markdown', text: truncateForMarkdownBlock(body) },
-      ...buildSummaryActionButtons({
-        sourceChannelId: request.channelId,
-        messageCount: request.messageCount,
-        currentStyle: request.customStyle,
-      }),
+      ...buildSummaryActionButtons(delivery),
     ];
     await client.chat.postMessage({
       channel: request.originChannelId,
       thread_ts: request.threadTs,
       text: body,
       blocks,
+      metadata: buildSummaryMetadata(delivery),
     });
     return 'delivered';
   } catch (err) {

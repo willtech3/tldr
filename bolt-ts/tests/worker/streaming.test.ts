@@ -7,21 +7,22 @@ describe('buildStreamPrefix', () => {
 
   it('prepends a style header when set', () => {
     const prefix = buildStreamPrefix('general', 'be cool');
-    expect(prefix).toBe('_Style: be cool_\n\n**Summary of #general**\n\n');
+    expect(prefix).toBe('_Style: Custom_\n\n**Summary of #general**\n\n');
   });
 
   it('does not prepend # when the name lookup fell back to a channel ID', () => {
     expect(buildStreamPrefix('C123456789', null)).toBe('**Summary of C123456789**\n\n');
   });
 
-  it('truncates long style headers to 60 chars + ellipsis', () => {
-    const long = 'x'.repeat(120);
-    const prefix = buildStreamPrefix('general', long);
-    expect(prefix.startsWith('_Style: ')).toBe(true);
-    // Style portion = 57 chars + "..." == 60
-    const styleSegment = prefix.split('_Style: ')[1].split('_\n\n')[0];
-    expect([...styleSegment].length).toBe(60);
-    expect(styleSegment.endsWith('...')).toBe(true);
+  it('uses a short label without leaking custom style instructions into the title', () => {
+    const prefix = buildStreamPrefix('general', 'x'.repeat(4000));
+    expect(prefix).toBe('_Style: Custom_\n\n**Summary of #general**\n\n');
+  });
+
+  it('places the actual included count and covered dates before the recap', () => {
+    const prefix = buildStreamPrefix('testing-bots', null, { messageCount: 3, oldestTs: '1788825600.000001', latestTs: '1788827400.000002' });
+    expect(prefix).toContain('3 messages · Sep 8, 2026 · 00:00–00:30 UTC');
+    expect(prefix).not.toContain('<!date');
   });
 
   it('drops empty/whitespace styles', () => {

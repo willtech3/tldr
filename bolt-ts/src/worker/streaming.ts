@@ -30,10 +30,11 @@ import {
   startStream,
   stopStream,
 } from '../slack/client';
-import type { SummarizeOutcome } from '../types';
+import type { SummarizeOutcome, SummaryCoverage } from '../types';
+import { summaryStyleLabel } from '../styles';
 import { takeStreamChunk } from './chunks';
 import { applySafetyNetSections, buildSummarizePromptData } from './prompt_builder';
-import { buildSummaryActionButtons } from './deliver';
+import { buildCoverageText, buildSummaryActionButtons, buildSummaryMetadata } from './deliver';
 
 export const CANONICAL_FAILURE_MESSAGE =
   "Sorry, I couldn't generate a summary at this time. Please try again later.";
@@ -122,7 +123,7 @@ export async function streamSummaryToAssistantThread(
       fetchImpl: args.fetchImpl,
     });
 
-    const prefix = buildStreamPrefix(promptData.channelName, args.customStyle);
+    const prefix = buildStreamPrefix(promptData.channelName, args.customStyle, promptData.coverage);
     const stream = await args.llm.generateSummaryStream(promptData.prompt);
 
     if (stream.kind === 'too_large') {
@@ -209,7 +210,7 @@ export function buildTooLargeBlocks(
 }
 
 interface ConsumeStreamArgs extends StreamSummaryArgs {
-  promptData: { linksShared: string[]; receiptPermalinks: string[]; hasAnyImages: boolean };
+  promptData: Awaited<ReturnType<typeof buildSummarizePromptData>>;
   stream: Extract<StreamingResponse, { kind: 'active' }>;
   /** Slack streaming message ts — already started with the header prefix. */
   streamTs: string;
@@ -328,6 +329,7 @@ async function consumeStream(args: ConsumeStreamArgs): Promise<{ stopped: boolea
       sourceChannelId: args.sourceChannelId,
       messageCount: args.messageCount,
       customStyle: args.customStyle,
+      coverage: args.promptData.coverage,
     });
   }
 
@@ -378,24 +380,20 @@ async function finalizeStreamSuccess(args: {
   sourceChannelId: string;
   messageCount: number;
   customStyle: string | null;
+  coverage: SummaryCoverage;
 }): Promise<void> {
-  const blocks = buildSummaryActionButtons({
+  const delivery = {
     sourceChannelId: args.sourceChannelId,
     messageCount: args.messageCount,
     currentStyle: args.customStyle,
-  });
+    coverage: args.coverage,
+  };
+  const blocks = buildSummaryActionButtons(delivery);
   await stopStream(args.client, {
     channel: args.channel,
     ts: args.streamTs,
     blocks,
-    metadata: {
-      event_type: 'tldr_summary_v1',
-      event_payload: {
-        source_channel_id: args.sourceChannelId,
-        message_count: args.messageCount,
-        has_style: args.customStyle !== null,
-      },
-    },
+    metadata: buildSummaryMetadata(delivery),
   });
 }
 
@@ -489,23 +487,14 @@ async function ensureCanonicalFailure(args: EnsureCanonicalFailureArgs): Promise
  * Takes the human-readable channel name (falls back to whatever is passed,
  * e.g. a channel ID when the name lookup failed).
  */
-export function buildStreamPrefix(channelName: string, customStyle: string | null): string {
-  let prefix = '';
-  const stylePrefix = buildStylePrefix(customStyle);
-  if (stylePrefix) {
-    prefix += stylePrefix;
-  }
+export function buildStreamPrefix(
+  channelName: string,
+  customStyle: string | null,
+  coverage?: SummaryCoverage
+): string {
+  const style = summaryStyleLabel(customStyle);
+  const stylePrefix = style ? `_Style: ${style}_\n\n` : '';
   const label = /^[A-Z][A-Z0-9]{8,}$/.test(channelName) ? channelName : `#${channelName}`;
-  prefix += `**Summary of ${label}**\n\n`;
-  return prefix;
-}
-
-function buildStylePrefix(customStyle: string | null): string | null {
-  const trimmed = customStyle?.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const chars = [...trimmed];
-  const truncated = chars.length > 60 ? chars.slice(0, 57).join('') + '...' : trimmed;
-  return `_Style: ${truncated}_\n\n`;
+  const scope = coverage ? `${buildCoverageText(coverage)}\n\n` : '';
+  return `${stylePrefix}**Summary of ${label}**\n\n${scope}`;
 }

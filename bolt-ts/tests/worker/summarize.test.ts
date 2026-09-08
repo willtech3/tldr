@@ -215,3 +215,47 @@ describe('runSummarization (streaming)', () => {
     expect(call).toBeDefined();
   });
 });
+
+describe.each([false, true])('delivered coverage (streaming=%s)', (enableStreaming) => {
+  it('uses included messages for the title, sharing, and metadata after filtering TLDR', async () => {
+    const { client, spies } = makeWebClient([
+      { ts: '1788829200.000001', user: 'UBOT', text: 'Earlier TLDR output' },
+      { ts: '1788827400.000003', user: 'U1', text: 'Third message' },
+      { ts: '1788826500.000002', user: 'U1', text: 'Second message' },
+      { ts: '1788825600.000001', user: 'U1', text: 'First message' },
+    ]);
+    const startStream = jest.fn().mockResolvedValue({ ts: 'STREAM1' });
+    const appendStream = jest.fn().mockResolvedValue({ ok: true });
+    const stopStream = jest.fn().mockResolvedValue({ ok: true });
+    Object.assign(client.chat, { startStream, appendStream, stopStream });
+    const llm = makeLlm();
+    const recap = 'A brief recap with <!channel> and <@U123>.';
+    jest.spyOn(llm, 'generateSummary').mockResolvedValue(recap);
+    jest.spyOn(llm, 'generateSummaryStream').mockResolvedValue({
+      kind: 'active',
+      iterator: (async function* () { yield { kind: 'text_delta' as const, delta: recap }; yield { kind: 'completed' as const }; })(),
+      cancel: async () => {},
+    });
+
+    const result = await runSummarization({
+      client, llm, config: makeConfig({ enableStreaming }),
+      request: { correlationId: 'coverage', userId: 'U1', channelId: 'C1', originChannelId: 'D1', threadTs: '1.0', messageCount: 25, customStyle: null },
+    });
+    expect(result).toBe('delivered');
+    const delivered = enableStreaming ? stopStream.mock.calls[0][0] : spies.postMessage.mock.calls[0][0];
+    const body = enableStreaming
+      ? startStream.mock.calls[0][0].markdown_text + appendStream.mock.calls.map((call) => call[0].markdown_text).join('')
+      : delivered.text;
+    expect(body).toContain('3 messages · Sep 8, 2026 · 00:00–00:30 UTC');
+    expect(body).not.toContain('25 messages');
+    expect(body).toContain('`<!channel>`');
+    expect(body).toContain('`<@U123>`');
+    expect(delivered.metadata.event_payload).toEqual({
+      source_channel_id: 'C1', message_count: 3, requested_message_count: 25,
+      has_style: false, oldest_ts: '1788825600.000001', latest_ts: '1788827400.000003',
+    });
+    const actions = delivered.blocks.find((block: { type: string }) => block.type === 'actions');
+    const share = actions.elements.find((element: { action_id: string }) => element.action_id === 'share_summary');
+    expect(JSON.parse(share.value).count).toBe(3);
+  });
+});

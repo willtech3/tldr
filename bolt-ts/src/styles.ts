@@ -9,7 +9,7 @@ export const ROAST_STYLE =
 export const RECEIPTS_STYLE =
   'Focus on finding contradictions, broken promises, and receipts. Point out when someone said they would do something and did not, or when people contradicted themselves. Be specific with timestamps and quotes.';
 
-export const HAIKU_STYLE = 'Write the entire summary as a series of haiku. Keep the four sections.';
+export const HAIKU_STYLE = 'Write the entire summary as a short series of haiku. Keep useful source links.';
 
 export const EXEC_BRIEF_STYLE =
   'Write an ultra-concise executive brief: maximum five bullets, no fluff, decisions and action items only.';
@@ -45,4 +45,17 @@ export function isRoastStyle(style: string | null): boolean {
 /** True when a style reads like the receipts preset. */
 export function isReceiptsStyle(style: string | null): boolean {
   return (style ?? '').toLowerCase().includes('receipt');
+}
+
+/** A readable label for the applied style; never echo arbitrary instructions. */
+export function summaryStyleLabel(style: string | null): string | null {
+  const trimmed = style?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const preset = STYLE_PRESETS.find((candidate) => candidate.value === trimmed);
+  const labels: Record<string, string> = {
+    roast: 'Roast', receipts: 'Receipts', exec_brief: 'Executive brief', haiku: 'Haiku',
+  };
+  return preset ? labels[preset.key] ?? 'Custom' : 'Custom';
 }

@@ -415,12 +415,12 @@ export function stripSummaryHeader(text: string): string {
 
 function buildShareAttribution(userId: string, count: number, kind: StyleKind = 'default'): string {
   if (kind === 'roast') {
-    return `<@${userId}> chose violence and asked TLDR to roast the last ${count} messages:`;
+    return `<@${userId}> chose violence and asked TLDR to roast these ${count} messages:`;
   }
   if (kind === 'receipts') {
-    return `<@${userId}> asked TLDR to pull receipts from the last ${count} messages:`;
+    return `<@${userId}> asked TLDR to pull receipts from these ${count} messages:`;
   }
-  return `<@${userId}> asked TLDR to summarize the last ${count} messages:`;
+  return `<@${userId}> asked TLDR to summarize these ${count} messages:`;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
