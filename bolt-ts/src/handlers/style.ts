@@ -1,12 +1,7 @@
-/**
- * Style-related action and view handlers.
- *
- * Handles:
- * - Button click to open the "Set style" modal
- * - Modal submission to save the style
- */
-
+/** Style editor interactions and thread-scoped persistence. */
 import { App, BlockAction } from '@slack/bolt';
+import type { View } from '@slack/types';
+import type { WebClient } from '@slack/web-api';
 import {
   ACTION_OPEN_STYLE_MODAL,
   MODAL_CALLBACK_SET_STYLE,
@@ -14,23 +9,26 @@ import {
   INPUT_ACTION_STYLE,
   INPUT_BLOCK_STYLE_PRESET,
   INPUT_ACTION_STYLE_PRESET,
+  MAX_MODAL_STYLE_LENGTH,
   buildStyleModal,
   buildStyleConfirmationBlocks,
   buildWelcomeBlocks,
+  stylePrefillDigest,
   type StyleModalPrivateMetadata,
 } from '../blocks';
 import {
   buildThreadStateMetadata,
   findThreadStateMessage,
-  getCachedThreadState,
   makeThreadKey,
+  parseThreadContextFromMetadata,
   setCachedThreadState,
+  TLDR_THREAD_STATE_EVENT_TYPE,
   type SlackWebApiClient,
 } from '../thread_state';
 import type { ThreadContext } from '../types';
-import { resolveStylePreset } from '../styles';
+import { DEFAULT_STYLE_PRESET_KEY, STYLE_PRESETS, resolveStylePreset } from '../styles';
 import {
-  isUserMemberOfChannel,
+  checkChannelMembership,
   isValidSlackChannelId,
   isValidSlackTimestamp,
   validateAndSanitizeStyle,
@@ -38,229 +36,264 @@ import {
 } from '../security';
 
 const WELCOME_TEXT = 'Welcome to TLDR';
+const OPEN_FAILURE = 'I couldn’t open style settings. Try again, or type `style: your instructions` here. Use `clear style` to reset.';
 
-/**
- * Register style-related action and view handlers.
- *
- * @param app - The Bolt app instance
- */
-export function registerStyleHandlers(app: App): void {
-  // Handle "Set style" button click - opens the style modal
-  app.action<BlockAction>(ACTION_OPEN_STYLE_MODAL, async ({ ack, body, client, logger }) => {
-    // Acknowledge immediately (Slack requires response within 3 seconds)
-    await ack();
+interface StyleLogger {
+  error(message: string, ...args: unknown[]): void;
+  warn(message: string, ...args: unknown[]): void;
+  info(message: string, ...args: unknown[]): void;
+}
 
-    // Extract thread context from the action payload
-    const triggerId = body.trigger_id;
-    if (!triggerId) {
-      logger.error('No trigger_id in action payload');
-      return;
+/** Log only Slack's error code, not request payloads or credentials. */
+function slackErrorCode(error: unknown): string {
+  if (typeof error !== 'object' || error === null) {
+    return 'unknown';
+  }
+  const data = 'data' in error ? error.data : null;
+  if (typeof data === 'object' && data !== null && 'error' in data && typeof data.error === 'string') {
+    return data.error;
+  }
+  return 'code' in error && typeof error.code === 'string' ? error.code : 'unknown';
+}
+
+async function postStyleNotice(
+  client: Pick<WebClient, 'chat'>,
+  logger: StyleLogger,
+  channel: string,
+  threadTs: string,
+  text: string
+): Promise<void> {
+  try {
+    await client.chat.postMessage({ channel, thread_ts: threadTs, text });
+  } catch (error) {
+    logger.error('Failed to post style notice', { code: slackErrorCode(error) });
+  }
+}
+
+function buildStyleStatusModal(text: string): View {
+  return {
+    type: 'modal',
+    title: { type: 'plain_text', text: 'Set Summary Style' },
+    close: { type: 'plain_text', text: 'Close' },
+    blocks: [{ type: 'section', text: { type: 'mrkdwn', text } }],
+  };
+}
+
+function parseStyleMetadata(raw: string): StyleModalPrivateMetadata | null {
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (typeof value !== 'object' || value === null) {
+      return null;
     }
-
-    // Get channel and thread info from the message containing the button
-    const message = 'message' in body ? body.message : null;
-    const channel = 'channel' in body ? body.channel : null;
-
-    if (!message || !channel) {
-      logger.error('Could not extract message or channel from action body');
-      return;
+    const metadata = value as Record<string, unknown>;
+    if (
+      typeof metadata.assistantChannelId !== 'string' ||
+      !isValidSlackChannelId(metadata.assistantChannelId) ||
+      typeof metadata.assistantThreadTs !== 'string' ||
+      !isValidSlackTimestamp(metadata.assistantThreadTs) ||
+      (metadata.originalStyleDigest !== undefined &&
+        (typeof metadata.originalStyleDigest !== 'string' || !/^[a-f0-9]{64}$/.test(metadata.originalStyleDigest))) ||
+      (metadata.hasLongSavedStyle !== undefined && typeof metadata.hasLongSavedStyle !== 'boolean')
+    ) {
+      return null;
     }
-
-    const channelId = channel.id;
-    // For thread replies, thread_ts points to the parent; for parent messages, use ts
-    const threadTs = message.thread_ts ?? message.ts;
-
-    if (!channelId || !threadTs) {
-      logger.error('Missing channel_id or thread_ts in action payload');
-      return;
-    }
-
-    // Get current style from cache, falling back to Slack metadata on cache miss
-    const threadKey = makeThreadKey(channelId, threadTs);
-    let cached = getCachedThreadState(threadKey);
-
-    // On cache miss (cold start), load state from Slack metadata
-    if (!cached) {
-      try {
-        cached = await findThreadStateMessage({
-          client: client as unknown as SlackWebApiClient,
-          assistantChannelId: channelId,
-          assistantThreadTs: threadTs,
-        });
-      } catch (error) {
-        logger.warn('Failed to load thread state from Slack:', error);
-      }
-    }
-
-    const currentStyle = cached?.state.customStyle ?? null;
-
-    const privateMetadata: StyleModalPrivateMetadata = {
-      assistantChannelId: channelId,
-      assistantThreadTs: threadTs,
+    return {
+      assistantChannelId: metadata.assistantChannelId,
+      assistantThreadTs: metadata.assistantThreadTs,
+      originalStyleDigest: metadata.originalStyleDigest as string | undefined,
+      hasLongSavedStyle: metadata.hasLongSavedStyle as boolean | undefined,
     };
+  } catch {
+    return null;
+  }
+}
 
+export function registerStyleHandlers(app: App): void {
+  app.action<BlockAction>(ACTION_OPEN_STYLE_MODAL, async ({ ack, body, client, logger, respond }) => {
+    await ack();
+    const message = body.message;
+    const channelId = body.channel?.id ?? body.container?.channel_id;
+    const threadTs = message?.thread_ts ?? message?.ts;
+
+    if (!isValidSlackChannelId(channelId) || !isValidSlackTimestamp(threadTs)) {
+      logger.warn('Could not resolve style action thread');
+      try {
+        await respond({ text: OPEN_FAILURE, response_type: 'ephemeral', replace_original: false });
+      } catch (error) {
+        logger.error('Failed to respond to style action', { code: slackErrorCode(error) });
+      }
+      return;
+    }
+    if (!body.trigger_id) {
+      await postStyleNotice(client, logger, channelId, threadTs, OPEN_FAILURE);
+      return;
+    }
+
+    const metadata = message?.metadata;
+    const state = metadata?.event_type === TLDR_THREAD_STATE_EVENT_TYPE
+      ? parseThreadContextFromMetadata(metadata.event_payload)
+      : null;
+    const privateMetadata = { assistantChannelId: channelId, assistantThreadTs: threadTs };
+
+    // Exchange the short-lived trigger before any history request. The welcome
+    // action normally contains the state; older cards get a non-editable loader.
+    let opened;
     try {
-      await client.views.open({
-        trigger_id: triggerId,
-        view: buildStyleModal(currentStyle, privateMetadata),
+      opened = await client.views.open({
+        trigger_id: body.trigger_id,
+        view: state
+          ? buildStyleModal(state.customStyle, privateMetadata)
+          : buildStyleStatusModal('Loading your saved style…'),
       });
     } catch (error) {
-      logger.error('Failed to open style modal:', error);
+      logger.error('Failed to open style modal', { code: slackErrorCode(error) });
+      await postStyleNotice(client, logger, channelId, threadTs, OPEN_FAILURE);
+      return;
+    }
+    if (state) {
+      return;
+    }
+    if (!opened.view?.id) {
+      await postStyleNotice(client, logger, channelId, threadTs, OPEN_FAILURE);
+      return;
+    }
+    let loadedView: View;
+    try {
+      const loaded = await findThreadStateMessage({
+        client: client as unknown as SlackWebApiClient,
+        assistantChannelId: channelId,
+        assistantThreadTs: threadTs,
+      });
+      loadedView = buildStyleModal(loaded?.state.customStyle ?? null, privateMetadata);
+    } catch (error) {
+      logger.warn('Failed to load style state', { code: slackErrorCode(error) });
+      loadedView = buildStyleStatusModal('I couldn’t load your saved style. Close this window and try again.');
+    }
+    try {
+      await client.views.update({ view_id: opened.view.id, hash: opened.view.hash, view: loadedView });
+    } catch (error) {
+      logger.error('Failed to update style modal', { code: slackErrorCode(error) });
+      await postStyleNotice(client, logger, channelId, threadTs, OPEN_FAILURE);
     }
   });
 
-  // Handle style modal submission
   app.view(MODAL_CALLBACK_SET_STYLE, async ({ ack, body, view, client, logger }) => {
-    // Acknowledge immediately
-    await ack();
-
-    // Parse private metadata to get thread context
-    let privateMetadata: StyleModalPrivateMetadata;
-    try {
-      privateMetadata = JSON.parse(view.private_metadata) as StyleModalPrivateMetadata;
-    } catch {
-      logger.error('Failed to parse private_metadata from style modal');
+    const privateMetadata = parseStyleMetadata(view.private_metadata);
+    if (!privateMetadata) {
+      await ack({ response_action: 'errors', errors: { [INPUT_BLOCK_STYLE]: 'Close this window and reopen style settings.' } });
+      logger.warn('Rejected invalid style modal metadata');
       return;
     }
 
     const { assistantChannelId, assistantThreadTs } = privateMetadata;
-
-    if (
-      !isValidSlackChannelId(assistantChannelId) ||
-      !isValidSlackTimestamp(assistantThreadTs)
-    ) {
-      logger.warn('Rejected style modal submission with invalid thread metadata', {
-        assistantChannelId,
-        assistantThreadTs,
-      });
+    const styleInput = view.state.values[INPUT_BLOCK_STYLE]?.[INPUT_ACTION_STYLE];
+    const presetInput = view.state.values[INPUT_BLOCK_STYLE_PRESET]?.[INPUT_ACTION_STYLE_PRESET];
+    const freeText = styleInput?.value?.trim() ?? '';
+    const presetKey = presetInput?.selected_option?.value ?? null;
+    if (presetKey && presetKey !== DEFAULT_STYLE_PRESET_KEY && !STYLE_PRESETS.some((preset) => preset.key === presetKey)) {
+      await ack({ response_action: 'errors', errors: { [INPUT_BLOCK_STYLE_PRESET]: 'Choose one of the available presets.' } });
+      return;
+    }
+    if (privateMetadata.hasLongSavedStyle && !freeText && !presetKey) {
+      await ack({ response_action: 'errors', errors: { [INPUT_BLOCK_STYLE]: 'Choose a preset or enter a replacement. Cancel keeps your longer saved style.' } });
+      return;
+    }
+    if (freeText.length > MAX_MODAL_STYLE_LENGTH) {
+      await ack({ response_action: 'errors', errors: { [INPUT_BLOCK_STYLE]: 'Use up to 3,000 characters here, or up to 4,000 with `style:` in chat.' } });
       return;
     }
 
-    const requesterIsMember = await isUserMemberOfChannel({
+    // A new preset beats unchanged prefill. Fresh custom text beats a preset.
+    const textIsUntouchedPrefill = freeText.length > 0 &&
+      stylePrefillDigest(freeText) === privateMetadata.originalStyleDigest;
+    const chosenStyle = freeText && !(presetKey && textIsUntouchedPrefill)
+      ? freeText
+      : presetKey ? resolveStylePreset(presetKey) : null;
+    const styleValidation = validateAndSanitizeStyle(chosenStyle);
+    if (!styleValidation.ok) {
+      await ack({ response_action: 'errors', errors: { [INPUT_BLOCK_STYLE]: styleValidation.reason } });
+      return;
+    }
+    // Local validation stays inside the modal. Network work follows the ack.
+    await ack();
+    const membership = await checkChannelMembership({
       client: client as unknown as ConversationsMembersClient,
       channelId: assistantChannelId,
       userId: body.user.id,
       logger,
     });
-
-    if (!requesterIsMember) {
-      logger.warn('Rejected style modal submission for non-member user', {
-        assistantChannelId,
-        userId: body.user.id,
-      });
-      return;
-    }
-
-    // Extract the style from the submission. Typed text wins over the preset
-    // dropdown — unless the text is just the untouched prefill of the
-    // previously saved style, in which case the freshly picked preset wins.
-    // The "✨ Default" sentinel (and clearing both inputs) clears the style.
-    const styleInput = view.state.values[INPUT_BLOCK_STYLE]?.[INPUT_ACTION_STYLE];
-    const presetInput = view.state.values[INPUT_BLOCK_STYLE_PRESET]?.[INPUT_ACTION_STYLE_PRESET];
-    const freeText = styleInput?.value?.trim() ?? '';
-    const presetKey = presetInput?.selected_option?.value ?? null;
-    const textIsUntouchedPrefill =
-      freeText.length > 0 && freeText === (privateMetadata.originalStyle ?? '').trim();
-
-    let chosenStyle: string | null;
-    if (freeText.length > 0 && !(presetKey && textIsUntouchedPrefill)) {
-      chosenStyle = freeText;
-    } else if (presetKey) {
-      chosenStyle = resolveStylePreset(presetKey);
-    } else {
-      chosenStyle = null;
-    }
-    const styleValidation = validateAndSanitizeStyle(chosenStyle);
-    if (!styleValidation.ok) {
+    if (membership !== 'member') {
+      logger.warn('Rejected style save without verified thread membership');
+      // Do not post into a destination the requester cannot access.
       try {
-        await client.chat.postMessage({
+        await client.chat.postEphemeral({
           channel: assistantChannelId,
-          thread_ts: assistantThreadTs,
-          text: styleValidation.reason,
+          user: body.user.id,
+          text: membership === 'unknown'
+            ? 'I couldn’t verify access to this conversation. Your style wasn’t changed; try again.'
+            : 'You no longer have access to this conversation. Your style wasn’t changed.',
         });
       } catch (error) {
-        logger.error('Failed to post style validation error:', error);
+        logger.error('Failed to report style access error', { code: slackErrorCode(error) });
       }
       return;
     }
+
     const newStyle = styleValidation.value;
-
     const threadKey = makeThreadKey(assistantChannelId, assistantThreadTs);
-
-    // Get existing state from cache, falling back to Slack metadata on cache miss
-    let cached = getCachedThreadState(threadKey);
-    if (!cached) {
-      try {
-        cached = await findThreadStateMessage({
-          client: client as unknown as SlackWebApiClient,
-          assistantChannelId,
-          assistantThreadTs,
-        });
-      } catch (error) {
-        logger.warn('Failed to load thread state from Slack:', error);
-      }
+    // Another Lambda may have changed the source or count since the modal
+    // opened. Merge with Slack's current state, never a warm-container snapshot.
+    let loaded;
+    try {
+      loaded = await findThreadStateMessage({
+        client: client as unknown as SlackWebApiClient,
+        assistantChannelId,
+        assistantThreadTs,
+      });
+    } catch (error) {
+      logger.warn('Failed to load thread state before style save', { code: slackErrorCode(error) });
+      await postStyleNotice(client, logger, assistantChannelId, assistantThreadTs, 'I couldn’t load your settings, so your style wasn’t changed. Try again.');
+      return;
     }
-
-    // Preserve viewingChannelId and defaultMessageCount from the loaded state
     const nextState: ThreadContext = {
-      viewingChannelId: cached?.state.viewingChannelId ?? null,
+      viewingChannelId: null,
+      defaultMessageCount: null,
+      ...loaded?.state,
       customStyle: newStyle,
-      defaultMessageCount: cached?.state.defaultMessageCount ?? null,
     };
-
-    // Update the canonical thread state message (or create if truly missing)
-    const stateMessageTs = cached?.state_message_ts;
-    if (stateMessageTs) {
-      try {
-        await client.chat.update({
-          channel: assistantChannelId,
-          ts: stateMessageTs,
-          text: WELCOME_TEXT,
-          blocks: buildWelcomeBlocks(
-            nextState.viewingChannelId,
-            newStyle,
-            nextState.defaultMessageCount
-          ),
-          metadata: buildThreadStateMetadata(nextState),
-        });
-        setCachedThreadState({ threadKey, stateMessageTs, state: nextState });
-      } catch (error) {
-        logger.error('Failed to update thread state message:', error);
-      }
-    } else {
-      // If no state message exists (unexpected), create one
-      try {
-        const resp = await client.chat.postMessage({
-          channel: assistantChannelId,
-          thread_ts: assistantThreadTs,
-          text: WELCOME_TEXT,
-          blocks: buildWelcomeBlocks(
-            nextState.viewingChannelId,
-            newStyle,
-            nextState.defaultMessageCount
-          ),
-          metadata: buildThreadStateMetadata(nextState),
-        });
-        if (resp.ts) {
-          setCachedThreadState({ threadKey, stateMessageTs: resp.ts, state: nextState });
+    let stateMessageTs = loaded?.state_message_ts;
+    const stateMessage = {
+      channel: assistantChannelId,
+      text: WELCOME_TEXT,
+      blocks: buildWelcomeBlocks(nextState.viewingChannelId, newStyle, nextState.defaultMessageCount),
+      metadata: buildThreadStateMetadata(nextState),
+    };
+    try {
+      if (stateMessageTs) {
+        await client.chat.update({ ...stateMessage, ts: stateMessageTs });
+      } else {
+        const created = await client.chat.postMessage({ ...stateMessage, thread_ts: assistantThreadTs });
+        if (!created.ts) {
+          throw new Error('missing_message_timestamp');
         }
-      } catch (error) {
-        logger.error('Failed to create thread state message:', error);
+        stateMessageTs = created.ts;
       }
+      setCachedThreadState({ threadKey, stateMessageTs, state: nextState });
+    } catch (error) {
+      logger.error('Failed to persist style', { code: slackErrorCode(error) });
+      await postStyleNotice(client, logger, assistantChannelId, assistantThreadTs, 'I couldn’t save your style. Try again.');
+      return;
     }
-
-    // Post confirmation message
     try {
       await client.chat.postMessage({
         channel: assistantChannelId,
         thread_ts: assistantThreadTs,
-        text: newStyle ? 'Style saved for this thread.' : 'Style cleared.',
+        text: newStyle ? 'Style saved for this thread.' : 'Default style saved for this thread.',
         blocks: buildStyleConfirmationBlocks(newStyle),
       });
     } catch (error) {
-      logger.error('Failed to post style confirmation:', error);
+      logger.error('Failed to post style confirmation', { code: slackErrorCode(error) });
     }
-
-    logger.info(`Style ${newStyle ? 'set' : 'cleared'} for thread ${assistantChannelId}:${assistantThreadTs}`);
+    logger.info('Style persisted for assistant thread');
   });
 }

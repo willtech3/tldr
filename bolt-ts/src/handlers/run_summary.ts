@@ -50,6 +50,8 @@ export interface GuardedSummarizeArgs {
   customStyle: string | null;
   /** Status line Slack shows while rotating loading messages. */
   statusText?: string;
+  /** Persist an explicitly selected source only after membership is verified. */
+  beforeRun?: () => Promise<void>;
   logger: HandlerLogger;
 }
 
@@ -88,6 +90,16 @@ export async function guardAndRunSummarization(args: GuardedSummarizeArgs): Prom
   if (membership !== 'member') {
     await reply(membership === 'unknown' ? MEMBERSHIP_UNKNOWN_MESSAGE : NOT_A_MEMBER_MESSAGE);
     return;
+  }
+
+  if (args.beforeRun) {
+    try {
+      await args.beforeRun();
+    } catch (error) {
+      logger.error('Failed to save summary settings:', error);
+      await reply("I couldn't save that source. Please choose it again before summarizing.");
+      return;
+    }
   }
 
   // No explicit clear needed: Slack auto-clears this status as soon as the

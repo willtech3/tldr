@@ -81,9 +81,11 @@ function makeStream(events: StreamEvent[]): StreamingResponse {
   };
 }
 
-function makeLlm(stream: StreamingResponse): LlmClient {
+function makeLlm(stream: StreamingResponse | (() => StreamingResponse)): LlmClient {
   const llm = new LlmClient({ apiKey: 'sk-ant', model: 'claude-test' });
-  jest.spyOn(llm, 'generateSummaryStream').mockResolvedValue(stream);
+  jest.spyOn(llm, 'generateSummaryStream').mockImplementation(async () =>
+    typeof stream === 'function' ? stream() : stream
+  );
   return llm;
 }
 
@@ -333,14 +335,23 @@ describe('runGeneralChat (non-streaming)', () => {
 describe('runGeneralChat (rate limiting)', () => {
   it('refuses with the rate-limit message once the per-user budget is spent', async () => {
     const { client, spies } = makeWebClient();
-    const llm = makeLlm(makeStream([{ kind: 'text_delta', delta: 'hi' }, { kind: 'completed' }]));
+    // Every allowed request needs its own iterator; a reused stream is exhausted
+    // after the first call and would enter the full-response retry path.
+    const llm = makeLlm(() =>
+      makeStream([{ kind: 'text_delta', delta: 'hi' }, { kind: 'completed' }])
+    );
+    const fallback = jest.spyOn(llm, 'generateSummary').mockRejectedValue(
+      new Error('Unexpected non-streaming fallback')
+    );
 
     for (let i = 0; i < RATE_LIMIT_MAX_PER_MINUTE; i++) {
-      await runGeneralChat(baseArgs(client, llm));
+      expect(await runGeneralChat(baseArgs(client, llm))).toBe('delivered');
     }
     const outcome = await runGeneralChat(baseArgs(client, llm));
 
     expect(outcome).toBe('rate_limited');
+    expect(llm.generateSummaryStream).toHaveBeenCalledTimes(RATE_LIMIT_MAX_PER_MINUTE);
+    expect(fallback).not.toHaveBeenCalled();
     expect(spies.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ text: expect.stringContaining('requests a minute') })
     );
@@ -348,15 +359,24 @@ describe('runGeneralChat (rate limiting)', () => {
 
   it('rate-limits ephemerally on the channel surface — no channel noise', async () => {
     const { client, spies } = makeWebClient();
-    const llm = makeLlm(makeStream([{ kind: 'text_delta', delta: 'hi' }, { kind: 'completed' }]));
+    // Every allowed request needs its own iterator; a reused stream is exhausted
+    // after the first call and would enter the full-response retry path.
+    const llm = makeLlm(() =>
+      makeStream([{ kind: 'text_delta', delta: 'hi' }, { kind: 'completed' }])
+    );
+    const fallback = jest.spyOn(llm, 'generateSummary').mockRejectedValue(
+      new Error('Unexpected non-streaming fallback')
+    );
 
     for (let i = 0; i < RATE_LIMIT_MAX_PER_MINUTE; i++) {
-      await runGeneralChat(channelArgs(client, llm));
+      expect(await runGeneralChat(channelArgs(client, llm))).toBe('delivered');
     }
     spies.postMessage.mockClear();
     const outcome = await runGeneralChat(channelArgs(client, llm));
 
     expect(outcome).toBe('rate_limited');
+    expect(llm.generateSummaryStream).toHaveBeenCalledTimes(RATE_LIMIT_MAX_PER_MINUTE);
+    expect(fallback).not.toHaveBeenCalled();
     expect(spies.postMessage).not.toHaveBeenCalled();
     expect(spies.postEphemeral).toHaveBeenCalledWith(
       expect.objectContaining({

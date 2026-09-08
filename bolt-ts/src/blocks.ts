@@ -10,6 +10,7 @@
  *    the Assistant middleware, not in the welcome blocks.
  */
 
+import { createHash } from 'node:crypto';
 import { types } from '@slack/bolt';
 import type { View } from '@slack/types';
 import { normalizeMessageCount } from './security';
@@ -19,6 +20,7 @@ type KnownBlock = types.KnownBlock;
 
 export const ACTION_OPEN_STYLE_MODAL = 'open_style_modal';
 export const ACTION_SELECT_MESSAGE_COUNT = 'select_message_count';
+export const ACTION_SELECT_SOURCE = 'select_source';
 export const ACTION_QUICK_SUMMARIZE = 'quick_summarize';
 export const ACTION_SHOW_HELP = 'show_help';
 export const ACTION_RETRY_SUMMARY = 'retry_summary';
@@ -70,23 +72,29 @@ export function buildWelcomeBlocks(
   defaultMessageCount?: number | null
 ): KnownBlock[] {
   const effectiveCount = normalizeMessageCount(defaultMessageCount);
-  const blocks: KnownBlock[] = [
+  const sourceText = viewingChannelId ? `<#${viewingChannelId}>` : 'Choose a channel';
+  const styleLabel = activeStyle
+    ? STYLE_PRESETS.find((preset) => preset.value === activeStyle)?.label.split(' — ')[0] ?? 'Custom'
+    : 'Default';
+  return [
     {
       type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text:
-          "👋 *Hi! I'm TLDR.* I turn busy channels into tight summaries — with links, receipts, and image highlights.\n\n" +
-          'Hit *⚡ Summarize now*, pick a suggested prompt, or just talk to me (`catch me up`, `summarize last 200`, or any question — I chat too).',
+      text: { type: 'mrkdwn', text: "Catch up on the conversation. Ask a question here anytime." },
+    },
+    {
+      type: 'section',
+      text: { type: 'mrkdwn', text: `*Source:* ${sourceText}` },
+      accessory: {
+        type: 'conversations_select',
+        action_id: ACTION_SELECT_SOURCE,
+        placeholder: { type: 'plain_text', text: 'Choose source channel' },
+        ...(viewingChannelId ? { initial_conversation: viewingChannelId } : {}),
+        filter: { include: ['public', 'private'] },
       },
     },
-    { type: 'divider' },
     {
       type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: '📊 *How many messages to summarize?*',
-      },
+      text: { type: 'mrkdwn', text: '*Message limit*' },
       accessory: {
         type: 'static_select',
         action_id: ACTION_SELECT_MESSAGE_COUNT,
@@ -100,60 +108,29 @@ export function buildWelcomeBlocks(
         })),
       },
     },
-  ];
-
-  if (viewingChannelId) {
-    blocks.push({
+    {
       type: 'context',
-      elements: [
-        {
-          type: 'mrkdwn',
-          text: `📍 *Viewing:* <#${viewingChannelId}>`,
-        },
-      ],
-    });
-  } else {
-    blocks.push({
-      type: 'context',
-      elements: [
-        {
-          type: 'mrkdwn',
-          text: '📍 _Open a channel in Slack to enable one-tap summaries._',
-        },
-      ],
-    });
-  }
-
-  if (activeStyle) {
-    blocks.push({
-      type: 'context',
-      elements: [
-        {
-          type: 'mrkdwn',
-          text: `🎨 *Active style:* ${truncateStyle(activeStyle)}`,
-        },
-      ],
-    });
-  }
-
-  blocks.push({
-    type: 'actions',
-    elements: [
-      {
-        type: 'button',
-        style: 'primary',
-        text: { type: 'plain_text', text: '⚡ Summarize now', emoji: true },
+      elements: [{ type: 'mrkdwn', text: `Style: *${styleLabel}* · Source and style stay set for this thread.` }],
+    },
+    ...(viewingChannelId ? [{
+      type: 'section' as const,
+      text: { type: 'mrkdwn' as const, text: `Catch up on ${sourceText}` },
+      accessory: {
+        type: 'button' as const,
+        style: 'primary' as const,
+        text: { type: 'plain_text' as const, text: 'Catch up' },
         action_id: ACTION_QUICK_SUMMARIZE,
       },
-      {
+    }] : []),
+    {
+      type: 'actions',
+      elements: [{
         type: 'button',
-        text: { type: 'plain_text', text: '🎨 Set style', emoji: true },
+        text: { type: 'plain_text', text: 'Set style' },
         action_id: ACTION_OPEN_STYLE_MODAL,
-      },
-    ],
-  });
-
-  return blocks;
+      }],
+    },
+  ];
 }
 
 /** Shown (and used as the visible section) when a general-chat reply fails. */
@@ -239,15 +216,6 @@ export function buildFailureBlocks(
   ];
 }
 
-function truncateStyle(style: string): string {
-  // Count by Unicode code points so we never split an emoji / surrogate pair.
-  const chars = [...style];
-  if (chars.length <= 100) {
-    return style;
-  }
-  return chars.slice(0, 97).join('') + '...';
-}
-
 /** Command reference shown when the user types the explicit `help` / `?` command. */
 export function buildHelpBlocks(): KnownBlock[] {
   return [
@@ -260,10 +228,10 @@ export function buildHelpBlocks(): KnownBlock[] {
       text: {
         type: 'mrkdwn',
         text:
-          '*🧾 Summarize the channel you\'re viewing*\n' +
+          '*🧾 Summarize your selected source*\n' +
           '• `summarize` (or `catch me up`, `what did I miss`, `tldr`) — your default window.\n' +
           '• `summarize last 100` — explicit count.\n' +
-          '• `summarize #general` — pick a different channel.\n' +
+          '• `summarize #channel` — set a different source for this thread.\n' +
           '• `summarize with style: write as a haiku` — one-off style override.',
       },
     },
@@ -300,7 +268,7 @@ export function buildHelpBlocks(): KnownBlock[] {
       elements: [
         {
           type: 'mrkdwn',
-          text: '💡 Tap *⚡ Summarize now* in the welcome card, or just type `summarize`.',
+          text: '💡 Tap *Catch up* beside your selected source, or just type `summarize`.',
         },
       ],
     },
@@ -310,12 +278,17 @@ export function buildHelpBlocks(): KnownBlock[] {
 export interface StyleModalPrivateMetadata {
   assistantChannelId: string;
   assistantThreadTs: string;
-  /**
-   * The text the free-form input was prefilled with, so the submit handler
-   * can tell "user left the prefill alone and picked a preset" apart from
-   * "user typed their own style".
-   */
-  originalStyle?: string | null;
+  /** Detect untouched prefill without exceeding Slack's 3,000-character metadata limit. */
+  originalStyleDigest?: string;
+  /** A legacy text-command style cannot fit in Slack's modal editor. */
+  hasLongSavedStyle?: boolean;
+}
+
+/** Slack's plain_text_input max_length accepts at most 3,000 characters. */
+export const MAX_MODAL_STYLE_LENGTH = 3000;
+
+export function stylePrefillDigest(style: string): string {
+  return createHash('sha256').update(style.trim()).digest('hex');
 }
 
 export function buildStyleModal(
@@ -323,10 +296,13 @@ export function buildStyleModal(
   privateMetadata: StyleModalPrivateMetadata
 ): View {
   const matchingPreset = STYLE_PRESETS.find((preset) => preset.value === currentStyle);
-  const prefillText = matchingPreset ? null : currentStyle ?? null;
+  const hasLongSavedStyle = (currentStyle?.length ?? 0) > MAX_MODAL_STYLE_LENGTH;
+  const prefillText = matchingPreset || hasLongSavedStyle ? null : currentStyle ?? null;
   const metadata: StyleModalPrivateMetadata = {
-    ...privateMetadata,
-    originalStyle: prefillText,
+    assistantChannelId: privateMetadata.assistantChannelId,
+    assistantThreadTs: privateMetadata.assistantThreadTs,
+    ...(prefillText ? { originalStyleDigest: stylePrefillDigest(prefillText) } : {}),
+    ...(hasLongSavedStyle ? { hasLongSavedStyle: true } : {}),
   };
   const presetOptions = [
     {
@@ -353,8 +329,11 @@ export function buildStyleModal(
         text: {
           type: 'mrkdwn',
           text:
-            'Choose how TLDR writes summaries for this thread — pick a preset, or write your own instructions below.\n' +
-            'Pick *✨ Default* (or clear both) to go back to the standard style.',
+            'Set the style for summaries in this thread. Choose a preset or write your own.\n' +
+            'Choose *Default* to reset.' +
+            (hasLongSavedStyle
+              ? '\nYour saved style is longer than this editor allows. It stays active until you choose a preset or enter a replacement. Use `style: …` in chat to edit up to 4,000 characters.'
+              : ''),
         },
       },
       {
@@ -385,7 +364,7 @@ export function buildStyleModal(
           type: 'plain_text_input',
           action_id: INPUT_ACTION_STYLE,
           multiline: true,
-          max_length: 4000,
+          max_length: MAX_MODAL_STYLE_LENGTH,
           placeholder: {
             type: 'plain_text',
             text: 'e.g., "Write as a haiku" or "Be extremely concise and funny"',
@@ -395,7 +374,7 @@ export function buildStyleModal(
         label: { type: 'plain_text', text: 'Or write your own', emoji: true },
         hint: {
           type: 'plain_text',
-          text: 'Applied to every summary in this thread (up to 4,000 characters).',
+          text: 'Up to 3,000 characters. New text takes priority over the preset.',
         },
       },
     ],
@@ -419,7 +398,7 @@ export function buildStyleConfirmationBlocks(style: string | null): KnownBlock[]
     return [
       {
         type: 'section',
-        text: { type: 'mrkdwn', text: '✅ Style cleared. Summaries will use the default style.' },
+        text: { type: 'mrkdwn', text: '✅ Default style saved for this thread.' },
       },
       tryItNow,
     ];
@@ -433,7 +412,7 @@ export function buildStyleConfirmationBlocks(style: string | null): KnownBlock[]
     {
       type: 'context',
       elements: [
-        { type: 'mrkdwn', text: `🎨 Active style: ${truncateStyle(style)}` },
+        { type: 'mrkdwn', text: `🎨 Active style: ${STYLE_PRESETS.find((preset) => preset.value === style)?.label ?? 'Custom'}` },
       ],
     },
     tryItNow,

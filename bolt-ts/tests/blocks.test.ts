@@ -22,6 +22,9 @@ import {
 
 function findButton(blocks: ReturnType<typeof buildWelcomeBlocks>, actionId: string) {
   for (const block of blocks) {
+    if (block.type === 'section' && block.accessory?.type === 'button' && block.accessory.action_id === actionId) {
+      return block.accessory;
+    }
     if (block.type !== 'actions') {
       continue;
     }
@@ -62,70 +65,26 @@ describe('Block Kit builders', () => {
       }
     });
 
-    it('should not include active style context when no style set', () => {
+    it('shows a persistent source picker, even when Slack supplies no context', () => {
       const blocks = buildWelcomeBlocks();
-      const context = blocks.find(
-        (b) => b.type === 'context' && 'elements' in b && b.elements.some((e) => 'text' in e && typeof e.text === 'string' && e.text.includes('Active style'))
-      );
-      expect(context).toBeUndefined();
+      const source = blocks.find((b) => b.type === 'section' && b.accessory?.type === 'conversations_select');
+      expect(source).toMatchObject({
+        accessory: { action_id: 'select_source', filter: { include: ['public', 'private'] } },
+      });
+      expect(JSON.stringify(blocks)).toContain('Source');
+      expect(JSON.stringify(blocks)).not.toContain('Viewing');
+      expect(findButton(blocks, ACTION_QUICK_SUMMARIZE)).toBeUndefined();
     });
 
-    it('should include active style context when style is set', () => {
-      const blocks = buildWelcomeBlocks(null, 'be funny');
-      const context = blocks.find(
-        (b) => b.type === 'context' && 'elements' in b && b.elements.some((e) => 'text' in e && typeof e.text === 'string' && e.text.includes('Active style'))
-      );
-      expect(context).toBeDefined();
-    });
-
-    it('should truncate long styles', () => {
-      const longStyle = 'a'.repeat(150);
-      const blocks = buildWelcomeBlocks(null, longStyle);
-      const context = blocks.find(
-        (b) => b.type === 'context' && 'elements' in b && b.elements.some((e) => 'text' in e && typeof e.text === 'string' && e.text.includes('Active style'))
-      );
-      expect(context).toBeDefined();
-      if (context?.type === 'context') {
-        const textElement = context.elements.find((e) => 'text' in e);
-        if (textElement && 'text' in textElement) {
-          expect(textElement.text).toContain('...');
-          expect(textElement.text.length).toBeLessThan(150);
-        }
-      }
-    });
-
-    it('should include viewing channel context when viewingChannelId is set', () => {
-      const blocks = buildWelcomeBlocks('C12345');
-      const context = blocks.find(
-        (b) => b.type === 'context' && 'elements' in b && b.elements.some((e) => 'text' in e && typeof e.text === 'string' && e.text.includes('Viewing'))
-      );
-      expect(context).toBeDefined();
-      if (context?.type === 'context') {
-        const textElement = context.elements.find((e) => 'text' in e);
-        if (textElement && 'text' in textElement) {
-          expect(textElement.text).toContain('<#C12345>');
-        }
-      }
-    });
-
-    it('should not include viewing channel context when viewingChannelId is null', () => {
-      const blocks = buildWelcomeBlocks(null);
-      const context = blocks.find(
-        (b) => b.type === 'context' && 'elements' in b && b.elements.some((e) => 'text' in e && typeof e.text === 'string' && e.text.includes('Viewing'))
-      );
-      expect(context).toBeUndefined();
-    });
-
-    it('should include both viewing channel and active style when both are set', () => {
-      const blocks = buildWelcomeBlocks('C12345', 'be funny');
-      const viewingContext = blocks.find(
-        (b) => b.type === 'context' && 'elements' in b && b.elements.some((e) => 'text' in e && typeof e.text === 'string' && e.text.includes('Viewing'))
-      );
-      const styleContext = blocks.find(
-        (b) => b.type === 'context' && 'elements' in b && b.elements.some((e) => 'text' in e && typeof e.text === 'string' && e.text.includes('Active style'))
-      );
-      expect(viewingContext).toBeDefined();
-      expect(styleContext).toBeDefined();
+    it('puts the selected source beside its primary action and does not expose raw style text', () => {
+      const blocks = buildWelcomeBlocks('C012345678', 'a'.repeat(4000), 5);
+      expect(blocks).toContainEqual(expect.objectContaining({
+        type: 'section', text: { type: 'mrkdwn', text: 'Catch up on <#C012345678>' },
+        accessory: expect.objectContaining({ action_id: ACTION_QUICK_SUMMARIZE, style: 'primary' }),
+      }));
+      expect(JSON.stringify(blocks)).toContain('Custom');
+      expect(JSON.stringify(blocks)).not.toContain('a'.repeat(100));
+      expect(JSON.stringify(blocks)).toContain('initial_conversation');
     });
   });
 
@@ -150,128 +109,84 @@ describe('Block Kit builders', () => {
   });
 
   describe('buildStyleModal', () => {
-    it('should return a modal view', () => {
-      const modal = buildStyleModal(null, {
-        assistantChannelId: 'D123',
-        assistantThreadTs: '1700000000.000100',
-      });
+    const metadata = { assistantChannelId: 'D12345678', assistantThreadTs: '1700000000.000100' };
+
+    it('returns the registered modal with editable custom style and compact metadata', () => {
+      const modal = buildStyleModal('be funny', metadata);
       expect(modal.type).toBe('modal');
       expect(modal.callback_id).toBe(MODAL_CALLBACK_SET_STYLE);
-    });
-
-    it('should include input block with correct IDs', () => {
-      const modal = buildStyleModal(null, {
-        assistantChannelId: 'D123',
-        assistantThreadTs: '1700000000.000100',
+      const input = modal.blocks.find((block) => block.type === 'input' && block.block_id === INPUT_BLOCK_STYLE);
+      expect(input).toMatchObject({
+        element: { type: 'plain_text_input', action_id: INPUT_ACTION_STYLE, initial_value: 'be funny', max_length: 3000 },
       });
-      const inputBlock = modal.blocks.find(
-        (b) => b.type === 'input' && 'block_id' in b && b.block_id === INPUT_BLOCK_STYLE
-      );
-      expect(inputBlock).toBeDefined();
-      if (inputBlock?.type === 'input' && 'element' in inputBlock) {
-        expect(inputBlock.element.action_id).toBe(INPUT_ACTION_STYLE);
-      }
-    });
-
-    it('should pre-fill current style when provided', () => {
-      const modal = buildStyleModal('be funny', {
-        assistantChannelId: 'D123',
-        assistantThreadTs: '1700000000.000100',
-      });
-      const inputBlock = modal.blocks.find((b) => b.type === 'input');
-      if (inputBlock?.type === 'input' && 'element' in inputBlock && inputBlock.element.type === 'plain_text_input') {
-        expect(inputBlock.element.initial_value).toBe('be funny');
-      }
-    });
-
-    it('should store private metadata as JSON including the prefill text', () => {
-      const metadata = {
-        assistantChannelId: 'D123',
-        assistantThreadTs: '1700000000.000100',
-      };
-      const modal = buildStyleModal('be funny', metadata);
       expect(JSON.parse(modal.private_metadata ?? '{}')).toEqual({
-        assistantChannelId: 'D123',
-        assistantThreadTs: '1700000000.000100',
-        originalStyle: 'be funny',
+        ...metadata, originalStyleDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
       });
+      expect(modal.private_metadata).not.toContain('be funny');
     });
 
-    it('keeps every preset option value within Slack limits', () => {
-      const modal = buildStyleModal(null, {
-        assistantChannelId: 'D123',
-        assistantThreadTs: '1700000000.000100',
-      });
-      const presetBlock = modal.blocks.find(
-        (b) => b.type === 'input' && 'block_id' in b && b.block_id === 'style_preset_block'
-      ) as unknown as {
-        element: { type: string; options?: Array<{ value?: string; text: { text: string } }> };
-      };
-      expect(presetBlock.element.type).toBe('static_select');
-      for (const option of presetBlock.element.options ?? []) {
+    it.each([null, 'x'.repeat(3000), '"'.repeat(3000), '😀'.repeat(1500), 'x'.repeat(4000)])(
+      'keeps every style modal within Slack input and metadata limits', (style) => {
+        const modal = buildStyleModal(style, metadata);
+        expect((modal.private_metadata ?? '').length).toBeLessThanOrEqual(3000);
+        const input = modal.blocks.find((block) => block.type === 'input' && block.block_id === INPUT_BLOCK_STYLE);
+        expect(input).toMatchObject({ element: { max_length: 3000 } });
+        if (input?.type !== 'input' || !('element' in input) || input.element.type !== 'plain_text_input') {
+          throw new Error('Missing style text editor');
+        }
+        expect((input.element.initial_value ?? '').length).toBeLessThanOrEqual(3000);
+      }
+    );
+
+    it('explains long saved styles and never silently truncates their prefill', () => {
+      const modal = buildStyleModal('x'.repeat(4000), metadata);
+      const input = modal.blocks.find((block) => block.type === 'input' && block.block_id === INPUT_BLOCK_STYLE);
+      if (input?.type !== 'input' || !('element' in input) || input.element.type !== 'plain_text_input') {
+        throw new Error('Missing style text editor');
+      }
+      expect(input.element.initial_value).toBeUndefined();
+      expect(JSON.parse(modal.private_metadata ?? '{}')).toMatchObject({ hasLongSavedStyle: true });
+      expect(JSON.stringify(modal.blocks)).toContain('stays active');
+    });
+
+    it('keeps every preset option within Slack limits and offers a reset', () => {
+      const modal = buildStyleModal(null, metadata);
+      const preset = modal.blocks.find((block) => block.type === 'input' && block.block_id === 'style_preset_block');
+      if (preset?.type !== 'input' || !('element' in preset) || preset.element.type !== 'static_select') {
+        throw new Error('Missing style preset selector');
+      }
+      for (const option of preset.element.options ?? []) {
         expect(option.value!.length).toBeLessThanOrEqual(150);
         expect(option.text.text.length).toBeLessThanOrEqual(75);
       }
-      // Includes the "default" sentinel for clearing a saved preset.
-      expect(presetBlock.element.options?.[0].value).toBe('__default__');
+      expect(preset.element.options?.[0].value).toBe('__default__');
     });
   });
 
   describe('buildStyleConfirmationBlocks', () => {
-    it('should return confirmation for set style', () => {
+    it('confirms the active style and explicitly scopes it to this thread', () => {
       const blocks = buildStyleConfirmationBlocks('be funny');
-      expect(blocks.length).toBeGreaterThan(0);
-      const section = blocks.find((b) => b.type === 'section');
-      expect(section).toBeDefined();
-      if (section?.type === 'section' && section.text && section.text.type === 'mrkdwn') {
-        expect(section.text.text).toContain('Style saved');
-      }
+      expect(JSON.stringify(blocks)).toContain('Style saved for this thread');
+      expect(JSON.stringify(blocks)).toContain('Active style: Custom');
+      expect(JSON.stringify(blocks)).not.toContain('be funny');
     });
 
-    it('should include context with active style', () => {
-      const blocks = buildStyleConfirmationBlocks('be funny');
-      const context = blocks.find((b) => b.type === 'context');
-      expect(context).toBeDefined();
-      if (context?.type === 'context') {
-        const textElement = context.elements.find((e) => 'text' in e);
-        if (textElement && 'text' in textElement) {
-          expect(textElement.text).toContain('be funny');
-        }
-      }
+    it('confirms the default when a saved style is reset', () => {
+      expect(JSON.stringify(buildStyleConfirmationBlocks(null))).toContain('Default style saved for this thread');
     });
 
-    it('should return cleared message when style is null', () => {
-      const blocks = buildStyleConfirmationBlocks(null);
-      expect(blocks.length).toBeGreaterThan(0);
-      const section = blocks.find((b) => b.type === 'section');
-      expect(section).toBeDefined();
-      if (section?.type === 'section' && section.text && section.text.type === 'mrkdwn') {
-        expect(section.text.text).toContain('Style cleared');
-      }
-    });
-
-    it('truncates a long style by code point without splitting an emoji', () => {
-      const longEmoji = '😀'.repeat(120);
-      const blocks = buildStyleConfirmationBlocks(longEmoji);
-      const context = blocks.find((b) => b.type === 'context');
-      expect(context).toBeDefined();
-      if (context?.type === 'context') {
-        const textElement = context.elements.find((e) => 'text' in e);
-        expect(textElement).toBeDefined();
-        if (textElement && 'text' in textElement) {
-          const styleSegment = textElement.text.split('Active style: ')[1];
-          // 97 emoji + "..." == 100 code points, with no lone surrogate halves.
-          expect([...styleSegment].length).toBe(100);
-          expect(styleSegment.endsWith('...')).toBe(true);
-          expect(styleSegment.startsWith('😀')).toBe(true);
-        }
-      }
+    it('never repeats raw instructions or Slack mention syntax in the confirmation', () => {
+      const blocks = buildStyleConfirmationBlocks('<!channel> <@U12345678> ' + '😀'.repeat(120));
+      expect(JSON.stringify(blocks)).toContain('Active style: Custom');
+      expect(JSON.stringify(blocks)).not.toContain('<!channel>');
+      expect(JSON.stringify(blocks)).not.toContain('<@U12345678>');
+      expect(JSON.stringify(blocks)).not.toContain('😀');
     });
   });
 
   describe('quick summarize affordances', () => {
     it('welcome blocks should include a primary Summarize now button', () => {
-      const button = findButton(buildWelcomeBlocks(), ACTION_QUICK_SUMMARIZE);
+      const button = findButton(buildWelcomeBlocks('C012345678'), ACTION_QUICK_SUMMARIZE);
       expect(button).toBeDefined();
       if (button?.type === 'button') {
         expect(button.style).toBe('primary');
@@ -326,6 +241,4 @@ describe('Block Kit builders', () => {
     });
   });
 
-  // Note: No channel picker blocks in AI App V1. Context is tracked via
-  // `assistant_thread_context_changed` and stored in message metadata.
 });
