@@ -52,17 +52,13 @@ summarize #design last 25 with style: executive brief
 help                             → the command reference card
 ```
 
-¹ Newer Slack desktop clients no longer tell legacy assistant apps which
-channel you're viewing as you switch around, so the tracked channel can lag
-behind (it's captured when the assistant thread starts). The summary header
-always names the channel actually summarized; name one explicitly
-(`summarize #channel`) when precision matters. See
-`docs/slack_configuration.md` for the agent-experience migration that fixes
-this.
+¹ TLDR pins a source channel to each assistant thread. Use the **Source**
+picker or `summarize #channel` to change it; navigating elsewhere in Slack
+leaves the selected source unchanged.
 
-Every summary streams in live and always ends with four sections: **Summary**,
-**Links shared**, **Image highlights**, and **Receipts** — permalinks back to the
-messages that matter, so you can jump straight to the source.
+Each summary leads with a concise recap and links claims to useful source
+messages. Empty sections and repeated image inventories are omitted. The
+header shows the number of messages actually included and their date span.
 
 Anything that *isn't* a command is just conversation. Ask "explain the RFC
 linked above" or "draft a short reply I can post" and TLDR answers in the same
@@ -71,7 +67,7 @@ reply — chat is text-only, so TLDR will say it can't see the attachment.
 
 ### ⚡ Buttons — the no-typing path
 
-- **⚡ Summarize now** on the welcome card summarizes the channel you're viewing;
+- **Catch up** beside the selected source summarizes that channel;
   the dropdown beside it sets your default message count (5–500, default 50).
 - **🎨 Set style** opens a modal with ready-made personas — 🔥 *Roast*,
   📜 *Receipts*, 💼 *Executive brief*, 🌸 *Haiku* — or space to write your own

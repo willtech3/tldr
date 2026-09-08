@@ -13,8 +13,10 @@ import type {
   ContextActionsBlock,
   ContextBlock,
   KnownBlock,
+  MessageMetadata,
 } from '@slack/types';
 import { isReceiptsStyle, isRoastStyle } from '../styles';
+import type { SummaryCoverage } from '../types';
 
 export const ACTION_SUMMARY_FEEDBACK = 'summary_feedback';
 
@@ -47,6 +49,8 @@ interface RerunButtonValue {
 export interface SummaryActionButtonsArgs {
   sourceChannelId: string;
   messageCount: number;
+  /** Actual included count and dates; requested count stays available for refresh. */
+  coverage?: SummaryCoverage;
   /** The style applied to the summary, if any. Drives which rerun buttons render. */
   currentStyle: string | null;
   /** Delivery timestamp (ms). Injectable for tests; defaults to now. */
@@ -65,7 +69,7 @@ export function buildSummaryActionButtons(args: SummaryActionButtonsArgs): Known
   const shareValue: ShareButtonValue = {
     action: 'share_summary',
     sourceChannelId,
-    count: messageCount,
+    count: args.coverage?.messageCount ?? messageCount,
     styleKind: toStyleKind(currentStyle),
   };
   elements.push({
@@ -118,7 +122,7 @@ function buildProvenanceBlock(args: SummaryActionButtonsArgs): ContextBlock {
       {
         type: 'mrkdwn',
         text:
-          `🤖 AI-generated • last ${args.messageCount} messages from <#${args.sourceChannelId}>` +
+          `🤖 AI-generated • <#${args.sourceChannelId}>` +
           ` • <!date^${unixSeconds}^{time}|${fallback}>`,
       },
     ],
@@ -152,4 +156,39 @@ function buildFeedbackBlock(args: SummaryActionButtonsArgs): ContextActionsBlock
       },
     ],
   };
+}
+
+/** Shared provenance metadata for streaming and non-streaming results. */
+export function buildSummaryMetadata(args: SummaryActionButtonsArgs): MessageMetadata {
+  return {
+    event_type: 'tldr_summary_v1',
+    event_payload: {
+      source_channel_id: args.sourceChannelId,
+      message_count: args.coverage?.messageCount ?? args.messageCount,
+      requested_message_count: args.messageCount,
+      has_style: Boolean(args.currentStyle?.trim()),
+      ...(args.coverage?.oldestTs ? { oldest_ts: args.coverage.oldestTs } : {}),
+      ...(args.coverage?.latestTs ? { latest_ts: args.coverage.latestTs } : {}),
+    },
+  };
+}
+
+/** Standard Markdown coverage line; Slack date tokens cannot render in streams. */
+export function buildCoverageText(coverage: SummaryCoverage): string {
+  const count = `${coverage.messageCount} message${coverage.messageCount === 1 ? '' : 's'}`;
+  if (!coverage.oldestTs || !coverage.latestTs) {
+    return count;
+  }
+  const oldest = new Date(Number(coverage.oldestTs) * 1000);
+  const latest = new Date(Number(coverage.latestTs) * 1000);
+  const dateFormat = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  const timeFormat = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
+  const firstDate = dateFormat.format(oldest);
+  const lastDate = dateFormat.format(latest);
+  const firstTime = timeFormat.format(oldest);
+  const lastTime = timeFormat.format(latest);
+  const span = firstDate === lastDate
+    ? `${firstDate} · ${firstTime}${firstTime === lastTime ? '' : `–${lastTime}`}`
+    : `${firstDate}, ${firstTime} – ${lastDate}, ${lastTime}`;
+  return `${count} · ${span} UTC`;
 }

@@ -35,3 +35,11 @@ export interface ThreadContext {
  * message — no further messaging is appropriate.
  */
 export type SummarizeOutcome = 'delivered' | 'empty' | 'too_large' | 'failed' | 'stopped';
+
+/** Messages actually included in a summary, after filtering TLDR's own posts. */
+export interface SummaryCoverage {
+  messageCount: number;
+  /** Exact Slack timestamps; null when the source does not supply valid dates. */
+  oldestTs: string | null;
+  latestTs: string | null;
+}

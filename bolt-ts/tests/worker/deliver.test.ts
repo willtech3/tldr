@@ -1,4 +1,4 @@
-import { buildSummaryActionButtons } from '../../src/worker/deliver';
+import { buildSummaryActionButtons, buildSummaryMetadata, buildCoverageText } from '../../src/worker/deliver';
 
 interface ActionsBlock {
   type: 'actions';
@@ -85,5 +85,35 @@ describe('buildSummaryActionButtons', () => {
     ) as { elements: Array<{ type: string; positive_button: { text: { text: string } } }> };
     expect(feedback.elements[0].type).toBe('feedback_buttons');
     expect(feedback.elements[0].positive_button.text.text.length).toBeLessThanOrEqual(75);
+  });
+});
+
+
+describe('actual summary coverage', () => {
+  const delivery = {
+    sourceChannelId: 'C42', messageCount: 25, currentStyle: null,
+    coverage: { messageCount: 3, oldestTs: '1788825600.000001', latestTs: '1788827400.000002' },
+  };
+
+  it('shares the included count while retaining the requested count for reruns', () => {
+    const actions = buildSummaryActionButtons(delivery)[0] as ActionsBlock;
+    expect(JSON.parse(actions.elements.find((element) => element.action_id === 'share_summary')!.value).count).toBe(3);
+    expect(JSON.parse(actions.elements.find((element) => element.action_id === 'rerun_roast')!.value).count).toBe(25);
+  });
+
+  it('records actual count and exact bounds independently from the request', () => {
+    expect(buildSummaryMetadata(delivery).event_payload).toMatchObject({
+      message_count: 3, requested_message_count: 25, oldest_ts: delivery.coverage.oldestTs, latest_ts: delivery.coverage.latestTs,
+    });
+  });
+
+  it('formats a single-message span without duplicated time labels', () => {
+    expect(buildCoverageText({ messageCount: 1, oldestTs: '1788825600', latestTs: '1788825600' }))
+      .toBe('1 message · Sep 8, 2026 · 00:00 UTC');
+  });
+
+  it('preserves both dates when the covered window spans days', () => {
+    expect(buildCoverageText({ messageCount: 2, oldestTs: '1788739200', latestTs: '1788825600' }))
+      .toBe('2 messages · Sep 7, 2026, 00:00 – Sep 8, 2026, 00:00 UTC');
   });
 });
