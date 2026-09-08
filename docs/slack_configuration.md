@@ -142,18 +142,18 @@ Open the TLDR app from Slack's AI icon (top-right):
 2. Select **TLDR** from the list
 3. The assistant thread opens in split-view
 4. Use suggested prompts or type commands:
-   - `summarize` - Summarize last 50 messages from current channel
+   - `summarize` - Summarize up to 50 messages from the source selected for this thread
    - `summarize last 100` - Summarize last 100 messages
    - `style` - Change the summary style
    - `help` - Show available commands
 
 ### Changing Channels
 
-When you switch channels in Slack while the AI App is open, TLDR automatically updates its context. The next summarize command will target the new channel.
+Use the **Source** picker in TLDR to choose a channel. The source stays set for this thread when you navigate elsewhere in Slack. An explicit `summarize #channel` request also updates this source after membership is verified.
 
 ### Custom Styles
 
-Click "Change style" or type `style: your custom instructions` to customize how summaries are written. Styles persist for the current assistant thread.
+Click "Set style" or type `style: your custom instructions` to customize how summaries are written. Styles persist for the current assistant thread.
 
 ## Token Types Reference
 
@@ -193,23 +193,21 @@ Reference: [Slack Request Verification](https://api.slack.com/authentication/ver
 
 - ☐ AI App appears in Slack's AI Apps menu
 - ☐ Opening TLDR shows welcome message and suggested prompts
-- ☐ Switching channels updates context
+- ☐ Source picker updates the source; Slack navigation leaves it unchanged
 - ☐ "Summarize" produces a summary in the thread
 - ☐ Custom styles are applied correctly
 - ☐ Error messages display correctly for failures
 
-## Known Limitation: Viewing-Channel Context Goes Stale
+## Explicit Source Selection
 
-Slack's new agent experience (rolled out to clients during 2026) stopped
-delivering `assistant_thread_context_changed` to apps still on the legacy
-`assistant_view` surface. Verified live (Aug 2026, Slack desktop): switching
-channels with the TLDR pane docked never fires the event, so the stored
-"channel you're viewing" only reflects the channel in view when the thread
-*started*. A bare `summarize` can therefore target a stale channel; the
-summary header always names its actual source channel, and
-`summarize #channel` is always exact.
+Slack's legacy `assistant_view` surface may omit channel-navigation events.
+TLDR therefore labels its source explicitly and pins it to the assistant
+thread. The native Source picker works without navigation events. When Slack
+supplies context, it initializes an empty source; it never replaces a saved
+choice. Typed `summarize #channel` requests update the source only after the
+requester's membership is verified and the state write succeeds.
 
-## Migrating to the new Agent experience (fixes the above)
+## Optional Migration to the New Agent Experience
 
 Slack's July 2026 "[Agent context](https://docs.slack.dev/changelog/2026/07/02/app-context/)"
 change replaces thread-scoped context events with app-scoped ones:
@@ -219,10 +217,10 @@ change replaces thread-scoped context events with app-scoped ones:
 2. Event Subscriptions: add `app_context_changed` (scope `assistant:write`,
    already granted).
 3. Once subscribed, `message.im` events carry an `app_context` field with the
-   entities the user is viewing. The code already consumes it
-   (`appContextChannelId` in `bolt-ts/src/handlers/assistant.ts`) and prefers
-   it over stored state, so context tracking starts working — race-free —
-   with no further code changes.
+   entities the user is viewing. The code reads this field
+   (`appContextChannelId` in `bolt-ts/src/handlers/assistant.ts`) only when
+   there is no saved source. A migration must preserve explicit source
+   selection and must rework thread initialization first.
 
 **Caution before migrating:**
 - `agent_view` is irreversible once saved.

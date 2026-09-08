@@ -118,8 +118,8 @@ export function parseThreadContextFromMetadata(eventPayload: unknown): ThreadCon
 }
 
 /**
- * Load thread state from the warm cache, falling back to the Slack-metadata
- * state message on a cache miss (Lambda cold start). Returns the empty state
+ * Read authoritative Slack metadata. A per-Lambda cache cannot arbitrate
+ * settings across concurrent warm containers. Returns the empty state
  * when neither exists. Note: the fallback only scans the first ~20 thread
  * replies — the state message lives at the top of the thread.
  */
@@ -128,12 +128,9 @@ export async function loadThreadStateWithFallback(args: {
   assistantChannelId: string;
   assistantThreadTs: string;
   logger?: { warn(message: string, ...meta: unknown[]): void };
+  /** Settings mutations must not replace unread state with empty defaults. */
+  requireSuccessfulRead?: boolean;
 }): Promise<ThreadContext> {
-  const threadKey = makeThreadKey(args.assistantChannelId, args.assistantThreadTs);
-  const cached = getCachedThreadState(threadKey);
-  if (cached) {
-    return cached.state;
-  }
   try {
     const loaded = await findThreadStateMessage({
       client: args.client,
@@ -145,6 +142,9 @@ export async function loadThreadStateWithFallback(args: {
     }
   } catch (error) {
     args.logger?.warn('Failed to load thread state from Slack:', error);
+    if (args.requireSuccessfulRead) {
+      throw error;
+    }
   }
   return { viewingChannelId: null, customStyle: null, defaultMessageCount: null };
 }
@@ -156,10 +156,6 @@ export async function findThreadStateMessage(args: {
 }): Promise<CachedThreadState | null> {
   const threadKey = makeThreadKey(args.assistantChannelId, args.assistantThreadTs);
 
-  const cached = getCachedThreadState(threadKey);
-  if (cached) {
-    return cached;
-  }
 
   const resp = await args.client.conversations.replies({
     channel: args.assistantChannelId,
@@ -193,6 +189,7 @@ export async function findThreadStateMessage(args: {
     return found;
   }
 
+  threadStateCache.delete(threadKey);
   return null;
 }
 

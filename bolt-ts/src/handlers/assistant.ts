@@ -243,19 +243,22 @@ export function createAssistant(config: AppConfig): Assistant {
       }
       const threadKey = makeThreadKey(channelId, threadTs);
 
-      let cached = getCachedThreadState(threadKey);
-      if (!cached) {
-        try {
-          cached = await findThreadStateMessage({
-            client: client as unknown as SlackWebApiClient,
-            assistantChannelId: channelId,
-            assistantThreadTs: threadTs,
-          });
-        } catch (error) {
-          logger.warn('Failed to load existing thread state message:', error);
-        }
+      let cached;
+      try {
+        cached = await findThreadStateMessage({
+          client: client as unknown as SlackWebApiClient,
+          assistantChannelId: channelId,
+          assistantThreadTs: threadTs,
+        });
+      } catch (error) {
+        logger.warn('Failed to load existing thread state message:', error);
+        return;
       }
 
+      // Source is pinned to this thread. Slack navigation is not a source change.
+      if (cached?.state.viewingChannelId) {
+        return;
+      }
       const nextState: ThreadContext = {
         viewingChannelId,
         customStyle: cached?.state.customStyle ?? null,
@@ -364,20 +367,6 @@ export function createAssistant(config: AppConfig): Assistant {
 
       const threadKey = makeThreadKey(channelId, threadTs);
 
-      const getCachedOrEmpty = (): {
-        state: ThreadContext;
-        stateMessageTs: string | null;
-      } => {
-        const cached = getCachedThreadState(threadKey);
-        if (cached) {
-          return { state: cached.state, stateMessageTs: cached.state_message_ts };
-        }
-        return {
-          state: { viewingChannelId: null, customStyle: null, defaultMessageCount: null },
-          stateMessageTs: null,
-        };
-      };
-
       try {
         if (route.kind === 'chat') {
           // Not a command — let the model answer. The chat worker retries a
@@ -397,7 +386,7 @@ export function createAssistant(config: AppConfig): Assistant {
             threadTs,
             userText: route.userText,
             userMessageTs: msg.ts as string,
-            viewingChannelId: liveViewingChannelId ?? state.viewingChannelId,
+            viewingChannelId: state.viewingChannelId ?? liveViewingChannelId,
             logger,
           });
           return;
@@ -430,22 +419,13 @@ export function createAssistant(config: AppConfig): Assistant {
               return;
             }
 
-            let { state, stateMessageTs } = getCachedOrEmpty();
-            if (!stateMessageTs) {
-              try {
-                const loaded = await findThreadStateMessage({
-                  client: client as unknown as SlackWebApiClient,
-                  assistantChannelId: channelId,
-                  assistantThreadTs: threadTs,
-                });
-                if (loaded) {
-                  state = loaded.state;
-                  stateMessageTs = loaded.state_message_ts;
-                }
-              } catch (error) {
-                logger.warn('Failed to load thread state from Slack:', error);
-              }
-            }
+            const loaded = await findThreadStateMessage({
+              client: client as unknown as SlackWebApiClient,
+              assistantChannelId: channelId,
+              assistantThreadTs: threadTs,
+            });
+            const state = loaded?.state ?? { viewingChannelId: null, customStyle: null, defaultMessageCount: null };
+            const stateMessageTs = loaded?.state_message_ts ?? null;
 
             const nextState: ThreadContext = {
               viewingChannelId: state.viewingChannelId,
@@ -480,16 +460,17 @@ export function createAssistant(config: AppConfig): Assistant {
               assistantChannelId: channelId,
               assistantThreadTs: threadTs,
               logger,
+              requireSuccessfulRead: true,
             });
             const targetChannelId =
-              intent.targetChannel ?? liveViewingChannelId ?? state.viewingChannelId;
+              intent.targetChannel ?? state.viewingChannelId ?? liveViewingChannelId;
 
             if (!targetChannelId) {
               await client.chat.postMessage({
                 channel: channelId,
                 thread_ts: threadTs,
                 text:
-                  "I don't know which channel you're viewing yet. Switch to a channel in Slack, then try `summarize` again — or mention one like `summarize #general`.",
+                  "Choose a source channel above, or mention one with `summarize #channel`. I'll keep using that source in this thread.",
               });
               return;
             }
@@ -517,6 +498,16 @@ export function createAssistant(config: AppConfig): Assistant {
                 normalizeMessageCount(state.defaultMessageCount)
               ),
               customStyle: sanitizedStyle.value,
+              beforeRun: targetChannelId !== state.viewingChannelId ? async (): Promise<void> => {
+                await persistThreadState({
+                  client,
+                  channelId,
+                  threadTs,
+                  stateMessageTs: getCachedThreadState(threadKey)?.state_message_ts ?? null,
+                  state: { ...state, viewingChannelId: targetChannelId },
+                  logger,
+                });
+              } : undefined,
               logger,
             });
             break;
@@ -526,6 +517,7 @@ export function createAssistant(config: AppConfig): Assistant {
         }
       } catch (error) {
         logger.error('Error handling message:', error);
+        await client.chat.postMessage({ channel: channelId, thread_ts: threadTs, text: "I couldn't save that change. Please try again." });
       }
     },
   });
@@ -561,6 +553,7 @@ async function persistThreadState(args: PersistStateArgs): Promise<void> {
       setCachedThreadState({ threadKey, stateMessageTs, state });
     } catch (error) {
       logger.error('Failed to update thread state message', error);
+      throw error;
     }
     return;
   }
@@ -576,11 +569,13 @@ async function persistThreadState(args: PersistStateArgs): Promise<void> {
       ),
       metadata: buildThreadStateMetadata(state),
     });
-    if (resp.ts) {
-      setCachedThreadState({ threadKey, stateMessageTs: resp.ts, state });
+    if (!resp.ts) {
+      throw new Error('Slack did not return a state message timestamp');
     }
+    setCachedThreadState({ threadKey, stateMessageTs: resp.ts, state });
   } catch (error) {
     logger.error('Failed to create thread state message', error);
+    throw error;
   }
 }
 

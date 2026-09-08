@@ -113,7 +113,7 @@ describe('thread_state', () => {
   });
 
   describe('findThreadStateMessage', () => {
-    it('should return cached state without calling Slack', async () => {
+    it('reads authoritative Slack state even when a warm container has stale settings', async () => {
       const threadKey = makeThreadKey('D-CACHED', '171.0001');
       setCachedThreadState({
         threadKey,
@@ -125,7 +125,7 @@ describe('thread_state', () => {
       const replies = jest.fn<
         ReturnType<SlackWebApiClient['conversations']['replies']>,
         [RepliesArgs]
-      >();
+      >().mockResolvedValue({ messages: [{ ts: '171.0002', metadata: buildThreadStateMetadata({ viewingChannelId: 'C222222222', customStyle: 'new', defaultMessageCount: 5 }) }] });
       const client: SlackWebApiClient = { conversations: { replies } };
 
       const result = await findThreadStateMessage({
@@ -137,9 +137,9 @@ describe('thread_state', () => {
       expect(result).toEqual({
         thread_key: threadKey,
         state_message_ts: '171.0002',
-        state: { viewingChannelId: 'C111111111', customStyle: 'x', defaultMessageCount: 25 },
+        state: { viewingChannelId: 'C222222222', customStyle: 'new', defaultMessageCount: 5 },
       });
-      expect(replies).not.toHaveBeenCalled();
+      expect(replies).toHaveBeenCalledTimes(1);
     });
 
     it('should find the most recent state message in replies', async () => {

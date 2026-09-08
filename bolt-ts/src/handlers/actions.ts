@@ -20,6 +20,7 @@ import {
   ACTION_QUICK_SUMMARIZE,
   ACTION_RETRY_SUMMARY,
   ACTION_SELECT_MESSAGE_COUNT,
+  ACTION_SELECT_SOURCE,
   ACTION_SHOW_HELP,
   buildHelpBlocks,
   buildWelcomeBlocks,
@@ -166,7 +167,7 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
           channel: assistantChannelId,
           thread_ts: threadTs,
           text:
-            "I don't know which channel you're viewing yet. Switch to a channel in Slack and tap the button again — or type `summarize #general`.",
+            "Choose a source channel above, or type `summarize #channel`. That source stays set for this thread.",
         });
         return;
       }
@@ -266,6 +267,61 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
     }
   });
 
+  app.action<BlockAction>(ACTION_SELECT_SOURCE, async ({ ack, body, action, client, logger }) => {
+    await ack();
+    const message = 'message' in body ? body.message : null;
+    const channel = 'channel' in body ? body.channel : null;
+    if (!message || !channel || action.type !== 'conversations_select') {
+      return;
+    }
+    const selectedChannel = action.selected_conversation;
+    const threadTs = message.thread_ts ?? message.ts;
+    const reply = async (text: string): Promise<void> => {
+      await client.chat.postMessage({ channel: channel.id, thread_ts: threadTs, text });
+    };
+    try {
+      if (!isValidSlackChannelId(selectedChannel)) {
+        await reply('Choose a valid source channel.');
+        return;
+      }
+      const membership = await checkChannelMembership({
+        client: client as unknown as ConversationsMembersClient,
+        channelId: selectedChannel,
+        userId: body.user.id,
+        logger,
+      });
+      if (membership !== 'member') {
+        await reply(membership === 'unknown'
+          ? MEMBERSHIP_UNKNOWN_MESSAGE
+          : "I can only use channels you're a member of. Your saved source hasn't changed.");
+        return;
+      }
+      const currentState = await loadThreadStateWithFallback({
+        client: client as unknown as SlackWebApiClient,
+        assistantChannelId: channel.id,
+        assistantThreadTs: threadTs,
+        logger,
+        requireSuccessfulRead: true,
+      });
+      const nextState: ThreadContext = { ...currentState, viewingChannelId: selectedChannel };
+      await client.chat.update({
+        channel: channel.id,
+        ts: message.ts,
+        text: 'TLDR source and style',
+        blocks: buildWelcomeBlocks(selectedChannel, nextState.customStyle, nextState.defaultMessageCount),
+        metadata: buildThreadStateMetadata(nextState),
+      });
+      setCachedThreadState({
+        threadKey: makeThreadKey(channel.id, threadTs),
+        stateMessageTs: message.ts,
+        state: nextState,
+      });
+    } catch (error) {
+      logger.error('Failed to save source channel:', error);
+      await reply("I couldn't save that source. Please choose it again before summarizing.");
+    }
+  });
+
   app.action<BlockAction>(
     ACTION_SELECT_MESSAGE_COUNT,
     async ({ ack, body, action, client, logger }) => {
@@ -300,6 +356,7 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
           assistantChannelId,
           assistantThreadTs: threadTs,
           logger,
+          requireSuccessfulRead: true,
         });
         const nextState: ThreadContext = { ...currentState, defaultMessageCount: newCount };
 
