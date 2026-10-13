@@ -1,12 +1,39 @@
-import { buildSummaryActionButtons, buildSummaryMetadata, buildCoverageText } from '../../src/worker/deliver';
+import { buildShareConfirmText, buildSummaryActionButtons, buildSummaryMetadata, buildCoverageText } from '../../src/worker/deliver';
 
 interface ActionsBlock {
   type: 'actions';
-  elements: Array<{ action_id: string; value: string }>;
+  elements: Array<{ action_id: string; value?: string; confirm?: { text: { text: string } } }>;
 }
 
 function actionIds(blocks: unknown[]): string[] {
-  return ((blocks[0] as ActionsBlock).elements ?? []).map((e) => e.action_id);
+  return blocks.flatMap((block) => {
+    const actions = block as { type?: string; elements?: Array<{ action_id?: string }> };
+    if (actions.type !== 'actions') {
+      return [];
+    }
+    return (actions.elements ?? []).map((element) => element.action_id ?? '');
+  });
+}
+
+function actionElements(blocks: unknown[]): ActionsBlock['elements'] {
+  return blocks.flatMap((block) => {
+    const actions = block as ActionsBlock;
+    return actions.type === 'actions' ? actions.elements : [];
+  });
+}
+
+function shareButton(blocks: unknown[]): ActionsBlock['elements'][number] {
+  for (const block of blocks) {
+    const actions = block as ActionsBlock;
+    if (actions.type !== 'actions') {
+      continue;
+    }
+    const share = actions.elements.find((element) => element.action_id === 'share_summary');
+    if (share) {
+      return share;
+    }
+  }
+  throw new Error('missing share button');
 }
 
 describe('buildSummaryActionButtons', () => {
@@ -17,7 +44,7 @@ describe('buildSummaryActionButtons', () => {
       coverage: { messageCount: 25, oldestTs: '1788825600.000001', latestTs: '1788827400.000002' },
       currentStyle: null,
     });
-    expect(actionIds(blocks)).toEqual(['rerun_shorter', 'rerun_roast', 'rerun_receipts', 'share_summary', 'summary_latest']);
+    expect(actionIds(blocks)).toEqual(['summary_whats_new', 'rerun_shorter', 'rerun_roast', 'rerun_receipts', 'summary_latest', 'share_summary']);
   });
 
   it('hides Roast when the current style already roasts', () => {
@@ -27,7 +54,7 @@ describe('buildSummaryActionButtons', () => {
       coverage: { messageCount: 25, oldestTs: '1788825600.000001', latestTs: '1788827400.000002' },
       currentStyle: 'roast everyone',
     });
-    expect(actionIds(blocks)).toEqual(['rerun_shorter', 'rerun_receipts', 'share_summary', 'summary_latest']);
+    expect(actionIds(blocks)).toEqual(['summary_whats_new', 'rerun_shorter', 'rerun_receipts', 'summary_latest', 'share_summary']);
   });
 
   it('hides Receipts when the current style pulls receipts', () => {
@@ -37,7 +64,7 @@ describe('buildSummaryActionButtons', () => {
       coverage: { messageCount: 25, oldestTs: '1788825600.000001', latestTs: '1788827400.000002' },
       currentStyle: 'bring receipts',
     });
-    expect(actionIds(blocks)).toEqual(['rerun_shorter', 'rerun_roast', 'share_summary', 'summary_latest']);
+    expect(actionIds(blocks)).toEqual(['summary_whats_new', 'rerun_shorter', 'rerun_roast', 'summary_latest', 'share_summary']);
   });
 
   it('embeds count, source channel, and compact style kind in Share value payload', () => {
@@ -47,9 +74,8 @@ describe('buildSummaryActionButtons', () => {
       coverage: { messageCount: 100, oldestTs: '1788825600.000001', latestTs: '1788827400.000002' },
       currentStyle: 'be funny',
     });
-    const block = blocks[0] as ActionsBlock;
-    const share = block.elements.find((e) => e.action_id === 'share_summary')!;
-    expect(JSON.parse(share.value)).toEqual({
+    const share = shareButton(blocks);
+    expect(JSON.parse(share.value ?? '{}')).toEqual({
       action: 'share_summary',
       sourceChannelId: 'C42',
       count: 100,
@@ -65,8 +91,10 @@ describe('buildSummaryActionButtons', () => {
       coverage: { messageCount: 100, oldestTs: '1788825600.000001', latestTs: '1788827400.000002' },
       currentStyle: longStyle,
     });
-    const block = blocks[0] as ActionsBlock;
-    for (const element of block.elements.filter((candidate) => candidate.value)) {
+    for (const element of actionElements(blocks)) {
+      if (element.value === undefined) {
+        continue;
+      }
       expect(element.value.length).toBeLessThanOrEqual(2000);
     }
   });
@@ -85,6 +113,7 @@ describe('buildSummaryActionButtons', () => {
     expect(context.elements[0].text).toContain('AI-generated');
     expect(context.elements[0].text).toContain('<#C42>');
     expect(context.elements[0].text).toContain('<!date^1700000000^{time}|');
+    expect(context.elements[0].text).not.toContain('Get latest');
 
     const feedback = blocks.find(
       (b) => (b as { type: string }).type === 'context_actions'
@@ -102,9 +131,10 @@ describe('actual summary coverage', () => {
   };
 
   it('shares the included count while retaining the requested count for reruns', () => {
-    const actions = buildSummaryActionButtons(delivery)[0] as ActionsBlock;
-    expect(JSON.parse(actions.elements.find((element) => element.action_id === 'share_summary')!.value).count).toBe(3);
-    expect(JSON.parse(actions.elements.find((element) => element.action_id === 'rerun_roast')!.value).count).toBe(25);
+    const blocks = buildSummaryActionButtons(delivery);
+    expect(JSON.parse(shareButton(blocks).value ?? '{}').count).toBe(3);
+    const roast = actionElements(blocks).find((element) => element.action_id === 'rerun_roast');
+    expect(JSON.parse(roast?.value ?? '{}').count).toBe(25);
   });
 
   it('records actual count and exact bounds independently from the request', () => {
@@ -134,7 +164,7 @@ describe('saved-window action group', () => {
   };
   it('labels the source destination and preserves the original span after a deletion', () => {
     const actions = buildSummaryActionButtons(input)[0] as ActionsBlock;
-    const short = JSON.parse(actions.elements.find((element) => element.action_id === 'rerun_shorter')!.value);
+    const short = JSON.parse(actions.elements.find((element) => element.action_id === 'rerun_shorter')?.value ?? '{}');
     expect(short).toMatchObject({ v: 2, channelId: input.sourceChannelId, count: 5, window: original });
     const blocks = JSON.stringify(buildSummaryActionButtons(input));
     expect(blocks).toContain('Share to #testing-bots');
@@ -142,17 +172,43 @@ describe('saved-window action group', () => {
   });
   it('keeps one-off custom instructions out of both metadata and action values', () => {
     const style = 'Keep the jokes gentle. '.repeat(150);
-    const actions = buildSummaryActionButtons({ ...input, currentStyle: style })[0] as ActionsBlock;
-    for (const element of actions.elements.filter((candidate) => candidate.value)) {
-      expect(element.value.length).toBeLessThanOrEqual(2000);
-      expect(element.value).not.toContain('Keep the jokes gentle');
+    const blocks = buildSummaryActionButtons({ ...input, currentStyle: style });
+    for (const element of actionElements(blocks)) {
+      const value = element.value ?? '';
+      expect(value.length).toBeLessThanOrEqual(2000);
+      expect(value).not.toContain('Keep the jokes gentle');
+      expect(element.confirm?.text.text ?? '').not.toContain('Keep the jokes gentle');
     }
     const metadata = buildSummaryMetadata({ ...input, currentStyle: style });
     expect(metadata.event_payload).not.toHaveProperty('custom_style');
     expect(JSON.stringify(metadata)).not.toContain('Keep the jokes gentle');
     expect(metadata.event_payload.style_key).toBe('custom');
   });
+  it('marks every saved-window control so a private recap cannot reply in the channel', () => {
+    const blocks = buildSummaryActionButtons({ ...input, privateReply: true });
+    const serialized = JSON.stringify(actionElements(blocks));
+    expect(serialized).toContain('\\"e\\":1');
+    expect(serialized.match(/\\"e\\":1/g)?.length).toBeGreaterThanOrEqual(4);
+  });
+
   it('does not offer transformations without saved bounds', () => {
-    expect(actionIds(buildSummaryActionButtons({ sourceChannelId: input.sourceChannelId, messageCount: 5, currentStyle: null }))).toEqual(['share_summary', 'summary_latest']);
+    expect(actionIds(buildSummaryActionButtons({ sourceChannelId: input.sourceChannelId, messageCount: 5, currentStyle: null }))).toEqual(['summary_whats_new', 'summary_latest', 'share_summary']);
+  });
+
+  it('puts a short preview in the share confirmation and stays within 300 characters', () => {
+    const preview = 'Alice moved the picnic. '.repeat(40);
+    const blocks = buildSummaryActionButtons({ ...input, sharePreview: preview });
+    const confirm = shareButton(blocks).confirm?.text.text ?? '';
+    expect(confirm.length).toBeLessThanOrEqual(300);
+    expect(confirm).toContain('<#C012345678>');
+    expect(confirm).toContain('Alice moved the picnic');
+    expect(buildShareConfirmText('C012345678', '<@U123> <!channel> **bold** [note](https://example.com)')).not.toContain('<@');
+    expect(buildShareConfirmText('C012345678', '<@U123> <!channel> **bold** [note](https://example.com)')).not.toContain('**');
+    const withSources = buildShareConfirmText(
+      'C012345678',
+      'A concise recap.\n\n**Sources**\n- [Alice: Alice moved the picnic to Friday.](https://slack.example/p)',
+    );
+    expect(withSources).toContain('A concise recap');
+    expect(withSources).not.toContain('picnic');
   });
 });

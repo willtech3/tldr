@@ -73,7 +73,7 @@ worker split has been removed.
 - `src/thread_state.ts` — Persists thread state via Slack message metadata.
 - `src/slack/` — Web client wrappers, `chat.*Stream` helpers, the generated-text sanitiser (`sanitize.ts`, the single implementation — import from here rather than duplicating the mention regexes), image fetch.
 - `src/ai/` — Anthropic Messages API client (`@anthropic-ai/sdk`), XML-structured prompt builder, image helpers.
-- `src/worker/` — Inline summarisation pipeline: chunker, link extractor, prompt builder, deliver buttons, streaming orchestrator, top-level `runSummarization`. Also `chat.ts` (`runGeneralChat`), the text-in/text-out chat engine behind both non-command assistant messages and channel `@TLDR` mentions.
+- `src/worker/` — Inline summarisation pipeline: chunker, link extractor, prompt builder, deliver buttons, streaming orchestrator, top-level `runSummarization`. Also `chat.ts` (`runGeneralChat`), the text-in/text-out chat engine behind non-command assistant messages and channel `@TLDR` questions. A bare `@TLDR` (or `catch up` / `roast` / `receipts`) posts an ephemeral channel recap instead of chatting.
 - `tests/` — Jest tests mirroring the `src/` layout. Known gaps: no tests yet for `app.ts` or `handlers/style.ts`; `handlers/assistant.ts` and `handlers/run_summary.ts` are covered at the pure-helper level only (message routing / copy builders — the Bolt wiring in `userMessage`, `threadStarted`, and `threadContextChanged` is untested); `index.test.ts` covers only `isSlackTimeoutRetry`. Add coverage when touching those modules.
 
 ### Key Design Patterns

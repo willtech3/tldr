@@ -8,9 +8,11 @@ import { parseUserIntent } from '../src/intent';
 import { RECEIPTS_STYLE, ROAST_STYLE } from '../src/styles';
 
 describe('buildSourcePrompts', () => {
-  it('offers three distinct outcomes pinned to the selected source', () => {
+  it('offers three short commands pinned to the selected source', () => {
     const prompts = buildSourcePrompts('C012345678');
     expect(prompts.map((prompt) => prompt.title)).toEqual(['Catch up', 'Roast', 'Receipts']);
+    expect(prompts.every((prompt) => prompt.message.length < 80)).toBe(true);
+    expect(prompts.map((prompt) => prompt.message).join('\n')).not.toContain(ROAST_STYLE);
     expect(prompts.map((prompt) => parseUserIntent(prompt.message))).toEqual([
       { type: 'summarize', targetChannel: 'C012345678', count: null, styleOverride: null },
       { type: 'summarize', targetChannel: 'C012345678', count: null, styleOverride: ROAST_STYLE },
@@ -18,8 +20,13 @@ describe('buildSourcePrompts', () => {
     ]);
   });
 
-  it('offers only help until a source is selected', () => {
-    expect(buildSourcePrompts(null)).toEqual([{ title: 'How to use TLDR', message: 'help' }]);
+  it('offers catch-up commands until a source is selected, not a help essay', () => {
+    expect(buildSourcePrompts(null)).toEqual([
+      { title: 'Catch up', message: 'catch up' },
+      { title: 'Roast', message: 'roast' },
+    ]);
+    expect(parseUserIntent('catch up')).toMatchObject({ type: 'summarize', styleOverride: null });
+    expect(parseUserIntent('roast')).toMatchObject({ type: 'summarize', styleOverride: ROAST_STYLE });
   });
 
   it('does not reuse another thread or source selection', () => {

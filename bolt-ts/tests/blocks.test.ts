@@ -54,8 +54,8 @@ describe('Block Kit builders', () => {
       expect(section?.type).toBe('section');
     });
 
-    it('should include Set style button', () => {
-      const blocks = buildWelcomeBlocks();
+    it('should include Set style button once a source is chosen', () => {
+      const blocks = buildWelcomeBlocks('C012345678');
       const actions = blocks.find((b) => b.type === 'actions');
       expect(actions).toBeDefined();
       if (actions?.type === 'actions') {
@@ -64,26 +64,29 @@ describe('Block Kit builders', () => {
         );
         expect(button).toBeDefined();
       }
+      expect(findButton(buildWelcomeBlocks(), ACTION_OPEN_STYLE_MODAL)).toBeUndefined();
     });
 
-    it('shows a persistent source picker, even when Slack supplies no context', () => {
+    it('shows only the channel picker when Slack supplies no context', () => {
       const blocks = buildWelcomeBlocks();
       const source = blocks.find((b) => b.type === 'section' && b.accessory?.type === 'conversations_select');
       expect(source).toMatchObject({
         accessory: { action_id: 'select_source', filter: { include: ['public', 'private'] } },
       });
-      expect(JSON.stringify(blocks)).toContain('Source');
+      expect(JSON.stringify(blocks)).toContain('Choose a channel');
       expect(JSON.stringify(blocks)).not.toContain('Viewing');
+      expect(JSON.stringify(blocks)).not.toContain('How far back');
       expect(findButton(blocks, ACTION_QUICK_SUMMARIZE)).toBeUndefined();
     });
 
-    it('puts the selected source beside its primary action and does not expose raw style text', () => {
+    it('puts Catch up first and does not expose raw style text', () => {
       const blocks = buildWelcomeBlocks('C012345678', 'a'.repeat(4000), 5);
-      expect(blocks).toContainEqual(expect.objectContaining({
-        type: 'section', text: { type: 'mrkdwn', text: 'Catch up on <#C012345678>' },
+      expect(blocks[0]).toMatchObject({
+        type: 'section', text: { type: 'mrkdwn', text: 'Catch up on <#C012345678> · last 5 messages' },
         accessory: expect.objectContaining({ action_id: ACTION_QUICK_SUMMARIZE, style: 'primary' }),
-      }));
+      });
       expect(JSON.stringify(blocks)).toContain('Custom');
+      expect(JSON.stringify(blocks)).toContain('How far back');
       expect(JSON.stringify(blocks)).not.toContain('a'.repeat(100));
       expect(JSON.stringify(blocks)).toContain('initial_conversation');
     });
@@ -110,14 +113,14 @@ describe('Block Kit builders', () => {
 
     it('distinguishes existing-window transforms from explicit fresh requests', () => {
       const text = JSON.stringify(buildHelpBlocks());
-      for (const label of ['Shorter', 'Roast', 'Receipts', 'Share to #channel', 'Refresh latest', 'Expand to latest']) {
+      for (const label of ['Shorter', 'Roast', 'Receipts', 'Share to #channel', "What's new", 'wider window']) {
         expect(text).toContain(label);
       }
       expect(text).toContain('source and date window');
       expect(text).toContain('edits and deletions');
-      expect(text).toContain('new messages at the stated count and style');
+      expect(text).toContain('reads the latest messages at that count and style');
       expect(text).toContain('⋯ menu');
-      expect(text).toContain('confirmation with the destination before posting');
+      expect(text).toContain('confirmation with a short preview and the destination before posting');
       expect(text).not.toContain('Roast This');
     });
   });
@@ -227,10 +230,13 @@ describe('Block Kit builders', () => {
       }
     });
 
-    it('should offer summarize and help buttons', () => {
-      const blocks = buildChatFailureBlocks(null);
-      expect(findButton(blocks, ACTION_QUICK_SUMMARIZE)).toBeDefined();
-      expect(findButton(blocks, ACTION_SHOW_HELP)).toBeDefined();
+    it('offers Catch up only when a source exists', () => {
+      expect(findButton(buildChatFailureBlocks('C12345'), ACTION_QUICK_SUMMARIZE)).toBeDefined();
+      expect(findButton(buildChatFailureBlocks('C12345'), ACTION_SHOW_HELP)).toBeDefined();
+      const withoutSource = buildChatFailureBlocks(null);
+      expect(findButton(withoutSource, ACTION_QUICK_SUMMARIZE)).toBeUndefined();
+      expect(findButton(withoutSource, ACTION_SHOW_HELP)).toBeDefined();
+      expect(JSON.stringify(withoutSource)).toContain('Choose a source channel');
     });
   });
 

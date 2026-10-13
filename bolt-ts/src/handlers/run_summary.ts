@@ -59,6 +59,12 @@ export interface GuardedSummarizeArgs {
   statusText?: string;
   /** Persist an explicitly selected source only after membership is verified. */
   beforeRun?: () => Promise<void>;
+  /**
+   * Channel catch-up from an @mention. Replies are ephemeral to this user,
+   * and the assistant status/title APIs are skipped because this is not an
+   * assistant thread. Streaming is also skipped so the recap stays private.
+   */
+  ephemeralUserId?: string;
   logger: HandlerLogger;
 }
 
@@ -70,6 +76,15 @@ export async function guardAndRunSummarization(args: GuardedSummarizeArgs): Prom
   const { client, config, logger } = args;
 
   const reply = async (text: string): Promise<void> => {
+    if (args.ephemeralUserId) {
+      await client.chat.postEphemeral({
+        channel: args.assistantChannelId,
+        user: args.ephemeralUserId,
+        thread_ts: args.assistantThreadTs,
+        text,
+      });
+      return;
+    }
     await client.chat.postMessage({
       channel: args.assistantChannelId,
       thread_ts: args.assistantThreadTs,
@@ -134,18 +149,20 @@ export async function guardAndRunSummarization(args: GuardedSummarizeArgs): Prom
   // one (the streamed summary header arrives before any tokens; failures
   // post or repair a message of their own).
   const hasCustomStyle = args.customStyle !== null && args.customStyle.trim().length > 0;
-  try {
-    await client.assistant.threads.setStatus({
-      channel_id: args.assistantChannelId,
-      thread_ts: args.assistantThreadTs,
-      status: args.statusText ?? 'Summarizing...',
-      loading_messages: buildSummarizeLoadingMessages({
-        messageCount: args.messageCount,
-        hasCustomStyle,
-      }),
-    });
-  } catch (error) {
-    logger.warn('Failed to set assistant thread status:', error);
+  if (!args.ephemeralUserId) {
+    try {
+      await client.assistant.threads.setStatus({
+        channel_id: args.assistantChannelId,
+        thread_ts: args.assistantThreadTs,
+        status: args.statusText ?? 'Summarizing...',
+        loading_messages: buildSummarizeLoadingMessages({
+          messageCount: args.messageCount,
+          hasCustomStyle,
+        }),
+      });
+    } catch (error) {
+      logger.warn('Failed to set assistant thread status:', error);
+    }
   }
 
   const correlationId = randomUUID();
@@ -163,10 +180,11 @@ export async function guardAndRunSummarization(args: GuardedSummarizeArgs): Prom
       window: args.window,
       shorter: args.shorter,
       summaryToShorten: args.summaryToShorten,
+      ephemeralUserId: args.ephemeralUserId,
     },
   });
 
-  if (outcome === 'delivered') {
+  if (outcome === 'delivered' && !args.ephemeralUserId) {
     await applyPostSummaryFollowUps({
       client,
       assistantChannelId: args.assistantChannelId,

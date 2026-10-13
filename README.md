@@ -10,8 +10,8 @@ TLDR is a serverless Slack bot that turns a wall of unread messages into a conci
 - **AI-Generated Summaries** – Uses Anthropic Claude Opus 4.8 to distill channel messages into digestible summaries with links, image highlights, and receipts (message permalinks).
 - **Custom Styles** – Preset personas (Roast, Receipts, Executive brief, Haiku) or write your own; per-thread or one-off.
 - **Summarize Thread Shortcut** – Right-click any message → *Summarize Thread* for a private, in-channel thread recap.
-- **Standard Chatbot** – Ask TLDR anything: non-command messages in the assistant pane and `@TLDR` mentions in channels get streamed chat replies (text in, text out — no tools or actions).
-- **Engagement Built In** – Per-summary refresh menu, thumbs up/down feedback, share-to-channel with confirmation, clear retry guidance when a request fails.
+- **Standard Chatbot** – Ask TLDR anything: non-command messages in the assistant pane, and `@TLDR` questions in channels, get streamed chat replies (text in, text out — no tools or actions).
+- **Engagement Built In** – A labeled *What's new* button under every summary, thumbs up/down feedback, share-to-channel with a preview confirmation, and clear retry guidance when a request fails.
 - **Single TypeScript Service** – One Bolt.js Lambda hosts the Slack event surface *and* the streaming summarizer.
 - **Streaming Replies** – Summaries stream into the assistant thread token-by-token via Slack's `chat.startStream` / `chat.appendStream` / `chat.stopStream` APIs.
 
@@ -20,11 +20,10 @@ TLDR is a serverless Slack bot that turns a wall of unread messages into a conci
 ## 🚀 Quick Start
 
 1. **Open TLDR** – Click the AI Apps icon in the top-right corner of Slack, then select TLDR.
-2. **Navigate to a channel** – Switch to any channel in Slack's main view.
-3. **Summarize** – Tap *⚡ Summarize now* or type `summarize`.
+2. **Choose a channel** – Pick it on the welcome card. That source stays on the thread.
+3. **Catch up** – Tap *Catch up*, or type `catch up`, `roast`, or `receipts`.
 
-That's it — TLDR tracks which channel you're viewing and summarizes it. The full
-tour of every way in is below.
+The full tour of every way in is below.
 
 ---
 
@@ -37,7 +36,7 @@ TLDR has four front doors. Pick whichever fits the moment:
 | [Assistant pane](#-assistant-pane--summaries--chat) | AI Apps sidebar | Summaries, styles, and follow-up chat |
 | [Buttons](#-buttons--the-no-typing-path) | Welcome card & under every summary | Zero-typing workflows |
 | [Summarize Thread](#-summarize-thread-shortcut) | *⋯ More actions* on any message | A private recap of one thread |
-| [`@TLDR` mentions](#-tldr-in-channels) | Any channel the bot is in | Quick questions without leaving the conversation |
+| [`@TLDR` mentions](#-tldr-in-channels) | Any channel the bot is in | A private catch-up, or a quick question, without leaving the conversation |
 
 ### 💬 Assistant pane — summaries & chat
 
@@ -45,7 +44,9 @@ Open TLDR from the AI Apps icon and talk to it in plain English:
 
 ```text
 summarize                        → the channel you're currently viewing¹
-catch me up                      → same thing ("what did I miss" and "tldr" work too)
+catch up                         → same thing ("catch me up", "what did I miss", and "tldr" work too)
+roast                            → one-off roast of that source
+receipts                         → one-off receipts pass
 summarize last 200               → reach further back
 summarize #design                → a specific channel (you must be a member)
 summarize #design last 25 with style: executive brief
@@ -67,21 +68,25 @@ reply — chat is text-only, so TLDR will say it can't see the attachment.
 
 ### ⚡ Buttons — the no-typing path
 
-- **Catch up** beside the selected source summarizes that channel;
-  the dropdown beside it sets your default message count (5–500, default 50).
-- **🎨 Set style** opens a modal with ready-made personas — 🔥 *Roast*,
-  📜 *Receipts*, 💼 *Executive brief*, 🌸 *Haiku* — or space to write your own
-  (up to 3,000 characters in the modal; 4,000 with a typed `style:` command).
-- Under a summary: **Shorter**, **Roast**, and **Receipts** reuse its source
-  channel and original time window. Later messages are excluded; edits and
-  deletions within that window can still affect the result.
-- The **⋯ menu** under each result offers **Refresh latest N** for new messages
-  and **Expand to latest N** for a larger count, up to 500, from that result's
-  source. Each choice names its style: a known preset carries forward; a custom
-  style becomes **Default**. These fresh requests do not change your saved source.
-  Initial suggested prompts remain **Catch up**, **Roast**, and **Receipts**.
-- **Share to #channel** asks for confirmation, posts with your name on it, and
-  returns a link to the posted message. Feedback controls stay below the result.
+- With no source yet, the card is just a channel picker. **Catch up** appears
+  beside the channel once you choose one, and shows the message count it will use.
+- **How far back** sets the default message count (5–500, default 50).
+- **Set style** opens a modal with ready-made personas — Roast, Receipts,
+  Executive brief, Haiku — or space to write your own (up to 3,000 characters
+  in the modal; 4,000 with a typed `style:` command).
+- Suggested prompts send short commands (`catch up`, `roast`, `receipts`)
+  pinned to the selected channel. They do not paste the style instructions
+  into the thread. Roast and Receipts from a prompt are one-off; **Set style**
+  is what sticks.
+- Under a summary: **What's new** reads the latest messages at the same count
+  and style. **Shorter**, **Roast**, and **Receipts** reuse its source channel
+  and original time window. Later messages are excluded; edits and deletions
+  within that window can still affect the result.
+- The **⋯ menu** offers a wider window, up to 500, from that result's source.
+  A known preset carries forward; a custom style becomes **Default**.
+- **Share to #channel** sits on its own row. Confirmation includes a short
+  preview and the destination, then posts with your name on it and returns a
+  link. Feedback controls stay below the result.
 - Retry cards preserve preset styles and saved windows. Custom-style failures
   direct you back to the original request or result so a retry cannot silently
   use a different style.
@@ -104,17 +109,26 @@ the channel. TLDR needs to be in the channel (`/invite @TLDR`) to read the threa
 
 ### 📣 `@TLDR` in channels
 
-Mention the bot anywhere it's been invited and it replies in that message's
-thread — a quick, streamed chat answer (kept to ~250 words) without anyone
-switching to the assistant pane:
+Mention the bot anywhere it's been invited.
+
+A bare mention, or a catch-up command, posts a **private** recap of that
+channel (only you see it), with the same What's new / Shorter / Roast /
+Receipts / Share controls as the assistant pane:
+
+```text
+@TLDR
+@TLDR catch me up
+@TLDR roast last 20
+```
+
+Any other mention is a streamed chat reply in the thread (kept to ~250 words):
 
 ```text
 @TLDR what's the difference between our staging and prod deploy steps?
 @TLDR settle it: tabs or spaces?
 ```
 
-Mentions are chat-only — for channel summaries, use the assistant pane, which
-keeps them private to you.
+For one thread rather than the channel, use **Summarize Thread**.
 
 ---
 

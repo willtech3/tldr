@@ -94,6 +94,18 @@ describe('summary transformations', () => {
     expect(guardAndRunSummarization).not.toHaveBeenCalled();
     expect(f.client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('Refresh the source') }));
   });
+  it('keeps a private roast click out of the channel when Slack omits is_ephemeral', async () => {
+    const f = fixture('rerun_roast', { ...value, action: 'rerun_roast', e: 1 });
+    const postEphemeral = jest.fn().mockResolvedValue({});
+    Object.assign(f.client.chat, { postEphemeral });
+    await f.run();
+    expect(guardAndRunSummarization).toHaveBeenCalledWith(expect.objectContaining({
+      ephemeralUserId: f.args.body.user.id,
+      sourceChannelId: value.channelId,
+      customStyle: ROAST_STYLE,
+    }));
+    expect(f.client.chat.postMessage).not.toHaveBeenCalled();
+  });
   it('bounds JSON parsing before interpreting action data', () => {
     expect(parseSummaryTransformValue('x'.repeat(2001))).toBeNull();
     expect(parseSummaryTransformValue('null')).toBeNull();
@@ -114,6 +126,32 @@ describe('sharing', () => {
     expect(success.channel).toBe('D012345678');
     expect(success.text).toContain('|View message>');
   });
+  it('publishes a private recap only to its source and confirms back to the clicker', async () => {
+    const f = fixture('share_summary', { ...share, e: 1 });
+    const postEphemeral = jest.fn().mockResolvedValue({});
+    Object.assign(f.client.chat, { postEphemeral });
+    await f.run();
+    expect(f.client.chat.postMessage).toHaveBeenCalledTimes(1);
+    expect(f.client.chat.postMessage.mock.calls[0][0].channel).toBe(value.channelId);
+    expect(postEphemeral).toHaveBeenCalledWith(expect.objectContaining({
+      channel: 'D012345678',
+      user: f.args.body.user.id,
+      text: expect.stringContaining('View message'),
+    }));
+  });
+  it('keeps a private share refusal out of the channel', async () => {
+    jest.mocked(checkChannelMembership).mockResolvedValue('not_member');
+    const f = fixture('share_summary', { ...share, e: 1 });
+    const postEphemeral = jest.fn().mockResolvedValue({});
+    Object.assign(f.client.chat, { postEphemeral });
+    await f.run();
+    expect(f.client.chat.postMessage).not.toHaveBeenCalled();
+    expect(postEphemeral).toHaveBeenCalledWith(expect.objectContaining({
+      channel: 'D012345678',
+      user: f.args.body.user.id,
+      text: expect.stringContaining("you're a member of"),
+    }));
+  });
   it.each(['not_member', 'unknown'] as const)('does not post publicly when source membership is %s', async (membership) => {
     jest.mocked(checkChannelMembership).mockResolvedValue(membership);
     const f = fixture('share_summary', share);
@@ -132,6 +170,17 @@ describe('retry scope and confirmation failures', () => {
     expect(guardAndRunSummarization).not.toHaveBeenCalled();
     expect(f.client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('original summary') }));
     expect(f.client.conversations.replies).not.toHaveBeenCalled();
+  });
+  it('retries a private failure without posting into the channel', async () => {
+    const f = fixture('retry_summary', { channelId: value.channelId, count: 5, window, shorter: true, styleKey: 'roast', e: 1 });
+    await f.run();
+    expect(guardAndRunSummarization).toHaveBeenCalledWith(expect.objectContaining({
+      ephemeralUserId: f.args.body.user.id,
+      window,
+      messageCount: 5,
+      customStyle: ROAST_STYLE,
+    }));
+    expect(f.client.chat.postMessage).not.toHaveBeenCalled();
   });
   it('preserves a valid saved retry window and preset', async () => {
     const f = fixture('retry_summary', { channelId: value.channelId, count: 5, window, shorter: true, styleKey: 'roast' });

@@ -7,6 +7,7 @@
  */
 
 import { App, BlockAction, type AllMiddlewareArgs, type SlackActionMiddlewareArgs } from '@slack/bolt';
+import type { WebClient } from '@slack/web-api';
 import type { KnownBlock } from '@slack/types';
 import {
   checkChannelMembership,
@@ -28,7 +29,7 @@ import {
 } from '../blocks';
 import { ACTION_SUMMARY_FEEDBACK, type StyleKind, type SummaryTransformValue } from '../worker/deliver';
 import { parseSummaryWindow } from '../summary_window';
-import { ACTION_SUMMARY_LATEST, parseSummaryLatestValue } from '../summary_latest';
+import { ACTION_SUMMARY_LATEST, ACTION_WHATS_NEW, parseSummaryLatestValue } from '../summary_latest';
 import { buildSourcePrompts } from '../followups';
 import { getMessagePermalink } from '../slack/client';
 import { extractSummaryBody } from '../slack/summary_body';
@@ -44,6 +45,65 @@ import {
 } from '../thread_state';
 import type { AppConfig } from '../config';
 import { guardAndRunSummarization, MEMBERSHIP_UNKNOWN_MESSAGE } from './run_summary';
+
+interface ActionBody {
+  user: { id: string };
+}
+
+function clickedControlValue(action: unknown): string | undefined {
+  if (!action || typeof action !== 'object') {
+    return undefined;
+  }
+  const record = action as { type?: unknown; value?: unknown; selected_option?: { value?: unknown } };
+  const raw = record.type === 'overflow' ? record.selected_option?.value : record.value;
+  return typeof raw === 'string' ? raw : undefined;
+}
+
+/**
+ * Ephemeral message clicks must stay ephemeral. A public follow-up would post
+ * the recap in the channel. `container.is_ephemeral` is Slack's signal;
+ * `e: 1` in the button value covers a payload that omits it.
+ */
+export function actionEphemeralUserId(body: ActionBody, action?: unknown): string | undefined {
+  const container = (body as { container?: { is_ephemeral?: boolean } }).container;
+  if (container?.is_ephemeral === true) {
+    return body.user.id;
+  }
+  const raw = clickedControlValue(action);
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > 2000) {
+    return undefined;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && (parsed as { e?: unknown }).e === 1) {
+      return body.user.id;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+async function replyToUser(
+  client: WebClient,
+  body: ActionBody,
+  channel: string,
+  threadTs: string,
+  text: string,
+  blocks?: KnownBlock[],
+  action?: unknown,
+): Promise<void> {
+  const userId = actionEphemeralUserId(body, action);
+  if (userId) {
+    await client.chat.postEphemeral({
+      channel, user: userId, thread_ts: threadTs, text, ...(blocks ? { blocks } : {}),
+    });
+    return;
+  }
+  await client.chat.postMessage({
+    channel, thread_ts: threadTs, text, ...(blocks ? { blocks } : {}),
+  });
+}
 
 interface ShareButtonValue {
   action: 'share_summary';
@@ -81,14 +141,17 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
         logger,
       });
       if (membership !== 'member') {
-        await client.chat.postMessage({
-          channel: assistantChannelId,
-          thread_ts: threadTs,
-          text:
-            membership === 'unknown'
-              ? MEMBERSHIP_UNKNOWN_MESSAGE
-              : "I can only share summaries for channels you're a member of.",
-        });
+        await replyToUser(
+          client,
+          body,
+          assistantChannelId,
+          threadTs,
+          membership === 'unknown'
+            ? MEMBERSHIP_UNKNOWN_MESSAGE
+            : "I can only share summaries for channels you're a member of.",
+          undefined,
+          action,
+        );
         return;
       }
 
@@ -96,11 +159,15 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
         sanitizeGeneratedSlackMrkdwn(extractSummaryBody(message))
       );
       if (summaryText.length === 0) {
-        await client.chat.postMessage({
-          channel: assistantChannelId,
-          thread_ts: threadTs,
-          text: "😅 I couldn't find the summary text on that message to share.",
-        });
+        await replyToUser(
+          client,
+          body,
+          assistantChannelId,
+          threadTs,
+          "😅 I couldn't find the summary text on that message to share.",
+          undefined,
+          action,
+        );
         return;
       }
       const attribution = buildShareAttribution(body.user.id, count, buttonValue.styleKind);
@@ -118,11 +185,15 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
       });
       const permalink = shared.ts ? await getMessagePermalink(client, sourceChannelId, shared.ts) : null;
       try {
-        await client.chat.postMessage({
-          channel: assistantChannelId,
-          thread_ts: threadTs,
-          text: `Shared to <#${sourceChannelId}>${permalink ? ` · <${permalink}|View message>` : ''}`,
-        });
+        await replyToUser(
+          client,
+          body,
+          assistantChannelId,
+          threadTs,
+          `Shared to <#${sourceChannelId}>${permalink ? ` · <${permalink}|View message>` : ''}`,
+          undefined,
+          action,
+        );
       } catch (error) {
         // The public post succeeded. A failed private confirmation must not
         // tell the user to retry the public post and create a duplicate.
@@ -131,11 +202,15 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
     } catch (error) {
       logger.error('Failed to handle share_summary action:', error);
       try {
-        await client.chat.postMessage({
-          channel: assistantChannelId,
-          thread_ts: threadTs,
-          text: "😅 Couldn't share that summary just now — give it another try.",
-        });
+        await replyToUser(
+          client,
+          body,
+          assistantChannelId,
+          threadTs,
+          "😅 Couldn't share that summary just now — give it another try.",
+          undefined,
+          action,
+        );
       } catch (followup) {
         logger.error('Failed to notify user of share failure:', followup);
       }
@@ -154,19 +229,21 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
     handleRerun({ ...args, config, transformAction: 'rerun_shorter', style: null, statusText: 'Making that recap shorter...' })
   );
 
-  app.action<BlockAction>(ACTION_SUMMARY_LATEST, async ({ ack, body, action, client, logger }) => {
+  const handleLatest = async ({ ack, body, action, client, logger }: SlackActionMiddlewareArgs<BlockAction> & AllMiddlewareArgs): Promise<void> => {
     await ack();
     const message = 'message' in body ? body.message : null;
     const channel = 'channel' in body ? body.channel : null;
-    if (!message || !channel || action.type !== 'overflow') {
+    if (!message || !channel || (action.type !== 'overflow' && action.type !== 'button')) {
       return;
     }
     const threadTs = message.thread_ts ?? message.ts;
+    const raw = action.type === 'overflow' ? action.selected_option?.value : action.value;
     try {
-      const value = parseSummaryLatestValue(action.selected_option?.value);
+      const value = parseSummaryLatestValue(raw);
       if (!value) {
-        await client.chat.postMessage({ channel: channel.id, thread_ts: threadTs,
-          text: 'That latest-message request has invalid settings. Type `summarize #channel` to choose a source again.' });
+        await replyToUser(client, body, channel.id, threadTs,
+          'That latest-message request has invalid settings. Type `summarize #channel` to choose a source again.',
+          undefined, action);
         return;
       }
       // Fresh requests keep this result's explicit source and preset. Do not
@@ -176,12 +253,16 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
         assistantChannelId: channel.id, assistantThreadTs: threadTs,
         messageCount: value.count,
         customStyle: value.styleKey === 'default' ? null : resolveStylePreset(value.styleKey),
-        statusText: `Catching up on the latest ${value.count} messages...`, logger,
+        statusText: `Catching up on the latest ${value.count} messages...`,
+        ephemeralUserId: actionEphemeralUserId(body, action),
+        logger,
       });
     } catch (error) {
       logger.error('Failed to request latest source messages:', error);
     }
-  });
+  };
+  app.action<BlockAction>(ACTION_SUMMARY_LATEST, handleLatest);
+  app.action<BlockAction>(ACTION_WHATS_NEW, handleLatest);
 
   // One-tap summarize from the welcome message, style confirmations, and the
   // unknown-intent nudge. Uses the thread's saved defaults at click time.
@@ -203,12 +284,13 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
         logger,
       });
       if (!state.viewingChannelId) {
-        await client.chat.postMessage({
-          channel: assistantChannelId,
-          thread_ts: threadTs,
-          text:
-            "Choose a source channel above, or type `summarize #channel`. That source stays set for this thread.",
-        });
+        await replyToUser(
+          client,
+          body,
+          assistantChannelId,
+          threadTs,
+          "Choose a source channel above, or type `summarize #channel`. That source stays set for this thread.",
+        );
         return;
       }
 
@@ -221,6 +303,7 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
         assistantThreadTs: threadTs,
         messageCount: normalizeMessageCount(state.defaultMessageCount),
         customStyle: state.customStyle,
+        ephemeralUserId: actionEphemeralUserId(body),
         logger,
       });
     } catch (error) {
@@ -248,20 +331,21 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
       if (!isValidSlackChannelId(retry.channelId) || !Number.isInteger(retry.count) || retry.count < 1 || retry.count > 500 ||
         (retry.styleKey !== undefined && retry.styleKey !== DEFAULT_STYLE_PRESET_KEY && !STYLE_PRESETS.some((preset) => preset.key === retry.styleKey)) ||
         (retry.shorter !== undefined && typeof retry.shorter !== 'boolean')) {
-        await client.chat.postMessage({ channel: assistantChannelId, thread_ts: threadTs,
-          text: 'That retry has invalid saved settings. Refresh the source before trying again.' });
+        await replyToUser(client, body, assistantChannelId, threadTs,
+          'That retry has invalid saved settings. Refresh the source before trying again.', undefined, action);
         return;
       }
       if (retry.requiresOriginal) {
-        await client.chat.postMessage({ channel: assistantChannelId, thread_ts: threadTs,
-          text: retry.window
+        await replyToUser(client, body, assistantChannelId, threadTs,
+          retry.window
             ? 'Retry the action on the original summary to keep its custom style and saved time window.'
-            : 'Repeat your original request to retry with the same custom style.' });
+            : 'Repeat your original request to retry with the same custom style.',
+          undefined, action);
         return;
       }
       if (retry.window !== undefined && !parseSummaryWindow(retry.window)) {
-        await client.chat.postMessage({ channel: assistantChannelId, thread_ts: threadTs,
-          text: 'That retry has no valid saved time window. Refresh the source before trying again.' });
+        await replyToUser(client, body, assistantChannelId, threadTs,
+          'That retry has no valid saved time window. Refresh the source before trying again.', undefined, action);
         return;
       }
       let customStyle = retry.styleKey ? resolveStylePreset(retry.styleKey) : retry.style ?? null;
@@ -274,7 +358,7 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
       }
       const validatedStyle = validateAndSanitizeStyle(customStyle);
       if (!validatedStyle.ok) {
-        await client.chat.postMessage({ channel: assistantChannelId, thread_ts: threadTs, text: validatedStyle.reason });
+        await replyToUser(client, body, assistantChannelId, threadTs, validatedStyle.reason, undefined, action);
         return;
       }
 
@@ -290,6 +374,7 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
         window: retry.window,
         shorter: retry.shorter,
         statusText: '🔄 Taking another run at it...',
+        ephemeralUserId: actionEphemeralUserId(body, action),
         logger,
       });
     } catch (error) {
@@ -318,12 +403,14 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
       if (!message || !channel) {
         return;
       }
-      await client.chat.postMessage({
-        channel: channel.id,
-        thread_ts: message.thread_ts ?? message.ts,
-        text: 'TLDR Bot Help',
-        blocks: buildHelpBlocks(),
-      });
+      await replyToUser(
+        client,
+        body,
+        channel.id,
+        message.thread_ts ?? message.ts,
+        'TLDR Bot Help',
+        buildHelpBlocks(),
+      );
     } catch (error) {
       logger.error('Failed to handle show help action:', error);
     }
@@ -339,7 +426,7 @@ export function registerActionHandlers(app: App, config: AppConfig): void {
     const selectedChannel = action.selected_conversation;
     const threadTs = message.thread_ts ?? message.ts;
     const reply = async (text: string): Promise<void> => {
-      await client.chat.postMessage({ channel: channel.id, thread_ts: threadTs, text });
+      await replyToUser(client, body, channel.id, threadTs, text);
     };
     try {
       if (!isValidSlackChannelId(selectedChannel)) {
@@ -518,7 +605,7 @@ async function handleRerun(args: RerunArgs): Promise<void> {
     return;
   }
   const reply = async (text: string): Promise<void> => {
-    await client.chat.postMessage({ channel: channel.id, thread_ts: message.thread_ts ?? message.ts, text });
+    await replyToUser(client, body, channel.id, message.thread_ts ?? message.ts, text, undefined, action);
   };
   try {
     const value = parseSummaryTransformValue(action.value);
@@ -546,7 +633,7 @@ async function handleRerun(args: RerunArgs): Promise<void> {
       messageCount: value.count, customStyle, window: value.window,
       shorter: args.transformAction === 'rerun_shorter' || value.shorter,
       summaryToShorten,
-      statusText, logger,
+      statusText, ephemeralUserId: actionEphemeralUserId(body, action), logger,
     });
   } catch (error) {
     logger.error('Failed to transform saved summary:', error);

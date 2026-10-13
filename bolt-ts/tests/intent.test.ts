@@ -167,7 +167,7 @@ describe('parseUserIntent', () => {
       expect(result).toMatchObject({ type: 'summarize', targetChannel: 'C123ABC' });
     });
 
-    it.each(['summarise last 20', 'tldr', 'tl;dr', 'recap', 'catch me up', 'fill me in', 'what did I miss?', 'what happened here', 'give me a summary'])(
+    it.each(['summarise last 20', 'tldr', 'tl;dr', 'recap', 'catch me up', 'catch up', 'fill me in', 'what did I miss?', 'what happened here', 'give me a summary'])(
       'should treat %j as a summarize request',
       (phrase) => {
         const result = parseUserIntent(phrase);
@@ -266,6 +266,32 @@ describe('parseUserIntent', () => {
   });
 
   describe('unknown intent', () => {
+    it.each(['roast', 'roast this channel', 'pull receipts', 'receipts please', 'roast <#C123ABC> last 10'])(
+      'treats the short preset command %j as a summarize',
+      (phrase) => {
+        const result = parseUserIntent(phrase);
+        expect(result.type).toBe('summarize');
+        if (result.type !== 'summarize') {
+          return;
+        }
+        expect(result.styleOverride?.toLowerCase()).toMatch(/roast|receipt/);
+        expect((result.styleOverride ?? '').length).toBeGreaterThan(40);
+      }
+    );
+
+    it('keeps an explicit style override ahead of the roast verb', () => {
+      const result = parseUserIntent('roast with style: be kind');
+      expect(result).toMatchObject({ type: 'summarize', styleOverride: 'be kind' });
+    });
+
+    it.each([
+      'roast my cooking',
+      'the receipts are in the drawer',
+      'catch up later about the budget',
+    ])('leaves %j as chat', (phrase) => {
+      expect(parseUserIntent(phrase)).toEqual({ type: 'unknown' });
+    });
+
     it('should return unknown for unrecognized text', () => {
       const result = parseUserIntent('hello there');
       expect(result).toEqual({ type: 'unknown' });
