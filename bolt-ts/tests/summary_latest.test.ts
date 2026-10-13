@@ -5,12 +5,12 @@ const request = { v: 1, action: 'refresh_latest', channelId: 'C012345678', count
 const input = { sourceChannelId: request.channelId, sourceChannelName: 'testing-bots', messageCount: 5, currentStyle: null };
 
 describe('explicit latest-message menu', () => {
-  it('offers fresh requests for the original source, requested count, and explicit Default style', () => {
+  it('offers a wider window for the original source and explicit Default style', () => {
     const menu = buildSummaryLatestMenu(input)!;
     expect(menu.type).toBe('overflow');
-    expect(menu.options.map((option) => option.text?.text)).toEqual(['Refresh latest 5 · Default', 'Expand to latest 200 · Default']);
+    expect(menu.options.map((option) => option.text?.text)).toEqual(['Go back further 200 · Default']);
     expect(menu.options.map((option) => JSON.parse(option.value!))).toEqual([
-      request, { ...request, action: 'expand_latest', count: 200 },
+      { ...request, action: 'expand_latest', count: 200 },
     ]);
     expect(menu.options.every((option) => option.description?.text === 'Latest messages in #testing-bots')).toBe(true);
     expect(menu).not.toHaveProperty('accessibility_label');
@@ -19,14 +19,12 @@ describe('explicit latest-message menu', () => {
   it.each([[1, 200], [50, 200], [199, 200], [200, 300], [250, 300], [499, 500]])(
     'expands %i to %i, always requesting more while bounded at 500', (count, expanded) => {
       const menu = buildSummaryLatestMenu({ ...input, messageCount: count })!;
-      expect(parseSummaryLatestValue(menu.options[1].value)?.count).toBe(expanded);
+      expect(parseSummaryLatestValue(menu.options[0].value)?.count).toBe(expanded);
     }
   );
 
-  it('offers only refresh at the maximum count', () => {
-    const menu = buildSummaryLatestMenu({ ...input, messageCount: 500 })!;
-    expect(menu.options).toHaveLength(1);
-    expect(parseSummaryLatestValue(menu.options[0].value)?.count).toBe(500);
+  it('hides the overflow at the maximum count', () => {
+    expect(buildSummaryLatestMenu({ ...input, messageCount: 500 })).toBeNull();
   });
 
   it.each(STYLE_PRESETS)('carries only canonical preset identity for $key', (preset) => {
@@ -67,6 +65,7 @@ describe('latest-message payload boundary', () => {
     { ...request, styleKey: 'custom' }, { ...request, styleKey: '__default__' },
     { ...request, styleKey: 'unknown' }, { ...request, window: null },
     { ...request, customStyle: 'secret' }, { ...request, summaryToShorten: 'old recap' },
+    { ...request, e: 0 }, { ...request, e: true }, { ...request, e: '1' },
   ])('rejects malformed or unsupported saved data: case %#', (value) => {
     expect(parseSummaryLatestValue(JSON.stringify(value))).toBeNull();
   });
@@ -75,5 +74,13 @@ describe('latest-message payload boundary', () => {
     expect(parseSummaryLatestValue('{')).toBeNull();
     expect(parseSummaryLatestValue('x'.repeat(151))).toBeNull();
     expect(parseSummaryLatestValue(JSON.stringify(request))).toEqual(request);
+    expect(parseSummaryLatestValue(JSON.stringify({ ...request, e: 1 }))).toEqual(request);
+  });
+
+  it('keeps a private follow-up flag inside Slack\'s option value cap', () => {
+    const menu = buildSummaryLatestMenu({ ...input, privateReply: true })!;
+    expect(menu.options[0].value).toContain('"e":1');
+    expect(menu.options[0].value!.length).toBeLessThanOrEqual(150);
+    expect(parseSummaryLatestValue(menu.options[0].value)?.action).toBe('expand_latest');
   });
 });

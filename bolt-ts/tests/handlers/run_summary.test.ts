@@ -145,3 +145,45 @@ describe('visible-recap guard', () => {
     }) }));
   });
 });
+
+describe('ephemeral catch-up', () => {
+  it('keeps refusals and successful runs out of the channel and off the assistant status APIs', async () => {
+    jest.clearAllMocks();
+    const postEphemeral = jest.fn().mockResolvedValue({});
+    const postMessage = jest.fn();
+    const setStatus = jest.fn();
+    const setTitle = jest.fn();
+    const client = {
+      chat: { postMessage, postEphemeral },
+      assistant: { threads: { setStatus, setTitle } },
+      conversations: { info: jest.fn().mockResolvedValue({ channel: { name: 'general' } }) },
+    } as unknown as WebClient;
+    const logger = { error: jest.fn(), warn: jest.fn() };
+    jest.mocked(checkChannelMembership).mockResolvedValue('not_member');
+    await guardAndRunSummarization({
+      client, config: {} as AppConfig, userId: 'ephemeral-refuse',
+      sourceChannelId: 'C012345678', assistantChannelId: 'C012345678',
+      assistantThreadTs: '1.0', messageCount: 50, customStyle: null,
+      ephemeralUserId: 'U1', logger,
+    });
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(setStatus).not.toHaveBeenCalled();
+    expect(postEphemeral).toHaveBeenCalledWith(expect.objectContaining({ channel: 'C012345678', user: 'U1' }));
+    expect(runSummarization).not.toHaveBeenCalled();
+
+    jest.mocked(checkChannelMembership).mockResolvedValue('member');
+    jest.mocked(runSummarization).mockResolvedValueOnce('delivered');
+    await guardAndRunSummarization({
+      client, config: {} as AppConfig, userId: 'ephemeral-ok',
+      sourceChannelId: 'C012345678', assistantChannelId: 'C012345678',
+      assistantThreadTs: '1.0', messageCount: 50, customStyle: null,
+      ephemeralUserId: 'U1', logger,
+    });
+    expect(runSummarization).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({ ephemeralUserId: 'U1', channelId: 'C012345678' }),
+    }));
+    expect(setStatus).not.toHaveBeenCalled();
+    expect(setTitle).not.toHaveBeenCalled();
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+});

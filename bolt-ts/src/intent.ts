@@ -20,6 +20,7 @@
  * command, "in the last 2 weeks I read 3 books" is not.
  */
 
+import { RECEIPTS_STYLE, ROAST_STYLE } from './styles';
 import { UserIntent } from './types';
 
 /**
@@ -28,7 +29,15 @@ import { UserIntent } from './types';
  * photosynthesis works" remains an ordinary model query.
  */
 const SUMMARY_REQUEST_LEAD =
-  /^\s*(?:hey\s+tldr[\s,:!.-]*)?(?:(?:can|could|would|will)\s+you\s+|help\s+me\s+)?(?:please\s+)?(?:summarize|summarise|recap|catch\s+me\s+up|fill\s+me\s+in|what\s+did\s+i\s+miss|what\s+happened|give\s+me\s+(?:a\s+)?(?:summary|recap))\b[\s,:!.-]*/i;
+  /^\s*(?:hey\s+tldr[\s,:!.-]*)?(?:(?:can|could|would|will)\s+you\s+|help\s+me\s+)?(?:please\s+)?(?:summarize|summarise|recap|catch\s+me\s+up|catch\s+up|fill\s+me\s+in|what\s+did\s+i\s+miss|what\s+happened|give\s+me\s+(?:a\s+)?(?:summary|recap))\b[\s,:!.-]*/i;
+
+/**
+ * Short preset commands. The chip sends `roast` or `receipts`, not the
+ * style paragraph. Anything left after the command words stays chat, so
+ * "roast my cooking" is not a summary.
+ */
+const PRESET_COMMAND_LEAD =
+  /^\s*(?:hey\s+tldr[\s,:!.-]*)?(?:(?:can|could|would|will)\s+you\s+|help\s+me\s+)?(?:please\s+)?(?:pull\s+(?:the\s+)?)?(roast|receipts)\b[\s,:!.-]*/i;
 
 /**
  * True when a summary verb is being used as a command, not merely discussed
@@ -36,13 +45,9 @@ const SUMMARY_REQUEST_LEAD =
  * prompts and typed commands lead with the verb; polite model-style requests
  * are covered by {@link SUMMARY_REQUEST_LEAD}.
  */
-function isSummarizeRequest(text: string): boolean {
-  const lead = text.match(SUMMARY_REQUEST_LEAD);
-  if (!lead) {
-    return false;
-  }
-  const residue = text
-    .slice(lead[0].length)
+function commandResidue(text: string, leadLength: number): string {
+  return text
+    .slice(leadLength)
     .replace(/\bwith\s+style\s*:[\s\S]*$/i, ' ')
     .replace(/<#[A-Z0-9]+(?:\|[^>]*)?>/g, ' ')
     .replace(/\blast\s+\d+\b/gi, ' ')
@@ -50,11 +55,30 @@ function isSummarizeRequest(text: string): boolean {
     .replace(/\b(?:this|the|current)\s+channel\b/gi, ' ')
     .replace(/\bwhat\s+i\s+missed\b/gi, ' ')
     .replace(
-      /\b(?:messages?|msgs?|please|pls|now|here|public|on|in|from|of|the)\b/gi,
+      /\b(?:messages?|msgs?|please|pls|now|here|public|on|in|from|of|the|channel|conversation)\b/gi,
       ' '
     )
     .replace(/[\s,.!?]+/g, '');
-  return residue.length === 0;
+}
+
+/** Roast / receipts chips and typed shortcuts. Null when the rest is a real sentence. */
+function presetFromCommand(text: string): 'roast' | 'receipts' | null {
+  const lead = text.match(PRESET_COMMAND_LEAD);
+  if (!lead) {
+    return null;
+  }
+  if (commandResidue(text, lead[0].length).length > 0) {
+    return null;
+  }
+  return lead[1]?.toLowerCase() === 'roast' ? 'roast' : 'receipts';
+}
+
+function isSummarizeRequest(text: string): boolean {
+  const lead = text.match(SUMMARY_REQUEST_LEAD);
+  if (!lead) {
+    return false;
+  }
+  return commandResidue(text, lead[0].length).length === 0;
 }
 
 /** A message that is just "last N [messages]" is a quick summarize command. */
@@ -145,15 +169,18 @@ export function parseUserIntent(text: string): UserIntent {
     targetChannel = channelMatch[1];
   }
 
+  const preset = presetFromCommand(text);
   const askedToRun =
-    isSummarizeRequest(text) || isTldrCommand(text) || BARE_COUNT_COMMAND.test(text);
+    preset !== null || isSummarizeRequest(text) || isTldrCommand(text) || BARE_COUNT_COMMAND.test(text);
 
   if (askedToRun) {
+    const presetStyle = preset === 'roast' ? ROAST_STYLE : preset === 'receipts' ? RECEIPTS_STYLE : null;
     return {
       type: 'summarize',
       count,
       targetChannel,
-      styleOverride,
+      // An explicit "with style:" wins over the preset the verb implies.
+      styleOverride: styleOverride ?? presetStyle,
     };
   }
 

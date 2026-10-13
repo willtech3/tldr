@@ -9,6 +9,7 @@
 
 import type {
   ActionsBlock,
+  Button,
   ContextActionsBlock,
   ContextBlock,
   KnownBlock,
@@ -17,7 +18,7 @@ import type {
 import { isReceiptsStyle, isRoastStyle, STYLE_PRESETS } from '../styles';
 import type { SummaryCoverage, SummaryWindow } from '../types';
 import { parseSummaryWindow } from '../summary_window';
-import { buildSummaryLatestMenu } from '../summary_latest';
+import { ACTION_WHATS_NEW, buildSummaryLatestMenu, buildSummaryLatestValue } from '../summary_latest';
 
 export const ACTION_SUMMARY_FEEDBACK = 'summary_feedback';
 
@@ -73,6 +74,10 @@ export interface SummaryActionButtonsArgs {
   currentStyle: string | null;
   /** Delivery timestamp (ms). Injectable for tests; defaults to now. */
   deliveredAtMs?: number;
+  /** First lines of the recap, shown in the Share confirmation. */
+  sharePreview?: string;
+  /** Button values carry `e: 1` so a later click stays ephemeral. */
+  privateReply?: boolean;
 }
 
 /**
@@ -80,6 +85,45 @@ export interface SummaryActionButtonsArgs {
  * Roast and Receipts buttons are hidden when the current summary already uses
  * that style — keeps the row clean for the user.
  */
+/** Slack's confirmation `text` is capped at 300 characters. */
+const SHARE_CONFIRM_TEXT_MAX = 300;
+
+/** Plain excerpt for the Share dialog. Mentions and markdown are stripped. */
+export function buildShareConfirmText(sourceChannelId: string, preview?: string): string {
+  const lead = `This posts the full summary to <#${sourceChannelId}> with your name on it.`;
+  // The sources appendix quotes channel text. The dialog should preview the recap.
+  const cleaned = (preview ?? '')
+    .replace(/\n+\*\*Sources\*\*[\s\S]*$/, '')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/<[^>\n]{0,200}>/g, '')
+    .replace(/[*_`~#]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned || lead.length >= SHARE_CONFIRM_TEXT_MAX - 20) {
+    return lead.slice(0, SHARE_CONFIRM_TEXT_MAX);
+  }
+  const room = SHARE_CONFIRM_TEXT_MAX - lead.length - 1;
+  const chars = [...cleaned];
+  const snippet = chars.length > room ? `${chars.slice(0, room - 3).join('')}...` : cleaned;
+  const text = `${lead}\n${snippet}`;
+  return text.length <= SHARE_CONFIRM_TEXT_MAX ? text : text.slice(0, SHARE_CONFIRM_TEXT_MAX);
+}
+
+function buildWhatsNewButton(args: SummaryActionButtonsArgs): Button | null {
+  const value = buildSummaryLatestValue(args, 'refresh_latest', args.messageCount);
+  if (!value) {
+    return null;
+  }
+  return {
+    type: 'button',
+    style: 'primary',
+    text: { type: 'plain_text', text: "What's new" },
+    action_id: ACTION_WHATS_NEW,
+    accessibility_label: 'Read the latest messages in this channel at the same count and style',
+    value,
+  };
+}
+
 export function buildSummaryActionButtons(args: SummaryActionButtonsArgs): KnownBlock[] {
   const { sourceChannelId, messageCount, currentStyle } = args;
   const elements: ActionsBlock['elements'] = [];
@@ -87,13 +131,19 @@ export function buildSummaryActionButtons(args: SummaryActionButtonsArgs): Known
   const sourceLabel = args.sourceChannelName && args.sourceChannelName !== sourceChannelId
     ? `#${args.sourceChannelName}` : sourceChannelId;
 
+  const whatsNew = buildWhatsNewButton(args);
+  if (whatsNew) {
+    elements.push(whatsNew);
+  }
+
   const addTransform = (action: SummaryTransformValue['action'], label: string): void => {
     if (!window) {
       return;
     }
-    const value: SummaryTransformValue = {
+    const value: SummaryTransformValue & { e?: 1 } = {
       v: 2, action, channelId: sourceChannelId, count: messageCount, window,
       styleKey: toSummaryStyleKey(currentStyle), shorter: args.shorter === true,
+      ...(args.privateReply ? { e: 1 } : {}),
     };
     elements.push({
       type: 'button', text: { type: 'plain_text', text: label }, action_id: action,
@@ -111,30 +161,36 @@ export function buildSummaryActionButtons(args: SummaryActionButtonsArgs): Known
     addTransform('rerun_receipts', 'Receipts');
   }
 
-  const shareValue: ShareButtonValue = {
+  const latestMenu = buildSummaryLatestMenu(args);
+  if (latestMenu) {
+    elements.push(latestMenu);
+  }
+
+  const shareValue: ShareButtonValue & { e?: 1 } = {
     action: 'share_summary', sourceChannelId,
     count: args.coverage?.messageCount ?? messageCount, styleKind: toStyleKind(currentStyle),
+    ...(args.privateReply ? { e: 1 } : {}),
   };
   const shareLabel = `Share to ${sourceLabel}`;
-  elements.push({
+  const shareButton: Button = {
     type: 'button',
     text: { type: 'plain_text', text: shareLabel.length > 75 ? shareLabel.slice(0, 72) + '...' : shareLabel },
     accessibility_label: 'Share this summary to its source channel',
     action_id: 'share_summary', value: JSON.stringify(shareValue),
     confirm: {
       title: { type: 'plain_text', text: 'Share this summary?' },
-      text: { type: 'mrkdwn', text: `This posts the full summary to <#${sourceChannelId}> with your name on it.` },
+      text: { type: 'mrkdwn', text: buildShareConfirmText(sourceChannelId, args.sharePreview) },
       confirm: { type: 'plain_text', text: 'Share' }, deny: { type: 'plain_text', text: 'Cancel' },
     },
-  });
+  };
 
-  const latestMenu = buildSummaryLatestMenu(args);
-  if (latestMenu) {
-    elements.push(latestMenu);
+  const blocks: KnownBlock[] = [];
+  if (elements.length > 0) {
+    blocks.push({ type: 'actions', elements });
   }
-
-  const actions: ActionsBlock = { type: 'actions', elements };
-  return [actions, buildProvenanceBlock(args), buildFeedbackBlock(args)];
+  // Share sits on its own row so the public action is not the longest label in the pivot row.
+  blocks.push({ type: 'actions', elements: [shareButton] });
+  return [...blocks, buildProvenanceBlock(args), buildFeedbackBlock(args)];
 }
 
 /** Small grey footer: AI disclosure + scope + local-time stamp. */
@@ -149,7 +205,7 @@ function buildProvenanceBlock(args: SummaryActionButtonsArgs): ContextBlock {
         type: 'mrkdwn',
         text:
           `🤖 AI-generated • <#${args.sourceChannelId}>` +
-          ` • <!date^${unixSeconds}^{time}|${fallback}> • ⋯ Get latest`,
+          ` • <!date^${unixSeconds}^{time}|${fallback}>`,
       },
     ],
   };

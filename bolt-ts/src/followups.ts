@@ -8,23 +8,29 @@
 
 import type { WebClient } from '@slack/web-api';
 import { getChannelName } from './slack/client';
-import { RECEIPTS_STYLE, ROAST_STYLE } from './styles';
 
 export interface FollowUpPrompt {
   title: string;
   message: string;
 }
 
-/** Initial choices always name their source, even if thread context changes. */
+/**
+ * Initial choices name their source. The message is a short command — the
+ * intent parser maps roast/receipts onto the preset. The style paragraph
+ * never appears as the user's own message.
+ */
 export function buildSourcePrompts(channelId: string | null): FollowUpPrompt[] {
   if (!channelId) {
-    return [{ title: 'How to use TLDR', message: 'help' }];
+    return [
+      { title: 'Catch up', message: 'catch up' },
+      { title: 'Roast', message: 'roast' },
+    ];
   }
-  const summarize = `summarize <#${channelId}>`;
+  const channel = `<#${channelId}>`;
   return [
-    { title: 'Catch up', message: summarize },
-    { title: 'Roast', message: `${summarize} with style: ${ROAST_STYLE}` },
-    { title: 'Receipts', message: `${summarize} with style: ${RECEIPTS_STYLE}` },
+    { title: 'Catch up', message: `catch up ${channel}` },
+    { title: 'Roast', message: `roast ${channel}` },
+    { title: 'Receipts', message: `receipts ${channel}` },
   ];
 }
 

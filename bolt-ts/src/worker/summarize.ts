@@ -6,7 +6,7 @@
  */
 
 import type { WebClient } from '@slack/web-api';
-import type { KnownBlock } from '@slack/types';
+import type { KnownBlock, MessageMetadata } from '@slack/types';
 import { LlmClient, PromptTooLargeError, TOO_LARGE_MESSAGE } from '../ai/anthropic';
 import { buildFailureBlocks, buildRetryValue } from '../blocks';
 import type { AppConfig } from '../config';
@@ -40,6 +40,11 @@ export interface SummarizeRequest {
   shorter?: boolean;
   /** Prior visible recap, excluded from delivery metadata and action payloads. */
   summaryToShorten?: string;
+  /**
+   * When set, the recap is posted with chat.postEphemeral for this user
+   * and streaming is skipped. Streaming would publish the recap in the channel.
+   */
+  ephemeralUserId?: string;
 }
 
 interface RunArgs {
@@ -68,7 +73,32 @@ export async function runSummarization(args: RunArgs): Promise<SummarizeOutcome>
       maxOutputTokens: config.anthropicMaxOutputTokens,
     });
 
-  if (config.enableStreaming) {
+  const postOutcome = async (
+    text: string,
+    blocks?: KnownBlock[],
+    metadata?: MessageMetadata,
+  ): Promise<void> => {
+    if (request.ephemeralUserId) {
+      await client.chat.postEphemeral({
+        channel: request.originChannelId,
+        user: request.ephemeralUserId,
+        thread_ts: request.threadTs,
+        text,
+        ...(blocks ? { blocks } : {}),
+      });
+      return;
+    }
+    await client.chat.postMessage({
+      channel: request.originChannelId,
+      thread_ts: request.threadTs,
+      text,
+      ...(blocks ? { blocks } : {}),
+      ...(metadata ? { metadata } : {}),
+    });
+  };
+
+  // Ephemeral catch-up must not stream: chat.startStream publishes in the channel.
+  if (config.enableStreaming && !request.ephemeralUserId) {
     return streamSummaryToAssistantThread({
       client,
       llm,
@@ -93,11 +123,7 @@ export async function runSummarization(args: RunArgs): Promise<SummarizeOutcome>
     const botUserId = await getBotUserId(client);
     const userMessages = botUserId ? messages.filter((m) => m.user !== botUserId) : messages;
     if (userMessages.length === 0) {
-      await client.chat.postMessage({
-        channel: request.originChannelId,
-        thread_ts: request.threadTs,
-        text: buildEmptyChannelMessage(request.channelId, request.window),
-      });
+      await postOutcome(buildEmptyChannelMessage(request.channelId, request.window));
       return 'empty';
     }
     const promptData = await buildSummarizePromptData({
@@ -115,6 +141,7 @@ export async function runSummarization(args: RunArgs): Promise<SummarizeOutcome>
     const body = sanitizeGeneratedSlackMrkdwn(
       buildStreamPrefix(promptData.channelName, request.customStyle, promptData.coverage) + safetyNetted
     );
+    const privateReply = request.ephemeralUserId !== undefined;
     // The body is standard Markdown — deliver it via a markdown block so it
     // renders, with `text` as the short notification fallback. The full body
     // also goes in `text` so the Share button (and notifications) can recover
@@ -127,18 +154,14 @@ export async function runSummarization(args: RunArgs): Promise<SummarizeOutcome>
       sourceChannelName: promptData.channelName,
       window: request.window,
       shorter: request.shorter,
+      sharePreview: summary,
+      privateReply,
     };
     const blocks: KnownBlock[] = [
       { type: 'markdown', text: truncateForMarkdownBlock(body) },
       ...buildSummaryActionButtons(delivery),
     ];
-    await client.chat.postMessage({
-      channel: request.originChannelId,
-      thread_ts: request.threadTs,
-      text: body,
-      blocks,
-      metadata: buildSummaryMetadata(delivery),
-    });
+    await postOutcome(body, blocks, buildSummaryMetadata(delivery));
     return 'delivered';
   } catch (err) {
     console.error('Non-streaming summarization failed', {
@@ -148,12 +171,10 @@ export async function runSummarization(args: RunArgs): Promise<SummarizeOutcome>
 
     if (err instanceof PromptTooLargeError) {
       try {
-        await client.chat.postMessage({
-          channel: request.originChannelId,
-          thread_ts: request.threadTs,
-          text: TOO_LARGE_MESSAGE,
-          blocks: buildTooLargeBlocks(request.channelId, request.customStyle, { window: request.window, shorter: request.shorter, requiresOriginal: request.summaryToShorten !== undefined }),
-        });
+        await postOutcome(
+          TOO_LARGE_MESSAGE,
+          buildTooLargeBlocks(request.channelId, request.customStyle, { window: request.window, shorter: request.shorter, requiresOriginal: request.summaryToShorten !== undefined, privateReply: request.ephemeralUserId !== undefined }),
+        );
       } catch (followup) {
         console.error('Failed to post too-large message', followup);
       }
@@ -165,15 +186,13 @@ export async function runSummarization(args: RunArgs): Promise<SummarizeOutcome>
         ? buildBotNotInChannelMessage(request.channelId)
         : undefined;
     try {
-      await client.chat.postMessage({
-        channel: request.originChannelId,
-        thread_ts: request.threadTs,
-        text: CANONICAL_FAILURE_MESSAGE,
-        blocks: buildFailureBlocks(
-          buildRetryValue(request.channelId, request.messageCount, request.customStyle, { window: request.window, shorter: request.shorter, requiresOriginal: request.summaryToShorten !== undefined }),
+      await postOutcome(
+        CANONICAL_FAILURE_MESSAGE,
+        buildFailureBlocks(
+          buildRetryValue(request.channelId, request.messageCount, request.customStyle, { window: request.window, shorter: request.shorter, requiresOriginal: request.summaryToShorten !== undefined, privateReply: request.ephemeralUserId !== undefined }),
           failureText
         ),
-      });
+      );
     } catch (followup) {
       console.error('Failed to post canonical failure', followup);
     }

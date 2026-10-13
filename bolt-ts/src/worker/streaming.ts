@@ -211,7 +211,7 @@ function buildTooLargeText(sourceChannelId: string): string {
 export function buildTooLargeBlocks(
   sourceChannelId: string,
   style: string | null,
-  options: { window?: SummaryWindow; shorter?: boolean; requiresOriginal?: boolean } = {}
+  options: { window?: SummaryWindow; shorter?: boolean; requiresOriginal?: boolean; privateReply?: boolean } = {}
 ): ReturnType<typeof buildFailureBlocks> {
   return buildFailureBlocks(
     buildRetryValue(sourceChannelId, 50, style, options),
@@ -411,6 +411,7 @@ async function finalizeStreamSuccess(args: {
     sourceChannelName: args.sourceChannelName,
     window: args.window,
     shorter: args.shorter,
+    sharePreview: args.summaryText,
   };
   const blocks = buildSummaryActionButtons(delivery);
   await stopStream(args.client, {

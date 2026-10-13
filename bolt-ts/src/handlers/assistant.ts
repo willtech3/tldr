@@ -37,7 +37,7 @@ import { runGeneralChat } from '../worker/chat';
 import { guardAndRunSummarization } from './run_summary';
 import { buildSourcePrompts, type FollowUpPrompt } from '../followups';
 
-const WELCOME_TEXT = 'Catch up on the conversation. Source, message limit, and style are set below.';
+const WELCOME_TEXT = 'Catch up on a channel. Choose one, then click Catch up.';
 
 /**
  * Instant reply for a file shared with no caption. Posted directly — no

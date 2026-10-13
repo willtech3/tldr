@@ -4,8 +4,8 @@
  * UI design notes:
  *  - The welcome message doubles as the canonical thread-state message —
  *    metadata on it persists viewingChannelId / customStyle / defaultMessageCount.
- *  - The source stays beside the primary action; count and style are compact
- *    controls above it.
+ *  - With no source, the card is only the channel picker. Catch up is the
+ *    primary action once a channel is saved; count and style sit below it.
  *  - Slack's contextual status (suggested prompts, setStatus) is handled in
  *    the Assistant middleware, not in the welcome blocks.
  */
@@ -44,6 +44,8 @@ export interface RetrySummaryValue {
   requiresOriginal?: boolean;
   window?: SummaryWindow;
   shorter?: boolean;
+  /** `e: 1` keeps a retry of an ephemeral failure from posting into the channel. */
+  e?: 1;
 }
 
 /**
@@ -55,13 +57,14 @@ export function buildRetryValue(
   channelId: string,
   count: number,
   style: string | null,
-  options: { window?: SummaryWindow; shorter?: boolean; requiresOriginal?: boolean } = {}
+  options: { window?: SummaryWindow; shorter?: boolean; requiresOriginal?: boolean; privateReply?: boolean } = {}
 ): RetrySummaryValue {
   const retry: RetrySummaryValue = {
     channelId,
     count,
     ...(options.window !== undefined ? { window: options.window } : {}),
     ...(options.shorter !== undefined ? { shorter: options.shorter } : {}),
+    ...(options.privateReply ? { e: 1 } : {}),
   };
   if (options.requiresOriginal) {
     return { ...retry, requiresOriginal: true };
@@ -87,29 +90,50 @@ export function buildWelcomeBlocks(
   defaultMessageCount?: number | null
 ): KnownBlock[] {
   const effectiveCount = normalizeMessageCount(defaultMessageCount);
-  const sourceText = viewingChannelId ? `<#${viewingChannelId}>` : 'Choose a channel';
   const styleLabel = activeStyle
     ? STYLE_PRESETS.find((preset) => preset.value === activeStyle)?.label.split(' — ')[0] ?? 'Custom'
     : 'Default';
+  const sourceSelect = {
+    type: 'conversations_select' as const,
+    action_id: ACTION_SELECT_SOURCE,
+    placeholder: { type: 'plain_text' as const, text: 'Choose a channel' },
+    ...(viewingChannelId ? { initial_conversation: viewingChannelId } : {}),
+    filter: { include: ['public' as const, 'private' as const] },
+  };
+  // No source yet: the picker is the only step. Count, style, and Catch up
+  // appear once a channel is saved, so the card is not a form with no button.
+  if (!viewingChannelId) {
+    return [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: 'Choose a channel to catch up. It stays set for this thread.',
+        },
+        accessory: sourceSelect,
+      },
+    ];
+  }
+  const sourceText = `<#${viewingChannelId}>`;
   return [
     {
       type: 'section',
-      text: { type: 'mrkdwn', text: 'Catch up on the conversation.' },
-    },
-    {
-      type: 'section',
-      text: { type: 'mrkdwn', text: `*Source:* ${sourceText}` },
+      text: { type: 'mrkdwn', text: `Catch up on ${sourceText} · last ${effectiveCount} messages` },
       accessory: {
-        type: 'conversations_select',
-        action_id: ACTION_SELECT_SOURCE,
-        placeholder: { type: 'plain_text', text: 'Choose source channel' },
-        ...(viewingChannelId ? { initial_conversation: viewingChannelId } : {}),
-        filter: { include: ['public', 'private'] },
+        type: 'button',
+        style: 'primary',
+        text: { type: 'plain_text', text: 'Catch up' },
+        accessibility_label: 'Catch up on the selected source channel',
+        action_id: ACTION_QUICK_SUMMARIZE,
       },
     },
     {
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: `Style: *${styleLabel}* · Source and style stay set for this thread.` }],
+    },
+    {
       type: 'section',
-      text: { type: 'mrkdwn', text: '*Message limit*' },
+      text: { type: 'mrkdwn', text: '*How far back*' },
       accessory: {
         type: 'static_select',
         action_id: ACTION_SELECT_MESSAGE_COUNT,
@@ -124,20 +148,10 @@ export function buildWelcomeBlocks(
       },
     },
     {
-      type: 'context',
-      elements: [{ type: 'mrkdwn', text: `Style: *${styleLabel}* · Source and style stay set for this thread.` }],
+      type: 'section',
+      text: { type: 'mrkdwn', text: `*Source:* ${sourceText}` },
+      accessory: sourceSelect,
     },
-    ...(viewingChannelId ? [{
-      type: 'section' as const,
-      text: { type: 'mrkdwn' as const, text: `Catch up on ${sourceText}` },
-      accessory: {
-        type: 'button' as const,
-        style: 'primary' as const,
-        text: { type: 'plain_text' as const, text: 'Catch up' },
-        accessibility_label: 'Catch up on the selected source channel',
-        action_id: ACTION_QUICK_SUMMARIZE,
-      },
-    }] : []),
     {
       type: 'actions',
       elements: [{
@@ -160,24 +174,27 @@ export const CHAT_FAILURE_TEXT =
  * for a model/transport failure.
  */
 export function buildChatFailureBlocks(viewingChannelId?: string | null): KnownBlock[] {
-  const target = viewingChannelId ? `<#${viewingChannelId}>` : 'your selected source';
+  const hasSource = Boolean(viewingChannelId);
+  const nextStep = hasSource
+    ? `Want me to summarize <#${viewingChannelId}> instead?`
+    : 'Choose a source channel on the card above, or ask me to `summarize #channel`.';
   return [
     {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `${CHAT_FAILURE_TEXT}\nWant me to summarize ${target} instead?`,
+        text: `${CHAT_FAILURE_TEXT}\n${nextStep}`,
       },
     },
     {
       type: 'actions',
       elements: [
-        {
-          type: 'button',
-          style: 'primary',
-          text: { type: 'plain_text', text: 'Catch up' },
+        ...(hasSource ? [{
+          type: 'button' as const,
+          style: 'primary' as const,
+          text: { type: 'plain_text' as const, text: 'Catch up' },
           action_id: ACTION_QUICK_SUMMARIZE,
-        },
+        }] : []),
         {
           type: 'button',
           text: { type: 'plain_text', text: 'Help' },
@@ -247,8 +264,8 @@ export function buildHelpBlocks(): KnownBlock[] {
         type: 'mrkdwn',
         text:
           '*Catch up*\n' +
-          'Choose a *Source* channel and *Message limit* above, then click *Catch up*. ' +
-          'Or type `summarize`, `summarize last 100`, or `summarize #channel`. ' +
+          'Choose a channel, then click *Catch up*. ' +
+          'Or type `catch up`, `summarize last 100`, `roast`, or `receipts`. ' +
           'Your selected source stays set for this thread.',
       },
     },
@@ -258,10 +275,11 @@ export function buildHelpBlocks(): KnownBlock[] {
         type: 'mrkdwn',
         text:
           '*Work with a summary*\n' +
+          '*What\'s new* reads the latest messages at that count and style. ' +
           '*Shorter*, *Roast*, and *Receipts* use that summary’s source and date window; ' +
           'message edits and deletions may still change the result. ' +
-          'The *⋯ menu* offers *Refresh latest* and *Expand to latest* for new messages at the stated count and style. ' +
-          '*Share to #channel* shows a confirmation with the destination before posting.',
+          'The *⋯ menu* offers a wider window. ' +
+          '*Share to #channel* shows a confirmation with a short preview and the destination before posting.',
       },
     },
     {

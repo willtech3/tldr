@@ -76,6 +76,74 @@ describe('runSummarization (non-streaming)', () => {
     );
   });
 
+  it('posts a private recap without streaming when the mention asks to stay ephemeral', async () => {
+    const messages = [{ ts: '1', user: 'U1', text: 'hello world', files: [] }];
+    const { client, spies } = makeWebClient(messages);
+    const postEphemeral = jest.fn().mockResolvedValue({ ok: true });
+    const startStream = jest.fn();
+    Object.assign(client.chat, { postEphemeral, startStream });
+    const llm = makeLlm();
+    jest.spyOn(llm, 'generateSummary').mockResolvedValue('A private recap');
+
+    await runSummarization({
+      config: makeConfig({ enableStreaming: true }),
+      client,
+      request: {
+        correlationId: 'cid',
+        userId: 'U1',
+        channelId: 'C012345678',
+        originChannelId: 'C012345678',
+        threadTs: '11.0',
+        messageCount: 50,
+        customStyle: null,
+        ephemeralUserId: 'U1',
+      },
+      llm,
+    });
+
+    expect(startStream).not.toHaveBeenCalled();
+    expect(spies.postMessage).not.toHaveBeenCalled();
+    expect(postEphemeral).toHaveBeenCalledWith(expect.objectContaining({
+      channel: 'C012345678',
+      user: 'U1',
+      thread_ts: '11.0',
+    }));
+    const posted = postEphemeral.mock.calls[0][0] as { blocks: Array<{ type: string; text?: string }> };
+    const serialized = JSON.stringify(posted.blocks);
+    expect(serialized).toContain('summary_whats_new');
+    expect(serialized).toContain('\\"e\\":1');
+    expect(serialized).toContain('A private recap');
+    expect(serialized).toContain('This posts the full summary to <#C012345678> with your name on it.\\nA private recap');
+  });
+
+  it('marks an ephemeral failure retry so the next click cannot post into the channel', async () => {
+    const { client, spies } = makeWebClient([{ ts: '1', user: 'U1', text: 'hello world', files: [] }]);
+    const postEphemeral = jest.fn().mockResolvedValue({ ok: true });
+    Object.assign(client.chat, { postEphemeral, startStream: jest.fn() });
+    const llm = makeLlm();
+    jest.spyOn(llm, 'generateSummary').mockRejectedValue(new Error('boom'));
+
+    await runSummarization({
+      config: makeConfig({ enableStreaming: true }),
+      client,
+      request: {
+        correlationId: 'cid',
+        userId: 'U1',
+        channelId: 'C012345678',
+        originChannelId: 'C012345678',
+        threadTs: '11.0',
+        messageCount: 50,
+        customStyle: null,
+        ephemeralUserId: 'U1',
+      },
+      llm,
+    });
+
+    expect(spies.postMessage).not.toHaveBeenCalled();
+    const posted = postEphemeral.mock.calls[0][0] as { blocks?: unknown };
+    expect(JSON.stringify(posted.blocks)).toContain('\\"e\\":1');
+  });
+
   it('runs the full non-streaming flow and posts the summary with action buttons', async () => {
     const messages = [{ ts: '1', user: 'U1', text: 'hello world', files: [] }];
     const { client, spies } = makeWebClient(messages);
@@ -89,7 +157,7 @@ describe('runSummarization (non-streaming)', () => {
       request: {
         correlationId: 'cid',
         userId: 'U1',
-        channelId: 'C123',
+        channelId: 'C012345678',
         originChannelId: 'D1',
         threadTs: '1.0',
         messageCount: 25,
@@ -110,10 +178,11 @@ describe('runSummarization (non-streaming)', () => {
     expect(call).toBeDefined();
     const args = call![0];
     expect(args.thread_ts).toBe('1.0');
-    const actions = (args.blocks as Array<{ type: string; elements?: Array<{ action_id: string }> }>).find(
-      (b) => b.type === 'actions'
-    );
-    expect(actions?.elements?.map((e) => e.action_id)).toContain('share_summary');
+    const actionIds = (args.blocks as Array<{ type: string; elements?: Array<{ action_id: string }> }>)
+      .filter((block) => block.type === 'actions')
+      .flatMap((block) => block.elements?.map((element) => element.action_id) ?? []);
+    expect(actionIds).toContain('share_summary');
+    expect(actionIds).toContain('summary_whats_new');
   });
 
   it('posts the canonical failure message when the model errors', async () => {
@@ -257,8 +326,10 @@ describe.each([false, true])('delivered coverage (streaming=%s)', (enableStreami
       window: { oldestTs: '1788825600.000001', latestTs: '1788827400.000003' },
       oldest_ts: '1788825600.000001', latest_ts: '1788827400.000003',
     });
-    const actions = delivered.blocks.find((block: { type: string }) => block.type === 'actions');
-    const share = actions.elements.find((element: { action_id: string }) => element.action_id === 'share_summary');
+    const share = delivered.blocks
+      .filter((block: { type: string }) => block.type === 'actions')
+      .flatMap((block: { elements: Array<{ action_id: string; value?: string; confirm?: { text: { text: string } } }> }) => block.elements)
+      .find((element: { action_id: string }) => element.action_id === 'share_summary');
     expect(JSON.parse(share.value).count).toBe(3);
   });
 });
@@ -362,6 +433,8 @@ describe.each([false, true])('frozen summary windows (streaming=%s)', (enableStr
     expect(text).not.toContain('<custom_style>');
     const delivered = enableStreaming ? stopStream.mock.calls[0][0] : spies.postMessage.mock.calls[0][0];
     expect(JSON.stringify(delivered.metadata)).not.toContain('picnic');
+    expect(JSON.stringify(delivered.blocks)).not.toContain('prior_visible_recap');
+    expect(JSON.stringify(delivered.blocks)).not.toContain('Use a different source');
     expect(JSON.stringify(delivered.blocks.filter((block: { type: string }) => block.type !== 'markdown'))).not.toContain('picnic');
     expect(delivered.metadata.event_payload).not.toHaveProperty('summaryToShorten');
   });

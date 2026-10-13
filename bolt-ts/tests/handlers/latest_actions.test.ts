@@ -1,7 +1,7 @@
 import type { App } from '@slack/bolt';
 import type { AppConfig } from '../../src/config';
 import { registerActionHandlers } from '../../src/handlers/actions';
-import { ACTION_SUMMARY_LATEST } from '../../src/summary_latest';
+import { ACTION_SUMMARY_LATEST, ACTION_WHATS_NEW } from '../../src/summary_latest';
 import { checkChannelMembership } from '../../src/security';
 import { runSummarization } from '../../src/worker/summarize';
 import { ROAST_STYLE } from '../../src/styles';
@@ -28,9 +28,11 @@ function fixture(payload: unknown = value) {
       channel: { id: 'D012345678' }, user: { id: `latest-action-${++serial}` },
       message: { ts: '1788888888.000001', text: 'Old visible recap', metadata: { event_payload: { custom_style: 'private old instructions' } } },
     },
-    action: { type: 'overflow', action_id: ACTION_SUMMARY_LATEST, selected_option: { value: JSON.stringify(payload) } },
+    action: { type: 'overflow', action_id: ACTION_SUMMARY_LATEST, selected_option: { value: JSON.stringify(payload) } } as {
+      type: string; action_id: string; value?: string; selected_option?: { value: string };
+    },
   };
-  return { client, args, run: () => registered[ACTION_SUMMARY_LATEST](args) };
+  return { client, args, run: (id = ACTION_SUMMARY_LATEST) => registered[id](args) };
 }
 
 beforeEach(() => {
@@ -69,6 +71,32 @@ it.each(['not_member', 'unknown'] as const)('refuses all fresh history and model
   expect(runSummarization).not.toHaveBeenCalled();
   expect(f.client.assistant.threads.setStatus).not.toHaveBeenCalled();
   expect(f.client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({ channel: 'D012345678' }));
+});
+
+it('reads the What\'s new button value and keeps an ephemeral click private', async () => {
+  const f = fixture();
+  f.args.action = { type: 'button', action_id: ACTION_WHATS_NEW, value: JSON.stringify(value) };
+  (f.args.body as { container?: { is_ephemeral?: boolean } }).container = { is_ephemeral: true };
+  const postEphemeral = jest.fn().mockResolvedValue({});
+  Object.assign(f.client.chat, { postEphemeral });
+  await f.run(ACTION_WHATS_NEW);
+  expect(f.args.ack).toHaveBeenCalledTimes(1);
+  expect(jest.mocked(runSummarization).mock.calls[0][0].request).toMatchObject({
+    channelId: value.channelId, messageCount: 5, customStyle: ROAST_STYLE, ephemeralUserId: f.args.body.user.id,
+  });
+  expect(f.client.chat.postMessage).not.toHaveBeenCalled();
+});
+
+it('stays private when the button carries e:1 and Slack omits is_ephemeral', async () => {
+  jest.mocked(checkChannelMembership).mockResolvedValue('not_member');
+  const f = fixture();
+  f.args.action = { type: 'button', action_id: ACTION_WHATS_NEW, value: JSON.stringify({ ...value, e: 1 }) };
+  const postEphemeral = jest.fn().mockResolvedValue({});
+  Object.assign(f.client.chat, { postEphemeral });
+  await f.run(ACTION_WHATS_NEW);
+  expect(runSummarization).not.toHaveBeenCalled();
+  expect(f.client.chat.postMessage).not.toHaveBeenCalled();
+  expect(postEphemeral).toHaveBeenCalledWith(expect.objectContaining({ channel: 'D012345678', user: f.args.body.user.id }));
 });
 
 it.each([

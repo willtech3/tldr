@@ -1,9 +1,9 @@
 import type { WebClient } from '@slack/web-api';
 import {
-  EMPTY_MENTION_TEXT,
   handleAppMention,
   stripBotMention,
 } from '../../src/handlers/mention';
+import { ROAST_STYLE } from '../../src/styles';
 import type { AppConfig } from '../../src/config';
 
 const config = {
@@ -31,7 +31,7 @@ function makeEvent(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function callArgs(event: Record<string, unknown>, chat: jest.Mock) {
+function callArgs(event: Record<string, unknown>, chat: jest.Mock, summarize: jest.Mock = jest.fn()) {
   return {
     event: event as never,
     client,
@@ -40,6 +40,7 @@ function callArgs(event: Record<string, unknown>, chat: jest.Mock) {
     teamId: 'TCTX',
     logger,
     chat: chat as never,
+    summarize: summarize as never,
   };
 }
 
@@ -95,12 +96,38 @@ describe('handleAppMention', () => {
     expect(chat).toHaveBeenCalledWith(expect.objectContaining({ recipientTeamId: 'TCTX' }));
   });
 
-  it('substitutes a placeholder when the mention has no other text', async () => {
-    const chat = jest.fn().mockResolvedValue('delivered');
+  it('turns a bare mention into a private recap of that channel', async () => {
+    const chat = jest.fn();
+    const summarize = jest.fn().mockResolvedValue(undefined);
 
-    await handleAppMention(callArgs(makeEvent({ text: '<@UBOT>' }), chat));
+    await handleAppMention(callArgs(makeEvent({ text: '<@UBOT>' }), chat, summarize));
 
-    expect(chat).toHaveBeenCalledWith(expect.objectContaining({ userText: EMPTY_MENTION_TEXT }));
+    expect(chat).not.toHaveBeenCalled();
+    expect(summarize).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 'U1',
+      sourceChannelId: 'C42',
+      assistantChannelId: 'C42',
+      assistantThreadTs: '11.0',
+      messageCount: 50,
+      customStyle: null,
+      ephemeralUserId: 'U1',
+    }));
+  });
+
+  it('roasts on request without posting the style paragraph as chat', async () => {
+    const chat = jest.fn();
+    const summarize = jest.fn().mockResolvedValue(undefined);
+
+    await handleAppMention(callArgs(makeEvent({ text: '<@UBOT> roast last 10', thread_ts: '5.0' }), chat, summarize));
+
+    expect(chat).not.toHaveBeenCalled();
+    expect(summarize).toHaveBeenCalledWith(expect.objectContaining({
+      sourceChannelId: 'C42',
+      assistantThreadTs: '5.0',
+      messageCount: 10,
+      customStyle: ROAST_STYLE,
+      ephemeralUserId: 'U1',
+    }));
   });
 
   it.each([
