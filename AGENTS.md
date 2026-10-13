@@ -67,6 +67,12 @@ If network access is restricted during task execution, run `./scripts/agent-setu
 
 ---
 
+### Cursor Cloud specific instructions
+
+- There is no dev server and no `start` process. The check to run is `just qa` (build, Lambda bundle, lint, Jest, `terraform fmt -check`, offline `terraform validate`). It does not need Slack, Anthropic, or AWS credentials.
+- The base image supplies Node.js 20+ (`.nvmrc` is `20`; `engines` allows `>=20`). Cloud Agent install puts `just` and Terraform 1.14.5 — the version in `.github/workflows/deploy.yml` — on `/usr/local/bin`. `./scripts/agent-setup.sh` installs npm dependencies and initializes providers; it does not install `just` or Terraform when apt has neither.
+- To smoke the Lambda without AWS, run `just bolt-build`, then invoke `bolt-ts/dist/index.js` `handler` with an API Gateway event whose body is a Slack `url_verification` payload signed with `SLACK_SIGNING_SECRET`. Dummy `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, and `ANTHROPIC_API_KEY` values are enough. Bolt calls `auth.test` in the background; a dummy token returns `invalid_auth` and the challenge response is unchanged.
+
 ### Documentation standards
 
 When working with checklists in project documentation files (markdown), use the following emoji conventions:
