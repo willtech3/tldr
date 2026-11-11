@@ -141,3 +141,66 @@ describe('source selection and coverage', () => {
     expect(out.coverage).toEqual({ messageCount: 2, oldestTs: null, latestTs: null });
   });
 });
+
+describe('buildSummarizePromptData threads', () => {
+  const client = {
+    conversations: { info: jest.fn().mockResolvedValue({ channel: { name: 'general' } }) },
+    users: { info: jest.fn().mockResolvedValue({ user: { profile: { real_name: 'Alice' } } }) },
+    chat: { getPermalink: jest.fn(async ({ message_ts }: { message_ts: string }) => ({ permalink: `https://x.test/p${message_ts}` })) },
+  } as unknown as WebClient;
+  const messages = [
+    { ts: '100.000000', user: 'U1', text: 'Ship Friday?', files: [], replyCount: 9, repliesShown: 2, repliesOmitted: 7 },
+    { ts: '110.000000', user: 'U1', text: 'QA is not done', files: [], parentTs: '100.000000' },
+    { ts: '120.000000', user: 'U1', text: 'Decided: Monday', files: [], parentTs: '100.000000' },
+    { ts: '130.000000', user: 'U1', text: 'lunch?', files: [], replyCount: 3, repliesShown: 0, repliesOmitted: 3 },
+    { ts: '140.000000', user: 'U1', text: 'plain message', files: [] },
+  ];
+
+  it('indents replies under their parent and flags replies the model was not given', async () => {
+    const data = await buildSummarizePromptData({ client, botToken: 'x', channelId: 'C1', messages, customStyle: null });
+    const text = (data.prompt.userContent[0] as { text: string }).text;
+    expect(text).toContain([
+      '[100.000000] Alice: Ship Friday? [thread: 7 more replies not shown]',
+      '  ↳ [110.000000] Alice: QA is not done',
+      '  ↳ [120.000000] Alice: Decided: Monday',
+      '[130.000000] Alice: lunch? [thread: 3 replies not shown]',
+      '[140.000000] Alice: plain message',
+    ].join('\n'));
+    expect(data.prompt.system).toContain('↳');
+  });
+
+  it('counts thread replies separately from channel messages and spans both', async () => {
+    const data = await buildSummarizePromptData({ client, botToken: 'x', channelId: 'C1', messages, customStyle: null });
+    expect(data.coverage).toEqual({ messageCount: 3, threadReplyCount: 2, oldestTs: '100.000000', latestTs: '140.000000' });
+  });
+
+  it('offers a reply as a linkable source', async () => {
+    const data = await buildSummarizePromptData({ client, botToken: 'x', channelId: 'C1', messages, customStyle: null });
+    expect(data.receiptPermalinks).toContain('https://x.test/p120.000000');
+  });
+});
+
+describe('buildSummarizePromptData keeps the newest material under its caps', () => {
+  it('sends the newest images and offers the newest messages as fallback sources, given oldest-first input', async () => {
+    const client = {
+      conversations: { info: jest.fn().mockResolvedValue({ channel: { name: 'general' } }) },
+      users: { info: jest.fn().mockResolvedValue({ user: { profile: { real_name: 'Alice' } } }) },
+      chat: { getPermalink: jest.fn(async ({ message_ts }: { message_ts: string }) => ({ permalink: `https://x.test/p${message_ts}` })) },
+    } as unknown as WebClient;
+    const fetchImpl = jest.fn(async (_url: string, init?: { method?: string }) => init?.method === 'HEAD'
+      ? new Response(null, { status: 200, headers: { 'content-type': 'image/png', 'content-length': '4' } })
+      : new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 }));
+    const messages = Array.from({ length: 30 }, (_, i) => ({
+      ts: `${101 + i}.000000`, user: 'U1', text: `pic ${i + 1} https://example.com/${i + 1}`,
+      files: [{ urlPrivateDownload: `https://files/${i + 1}`, urlPrivate: null, mimeType: 'image/png' }],
+    }));
+    const data = await buildSummarizePromptData({
+      client, botToken: 'x', channelId: 'C1', messages, customStyle: null, fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const labels = data.prompt.userContent.flatMap((block) =>
+      block.type === 'text' && block.text.startsWith('<image_source>') ? [block.text.match(/\[(\d+)/)?.[1]] : []);
+    expect(labels).toEqual(Array.from({ length: 12 }, (_, i) => String(119 + i)));
+    expect(data.receipts[0].permalink).toBe('https://x.test/p130.000000');
+    expect(data.linksShared[0]).toBe('https://example.com/30');
+  });
+});

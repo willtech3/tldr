@@ -520,3 +520,33 @@ describe.each([false, true])('frozen summary windows (streaming=%s)', (enableStr
     expect(JSON.parse(retry.value)).toMatchObject({ channelId: 'C1', count: tooLarge ? 50 : 25, window, shorter: true });
   });
 });
+
+describe('runSummarization thread replies', () => {
+  it('gives the model the replies and keeps follow-up actions on the channel message count', async () => {
+    const { client, spies } = makeWebClient([
+      { ts: '1788825700.000001', user: 'U1', text: 'later message' },
+      { ts: '1788825600.000001', user: 'U1', text: 'Ship Friday?', thread_ts: '1788825600.000001', reply_count: 1 },
+    ]);
+    const replies = jest.fn().mockResolvedValue({ messages: [
+      { ts: '1788825600.000001', user: 'U1', text: 'Ship Friday?' },
+      { ts: '1788827400.000002', user: 'U1', text: 'Decided: ship Monday', thread_ts: '1788825600.000001' },
+    ] });
+    (client.conversations as unknown as { replies: jest.Mock }).replies = replies;
+    const llm = makeLlm();
+    const generate = jest.spyOn(llm, 'generateSummary').mockResolvedValue('They ship Monday.');
+
+    const outcome = await runSummarization({
+      config: makeConfig(), client, llm, threadClient: client,
+      request: { correlationId: 'cid', userId: 'U1', channelId: 'C1', originChannelId: 'D1', threadTs: '1.0', messageCount: 50, customStyle: null },
+    });
+
+    expect(outcome).toBe('delivered');
+    const prompt = (generate.mock.calls[0][0].userContent[0] as { text: string }).text;
+    expect(prompt).toContain('Ship Friday?\n  ↳ [1788827400.000002] Alice: Decided: ship Monday\n[1788825700.000001] Alice: later message');
+    const posted = spies.postMessage.mock.calls[0][0];
+    expect(posted.text).toContain('2 messages + 1 thread reply');
+    expect(posted.metadata.event_payload).toMatchObject({
+      message_count: 2, oldest_ts: '1788825600.000001', latest_ts: '1788827400.000002',
+    });
+  });
+});

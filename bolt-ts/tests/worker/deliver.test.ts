@@ -148,6 +148,13 @@ describe('actual summary coverage', () => {
       .toBe('1 message · Sep 8, 2026 · 00:00 UTC');
   });
 
+  it('reports thread replies next to the channel message count', () => {
+    expect(buildCoverageText({ messageCount: 18, threadReplyCount: 45, oldestTs: '1788825600', latestTs: '1788825600' }))
+      .toBe('18 messages + 45 thread replies · Sep 8, 2026 · 00:00 UTC');
+    expect(buildCoverageText({ messageCount: 1, threadReplyCount: 1, oldestTs: null, latestTs: null }))
+      .toBe('1 message + 1 thread reply');
+  });
+
   it('preserves both dates when the covered window spans days', () => {
     expect(buildCoverageText({ messageCount: 2, oldestTs: '1788739200', latestTs: '1788825600' }))
       .toBe('2 messages · Sep 7, 2026, 00:00 – Sep 8, 2026, 00:00 UTC');

@@ -7,7 +7,7 @@
  * (rate-limit handling, image downloads, "not in streaming state" detection).
  */
 
-import type { WebClient } from '@slack/web-api';
+import { WebClient } from '@slack/web-api';
 import { parseSummaryWindow } from '../summary_window';
 import type { SummaryWindow } from '../types';
 
@@ -30,6 +30,16 @@ export interface RecentMessage {
   files: SlackFile[];
   blocks?: unknown;
   attachments?: unknown;
+  /** Slack's `thread_ts`: equals `ts` on a thread parent, the parent's ts on a reply. */
+  threadTs?: string;
+  /** Replies Slack reports under this thread parent. */
+  replyCount?: number;
+  /** Set on a thread reply that was pulled into a channel recap: its parent's ts. */
+  parentTs?: string;
+  /** On a thread parent: how many of its replies follow it in the recap input. */
+  repliesShown?: number;
+  /** On a thread parent: replies that exist but were left out (caps or a failed fetch). */
+  repliesOmitted?: number;
 }
 
 export interface SlackFile {
@@ -52,6 +62,8 @@ interface RawHistoryMessage {
   text?: string;
   bot_id?: string;
   subtype?: string;
+  thread_ts?: string;
+  reply_count?: number;
   files?: Array<{
     url_private_download?: string;
     url_private?: string;
@@ -121,7 +133,7 @@ export async function getThreadMessages(
     response = await client.conversations.replies({
       channel: channelId,
       ts: threadTs,
-      limit: Math.min(Math.max(limit, 1), 1000),
+      limit: Math.min(Math.max(limit, 1), 999),
       inclusive: true,
     });
   } catch (err) {
@@ -132,6 +144,64 @@ export async function getThreadMessages(
   }
   const messages = (response.messages ?? []) as RawHistoryMessage[];
   return messages.map(toRecentMessage);
+}
+
+/**
+ * A client for optional reads. The default client answers a 429 by pausing
+ * its whole request queue and retrying, which turns a nice-to-have read into a
+ * stalled reply. This one fails fast instead, so the caller can carry on
+ * without the data and the main client's queue is never held up.
+ */
+export function createBestEffortClient(botToken: string): WebClient {
+  return new WebClient(botToken, { rejectRateLimitedCalls: true, retryConfig: { retries: 0 }, timeout: 10_000 });
+}
+
+/** True for the error a fail-fast client raises on a 429. */
+export function isRateLimitedError(err: unknown): boolean {
+  return Boolean(err) && typeof err === 'object' && (err as { code?: string }).code === 'slack_webapi_rate_limited_error';
+}
+
+/** Slack's page maximum for cursor-paginated reads. */
+const MAX_PAGE_SIZE = 999;
+
+export interface ThreadReplies {
+  /** Thread messages as Slack returned them: oldest first, parent included. */
+  messages: RecentMessage[];
+  /** Slack still had more replies when the page allowance ran out. */
+  truncated: boolean;
+}
+
+/**
+ * Read a whole thread for a channel recap, following `has_more` for up to
+ * `maxPages` pages. Pages run oldest first, so stopping early would lose the
+ * thread's ending; `truncated` says when that happened anyway. Errors
+ * propagate — the caller decides whether the thread is optional.
+ */
+export async function getThreadReplies(
+  client: WebClient,
+  channelId: string,
+  threadTs: string,
+  options: { latestTs?: string; maxPages?: number } = {}
+): Promise<ThreadReplies> {
+  const maxPages = Math.max(1, options.maxPages ?? 3);
+  const messages: RecentMessage[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < maxPages; page += 1) {
+    const response = await client.conversations.replies({
+      channel: channelId,
+      ts: threadTs,
+      limit: MAX_PAGE_SIZE,
+      inclusive: true,
+      ...(options.latestTs !== undefined ? { latest: options.latestTs } : {}),
+      ...(cursor !== undefined ? { cursor } : {}),
+    });
+    messages.push(...((response.messages ?? []) as RawHistoryMessage[]).map(toRecentMessage));
+    cursor = response.has_more ? response.response_metadata?.next_cursor || undefined : undefined;
+    if (cursor === undefined) {
+      return { messages, truncated: response.has_more === true };
+    }
+  }
+  return { messages, truncated: true };
 }
 
 function toRecentMessage(raw: RawHistoryMessage): RecentMessage {
@@ -146,6 +216,8 @@ function toRecentMessage(raw: RawHistoryMessage): RecentMessage {
     })),
     blocks: raw.blocks,
     attachments: raw.attachments,
+    ...(typeof raw.thread_ts === 'string' ? { threadTs: raw.thread_ts } : {}),
+    ...(typeof raw.reply_count === 'number' && raw.reply_count > 0 ? { replyCount: raw.reply_count } : {}),
   };
 }
 

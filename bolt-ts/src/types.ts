@@ -44,7 +44,10 @@ export interface SummaryWindow {
 
 /** Messages actually included in a summary, after filtering TLDR's own posts. */
 export interface SummaryCoverage {
+  /** Channel-level messages. Thread replies are counted separately. */
   messageCount: number;
+  /** Thread replies read along with those messages; absent when there were none. */
+  threadReplyCount?: number;
   /** Exact Slack timestamps; null when the source does not supply valid dates. */
   oldestTs: string | null;
   latestTs: string | null;

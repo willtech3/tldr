@@ -7,7 +7,10 @@ import {
   getBotUserId,
   getChannelName,
   getMessagePermalink,
+  createBestEffortClient,
   getRecentMessages,
+  getThreadReplies,
+  isRateLimitedError,
   getUserDisplayName,
   isMessageNotInStreamingStateError,
   pickFileDownloadUrl,
@@ -36,6 +39,34 @@ describe('Slack client wrappers', () => {
       expect(history).toHaveBeenCalledWith({ channel: 'C1', limit });
     }
   );
+
+  it('surfaces thread metadata on history messages and omits it when absent', async () => {
+    const history = jest.fn().mockResolvedValue({ messages: [
+      { ts: '2.0', user: 'U1', text: 'parent', thread_ts: '2.0', reply_count: 3 },
+      { ts: '1.0', user: 'U1', text: 'plain', reply_count: 0 },
+    ] });
+    const [parent, plain] = await getRecentMessages(makeWebClient({ conversations: { history } }), 'C1', 10);
+    expect(parent).toMatchObject({ threadTs: '2.0', replyCount: 3 });
+    expect(plain).not.toHaveProperty('replyCount');
+    expect(plain).not.toHaveProperty('threadTs');
+  });
+
+  it('bounds a recap thread read by latest only when asked', async () => {
+    const replies = jest.fn().mockResolvedValue({ messages: [] });
+    const client = makeWebClient({ conversations: { replies } });
+    await getThreadReplies(client, 'C1', '2.0');
+    expect(replies).toHaveBeenLastCalledWith({ channel: 'C1', ts: '2.0', limit: 999, inclusive: true });
+    await getThreadReplies(client, 'C1', '2.0', { latestTs: '9.000001' });
+    expect(replies).toHaveBeenLastCalledWith({ channel: 'C1', ts: '2.0', limit: 999, inclusive: true, latest: '9.000001' });
+  });
+
+  it('builds a fail-fast client for optional reads and recognises its rate-limit error', () => {
+    const client = createBestEffortClient('xoxb-test') as unknown as { rejectRateLimitedCalls: boolean; retryConfig: { retries: number } };
+    expect(client.rejectRateLimitedCalls).toBe(true);
+    expect(client.retryConfig.retries).toBe(0);
+    expect(isRateLimitedError(Object.assign(new Error('x'), { code: 'slack_webapi_rate_limited_error' }))).toBe(true);
+    expect(isRateLimitedError(new Error('x'))).toBe(false);
+  });
 
   it('passes both inclusive bounds for a frozen single-message window', async () => {
     const history = jest.fn().mockResolvedValue({ messages: [] });

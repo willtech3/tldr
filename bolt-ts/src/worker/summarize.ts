@@ -11,9 +11,10 @@ import { LlmClient, PromptTooLargeError, TOO_LARGE_MESSAGE } from '../ai/anthrop
 import { buildFailureBlocks, buildRetryValue } from '../blocks';
 import type { AppConfig } from '../config';
 import { sanitizeGeneratedSlackMrkdwn, truncateForMarkdownBlock } from '../slack/sanitize';
-import { BotNotInChannelError, getRecentMessages, getBotUserId } from '../slack/client';
+import { BotNotInChannelError, createBestEffortClient } from '../slack/client';
 import type { SummarizeOutcome, SummaryWindow } from '../types';
 import { applySafetyNetSections, buildSummarizePromptData } from './prompt_builder';
+import { loadSourceMessages } from './source';
 import { buildSummaryActionButtons, buildSummaryMetadata } from './deliver';
 import {
   CANONICAL_FAILURE_MESSAGE,
@@ -53,6 +54,8 @@ interface RunArgs {
   request: SummarizeRequest;
   llm?: LlmClient;
   fetchImpl?: typeof fetch;
+  /** Client for the optional thread reads; defaults to a fail-fast client. */
+  threadClient?: WebClient;
 }
 
 /**
@@ -115,13 +118,15 @@ export async function runSummarization(args: RunArgs): Promise<SummarizeOutcome>
       streamMaxChunkChars: config.streamMaxChunkChars,
       streamMinAppendIntervalMs: config.streamMinAppendIntervalMs,
       fetchImpl: args.fetchImpl,
+      threadClient: args.threadClient,
     });
   }
 
   try {
-    const messages = await getRecentMessages(client, request.channelId, request.messageCount, request.window);
-    const botUserId = await getBotUserId(client);
-    const userMessages = botUserId ? messages.filter((m) => m.user !== botUserId) : messages;
+    const userMessages = await loadSourceMessages(
+      client, request.channelId, request.messageCount, request.window,
+      args.threadClient ?? createBestEffortClient(config.slackBotToken)
+    );
     if (userMessages.length === 0) {
       await postOutcome(buildEmptyChannelMessage(request.channelId, request.window));
       return 'empty';

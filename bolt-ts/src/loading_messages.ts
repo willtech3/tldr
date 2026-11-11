@@ -17,6 +17,7 @@ export function buildSummarizeLoadingMessages(
 
   const messages: string[] = [
     `Reading the last ${messageCount} messages…`,
+    'Following the threads…',
     'Finding key themes…',
     'Extracting decisions and action items…',
     'Collecting important links…',

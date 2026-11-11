@@ -262,7 +262,9 @@ export function buildSummaryMetadata(args: SummaryActionButtonsArgs): MessageMet
 
 /** Standard Markdown coverage line; Slack date tokens cannot render in streams. */
 export function buildCoverageText(coverage: SummaryCoverage): string {
-  const count = `${coverage.messageCount} message${coverage.messageCount === 1 ? '' : 's'}`;
+  const replies = coverage.threadReplyCount ?? 0;
+  const count = `${coverage.messageCount} message${coverage.messageCount === 1 ? '' : 's'}` +
+    (replies > 0 ? ` + ${replies} thread repl${replies === 1 ? 'y' : 'ies'}` : '');
   if (!coverage.oldestTs || !coverage.latestTs) {
     return count;
   }
