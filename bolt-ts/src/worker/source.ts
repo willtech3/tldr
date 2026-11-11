@@ -23,8 +23,11 @@ export const MAX_THREADS_EXPANDED = 20;
 export const MAX_REPLIES_PER_THREAD = 60;
 /** Replies kept across all threads of one recap. */
 export const MAX_THREAD_REPLIES_TOTAL = 400;
-/** One `conversations.replies` page per thread. */
-const THREAD_FETCH_LIMIT = 200;
+/**
+ * One `conversations.replies` page per thread, at Slack's page maximum: pages
+ * run oldest first, so a smaller page would cut off a long thread's ending.
+ */
+const THREAD_FETCH_LIMIT = 999;
 /** Parallel `conversations.replies` calls; keeps a recap well inside Slack's rate tier. */
 const THREAD_FETCH_CONCURRENCY = 5;
 /** When a thread is trimmed, keep this many opening replies; the rest of the allowance goes to its ending. */

@@ -54,7 +54,7 @@ describe('loadSourceMessages', () => {
     ]);
     expect(messages.map((m) => m.parentTs)).toEqual([undefined, '100.000000', '100.000000', undefined]);
     expect(messages[0]).toMatchObject({ repliesShown: 2, repliesOmitted: 0 });
-    expect(replies).toHaveBeenCalledWith({ channel: 'C1', ts: '100.000000', limit: 200, inclusive: true });
+    expect(replies).toHaveBeenCalledWith({ channel: 'C1', ts: '100.000000', limit: 999, inclusive: true });
   });
 
   it("drops TLDR's own posts, the threads under them, and its replies inside other threads", async () => {
@@ -142,6 +142,22 @@ describe('loadSourceMessages', () => {
     const window = { oldestTs: '100.000000', latestTs: '500.000000' };
     const { client, replies } = makeClient([{ ts: '100.000000', user: 'U1', text: 'parent', reply_count: 1 }]);
     await loadSourceMessages(client, 'C1', 50, window);
-    expect(replies).toHaveBeenCalledWith({ channel: 'C1', ts: '100.000000', limit: 200, inclusive: true, latest: '500.000000' });
+    expect(replies).toHaveBeenCalledWith({ channel: 'C1', ts: '100.000000', limit: 999, inclusive: true, latest: '500.000000' });
+  });
+});
+
+describe('very long threads', () => {
+  it('still reaches the real ending of a thread longer than 200 replies', async () => {
+    const all = Array.from({ length: 300 }, (_, i) => reply('100.000000', `${1000 + i}.000000`, `reply ${i}`));
+    const parent = { ts: '100.000000', user: 'U1', text: 'parent', reply_count: 300 };
+    // Like Slack: one page holds at most `limit` messages, oldest first, parent included.
+    const replies = jest.fn(async ({ limit }: { limit: number }) => ({ messages: [parent, ...all].slice(0, limit) }));
+    const client = {
+      conversations: { history: jest.fn().mockResolvedValue({ messages: [parent] }), replies },
+      auth: { test: jest.fn().mockResolvedValue({ user_id: 'UBOT' }) },
+    } as unknown as WebClient;
+    const messages = await loadSourceMessages(client, 'C1', 50);
+    expect(messages[messages.length - 1].text).toBe('reply 299');
+    expect(messages[0]).toMatchObject({ repliesShown: 60, repliesOmitted: 240 });
   });
 });

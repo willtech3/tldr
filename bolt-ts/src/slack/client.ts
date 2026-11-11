@@ -137,7 +137,7 @@ export async function getThreadMessages(
     response = await client.conversations.replies({
       channel: channelId,
       ts: threadTs,
-      limit: Math.min(Math.max(limit, 1), 1000),
+      limit: Math.min(Math.max(limit, 1), 999),
       inclusive: true,
       ...(latestTs !== undefined ? { latest: latestTs } : {}),
     });
