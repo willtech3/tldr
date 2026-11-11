@@ -68,8 +68,10 @@ pulled in under their parent message, so a recap reports where a thread landed
 ("Ship Friday? 🧵"). The header counts them separately — e.g. *18 messages + 45
 thread replies*. `last N` still counts channel-level messages. Per recap TLDR
 reads the 20 busiest threads, up to 60 replies each (the opening and the ending
-of longer ones) and 400 replies in total; anything left out is flagged to the
-model so it never guesses what an unread thread said.
+of longer ones) and 400 replies in total, with short threads always read whole;
+anything left out is flagged to the model so it never guesses what an unread
+thread said. If Slack rate-limits the thread reads, the recap still arrives,
+just without those threads.
 
 Anything that *isn't* a command is just conversation. Ask "explain the RFC
 linked above" or "draft a short reply I can post" and TLDR answers in the same

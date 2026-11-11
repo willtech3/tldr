@@ -7,7 +7,7 @@
  * (rate-limit handling, image downloads, "not in streaming state" detection).
  */
 
-import type { WebClient } from '@slack/web-api';
+import { WebClient } from '@slack/web-api';
 import { parseSummaryWindow } from '../summary_window';
 import type { SummaryWindow } from '../types';
 
@@ -121,16 +121,12 @@ export async function getRecentMessages(
   return messages.map(toRecentMessage);
 }
 
-/**
- * Fetch up to `limit` messages of a thread (parent included, oldest first).
- * `latestTs` keeps a frozen summary window from picking up newer replies.
- */
+/** Fetch up to `limit` messages of a thread (parent included, oldest first). */
 export async function getThreadMessages(
   client: WebClient,
   channelId: string,
   threadTs: string,
-  limit = 200,
-  latestTs?: string
+  limit = 200
 ): Promise<RecentMessage[]> {
   let response;
   try {
@@ -139,7 +135,6 @@ export async function getThreadMessages(
       ts: threadTs,
       limit: Math.min(Math.max(limit, 1), 999),
       inclusive: true,
-      ...(latestTs !== undefined ? { latest: latestTs } : {}),
     });
   } catch (err) {
     if (isNotInChannelApiError(err)) {
@@ -149,6 +144,64 @@ export async function getThreadMessages(
   }
   const messages = (response.messages ?? []) as RawHistoryMessage[];
   return messages.map(toRecentMessage);
+}
+
+/**
+ * A client for optional reads. The default client answers a 429 by pausing
+ * its whole request queue and retrying, which turns a nice-to-have read into a
+ * stalled reply. This one fails fast instead, so the caller can carry on
+ * without the data and the main client's queue is never held up.
+ */
+export function createBestEffortClient(botToken: string): WebClient {
+  return new WebClient(botToken, { rejectRateLimitedCalls: true, retryConfig: { retries: 0 }, timeout: 10_000 });
+}
+
+/** True for the error a fail-fast client raises on a 429. */
+export function isRateLimitedError(err: unknown): boolean {
+  return Boolean(err) && typeof err === 'object' && (err as { code?: string }).code === 'slack_webapi_rate_limited_error';
+}
+
+/** Slack's page maximum for cursor-paginated reads. */
+const MAX_PAGE_SIZE = 999;
+
+export interface ThreadReplies {
+  /** Thread messages as Slack returned them: oldest first, parent included. */
+  messages: RecentMessage[];
+  /** Slack still had more replies when the page allowance ran out. */
+  truncated: boolean;
+}
+
+/**
+ * Read a whole thread for a channel recap, following `has_more` for up to
+ * `maxPages` pages. Pages run oldest first, so stopping early would lose the
+ * thread's ending; `truncated` says when that happened anyway. Errors
+ * propagate — the caller decides whether the thread is optional.
+ */
+export async function getThreadReplies(
+  client: WebClient,
+  channelId: string,
+  threadTs: string,
+  options: { latestTs?: string; maxPages?: number } = {}
+): Promise<ThreadReplies> {
+  const maxPages = Math.max(1, options.maxPages ?? 3);
+  const messages: RecentMessage[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < maxPages; page += 1) {
+    const response = await client.conversations.replies({
+      channel: channelId,
+      ts: threadTs,
+      limit: MAX_PAGE_SIZE,
+      inclusive: true,
+      ...(options.latestTs !== undefined ? { latest: options.latestTs } : {}),
+      ...(cursor !== undefined ? { cursor } : {}),
+    });
+    messages.push(...((response.messages ?? []) as RawHistoryMessage[]).map(toRecentMessage));
+    cursor = response.has_more ? response.response_metadata?.next_cursor || undefined : undefined;
+    if (cursor === undefined) {
+      return { messages, truncated: response.has_more === true };
+    }
+  }
+  return { messages, truncated: true };
 }
 
 function toRecentMessage(raw: RawHistoryMessage): RecentMessage {

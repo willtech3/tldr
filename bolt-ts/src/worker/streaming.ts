@@ -25,6 +25,7 @@ import { MARKDOWN_BLOCK_CHAR_LIMIT, sanitizeGeneratedSlackMrkdwn } from '../slac
 import {
   BotNotInChannelError,
   appendStream,
+  createBestEffortClient,
   startStream,
   stopStream,
 } from '../slack/client';
@@ -75,6 +76,8 @@ export interface StreamSummaryArgs {
   sleep?: (ms: number) => Promise<void>;
   /** Test-injectable fetch (for image downloads). */
   fetchImpl?: typeof fetch;
+  /** Client for the optional thread reads; defaults to a fail-fast client. */
+  threadClient?: WebClient;
 }
 
 interface Logger {
@@ -106,7 +109,10 @@ export async function streamSummaryToAssistantThread(
   try {
     // Channel messages plus their thread replies, minus the bot's own posts —
     // a bot-only channel counts as empty rather than summarizing nothing.
-    const userMessages = await loadSourceMessages(args.client, args.sourceChannelId, args.messageCount, args.window);
+    const userMessages = await loadSourceMessages(
+      args.client, args.sourceChannelId, args.messageCount, args.window,
+      args.threadClient ?? createBestEffortClient(args.botToken)
+    );
     if (userMessages.length === 0) {
       await args.client.chat.postMessage({
         channel: args.assistantChannelId,

@@ -14,7 +14,7 @@
  */
 
 import type { WebClient } from '@slack/web-api';
-import { getBotUserId, getRecentMessages, getThreadMessages, type RecentMessage } from '../slack/client';
+import { getBotUserId, getRecentMessages, getThreadReplies, isRateLimitedError, type RecentMessage } from '../slack/client';
 import type { SummaryWindow } from '../types';
 
 /** Threads read per recap, busiest first. */
@@ -23,12 +23,7 @@ export const MAX_THREADS_EXPANDED = 20;
 export const MAX_REPLIES_PER_THREAD = 60;
 /** Replies kept across all threads of one recap. */
 export const MAX_THREAD_REPLIES_TOTAL = 400;
-/**
- * One `conversations.replies` page per thread, at Slack's page maximum: pages
- * run oldest first, so a smaller page would cut off a long thread's ending.
- */
-const THREAD_FETCH_LIMIT = 999;
-/** Parallel `conversations.replies` calls; keeps a recap well inside Slack's rate tier. */
+/** Parallel `conversations.replies` calls per batch. */
 const THREAD_FETCH_CONCURRENCY = 5;
 /** When a thread is trimmed, keep this many opening replies; the rest of the allowance goes to its ending. */
 const OPENING_REPLIES_KEPT = 10;
@@ -36,12 +31,17 @@ const OPENING_REPLIES_KEPT = 10;
 /**
  * Fetch up to `count` channel messages plus their thread replies. Returns an
  * empty list when nothing but TLDR's own posts was found.
+ *
+ * `threadClient` does the optional thread reads. Production passes a fail-fast
+ * client (see `createBestEffortClient`) so a rate limit skips threads instead
+ * of stalling the recap; it defaults to `client`.
  */
 export async function loadSourceMessages(
   client: WebClient,
   channelId: string,
   count: number,
-  window?: SummaryWindow
+  window?: SummaryWindow,
+  threadClient: WebClient = client
 ): Promise<RecentMessage[]> {
   const history = await getRecentMessages(client, channelId, count, window);
   // Don't let the bot summarize itself, and skip the threads under its posts.
@@ -50,7 +50,7 @@ export async function loadSourceMessages(
   if (channelMessages.length === 0) {
     return [];
   }
-  return expandThreadReplies({ client, channelId, messages: channelMessages, botUserId, window });
+  return expandThreadReplies({ client: threadClient, channelId, messages: channelMessages, botUserId, window });
 }
 
 interface ExpandArgs {
@@ -70,14 +70,20 @@ export async function expandThreadReplies(args: ExpandArgs): Promise<RecentMessa
   const chosen = parents.slice(0, MAX_THREADS_EXPANDED);
 
   const fetched = new Map<string, FetchedThread | null>();
-  for (let i = 0; i < chosen.length; i += THREAD_FETCH_CONCURRENCY) {
+  const state = { rateLimited: false };
+  // Once Slack rate-limits a thread read, the rest would fail the same way: stop asking.
+  for (let i = 0; i < chosen.length && !state.rateLimited; i += THREAD_FETCH_CONCURRENCY) {
     const batch = chosen.slice(i, i + THREAD_FETCH_CONCURRENCY);
-    const results = await Promise.all(batch.map((parent) => fetchReplies(args, parent)));
+    const results = await Promise.all(batch.map((parent) => fetchReplies(args, parent, state)));
     batch.forEach((parent, index) => fetched.set(parent.ts, results[index]));
   }
 
-  // Spend the reply allowance in the same busiest-first order the threads were chosen in.
-  let remaining = MAX_THREAD_REPLIES_TOTAL;
+  const allowances = shareAllowance(
+    chosen.flatMap((parent) => {
+      const thread = fetched.get(parent.ts);
+      return thread ? [{ ts: parent.ts, size: thread.replies.length }] : [];
+    })
+  );
   const repliesByParent = new Map<string, RecentMessage[]>();
   const annotations = new Map<string, { shown: number; omitted: number }>();
   for (const parent of parents) {
@@ -88,10 +94,9 @@ export async function expandThreadReplies(args: ExpandArgs): Promise<RecentMessa
       continue;
     }
     const { replies } = thread;
-    const kept = trimThread(replies, Math.min(MAX_REPLIES_PER_THREAD, remaining));
-    remaining -= kept.length;
-    // A thread longer than one page still has replies we never fetched.
-    const unfetched = thread.fullPage ? Math.max(0, reported - replies.length) : 0;
+    const kept = trimThread(replies, allowances.get(parent.ts) ?? 0);
+    // A thread Slack did not finish paging still has replies we never fetched.
+    const unfetched = thread.truncated ? Math.max(0, reported - replies.length) : 0;
     repliesByParent.set(parent.ts, kept.map((reply) => ({ ...reply, parentTs: parent.ts })));
     annotations.set(parent.ts, { shown: kept.length, omitted: replies.length - kept.length + unfetched });
   }
@@ -114,25 +119,49 @@ export async function expandThreadReplies(args: ExpandArgs): Promise<RecentMessa
   return ordered;
 }
 
+/**
+ * Split the total reply allowance across threads, smallest thread first. A
+ * short question-and-answer thread is cheap and gets read whole; whatever is
+ * left is shared evenly between the long ones, so a few huge threads can never
+ * crowd every other thread out.
+ */
+function shareAllowance(threads: Array<{ ts: string; size: number }>): Map<string, number> {
+  const allowances = new Map<string, number>();
+  let remaining = MAX_THREAD_REPLIES_TOTAL;
+  const smallestFirst = [...threads].sort((a, b) => a.size - b.size);
+  smallestFirst.forEach((thread, index) => {
+    const fairShare = Math.floor(remaining / (smallestFirst.length - index));
+    const allowance = Math.min(thread.size, MAX_REPLIES_PER_THREAD, fairShare);
+    allowances.set(thread.ts, allowance);
+    remaining -= allowance;
+  });
+  return allowances;
+}
+
 interface FetchedThread {
   replies: RecentMessage[];
-  /** Slack filled the whole page, so the thread may continue past it. */
-  fullPage: boolean;
+  /** Slack had more replies than we paged through. */
+  truncated: boolean;
 }
 
 /** Replies of one thread, oldest first, without the parent or TLDR's own posts. Null when unreadable. */
-async function fetchReplies(args: ExpandArgs, parent: RecentMessage): Promise<FetchedThread | null> {
+async function fetchReplies(
+  args: ExpandArgs,
+  parent: RecentMessage,
+  state: { rateLimited: boolean }
+): Promise<FetchedThread | null> {
   try {
-    const thread = await getThreadMessages(
-      args.client, args.channelId, parent.ts, THREAD_FETCH_LIMIT, args.window?.latestTs
-    );
-    const replies = thread
+    const thread = await getThreadReplies(args.client, args.channelId, parent.ts, { latestTs: args.window?.latestTs });
+    const replies = thread.messages
       .filter((reply) => reply.ts !== parent.ts && reply.ts.length > 0)
       .filter((reply) => args.botUserId === null || reply.user !== args.botUserId)
       .sort((a, b) => Number(a.ts) - Number(b.ts));
-    return { replies, fullPage: thread.length >= THREAD_FETCH_LIMIT };
-  } catch {
+    return { replies, truncated: thread.truncated };
+  } catch (err) {
     // Best-effort. Slack's error object can echo request details, so it is not logged.
+    if (isRateLimitedError(err)) {
+      state.rateLimited = true;
+    }
     return null;
   }
 }

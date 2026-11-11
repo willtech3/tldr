@@ -88,9 +88,12 @@ export async function buildSummarizePromptData(
     return `${msg.parentTs ? THREAD_REPLY_MARKER : ''}[${msg.ts}] ${author}: ${msg.text}${attachment}${threadNote(msg)}`;
   });
 
-  const linksShared = extractLinksFromMessages(messages);
+  // The prompt reads oldest first, but every "first N" cap below should keep
+  // the newest material: a catch-up cares most about what happened last.
+  const newestFirst = [...messages].reverse();
+  const linksShared = extractLinksFromMessages(newestFirst);
 
-  const receiptSeeds = pickReceiptSeeds(messages, userNames);
+  const receiptSeeds = pickReceiptSeeds(newestFirst, userNames);
   const permalinkResults = await Promise.all(
     receiptSeeds.map((seed) => getMessagePermalink(client, channelId, seed.ts))
   );
@@ -110,9 +113,10 @@ export async function buildSummarizePromptData(
   }
   const receiptPermalinks = receipts.map((r) => r.permalink);
 
-  const images = await fetchInlineImages(
-    collectImageCandidates(messages, userNames, permalinksByTs), args.botToken, fetchImpl
-  );
+  // Pick the newest images, then show them in the same oldest-first order as the text.
+  const images = (await fetchInlineImages(
+    collectImageCandidates(newestFirst, userNames, permalinksByTs), args.botToken, fetchImpl
+  )).reverse();
 
   const prompt = buildBasePrompt({
     channelName,

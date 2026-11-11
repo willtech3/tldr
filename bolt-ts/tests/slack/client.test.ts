@@ -7,8 +7,10 @@ import {
   getBotUserId,
   getChannelName,
   getMessagePermalink,
+  createBestEffortClient,
   getRecentMessages,
-  getThreadMessages,
+  getThreadReplies,
+  isRateLimitedError,
   getUserDisplayName,
   isMessageNotInStreamingStateError,
   pickFileDownloadUrl,
@@ -49,13 +51,21 @@ describe('Slack client wrappers', () => {
     expect(plain).not.toHaveProperty('threadTs');
   });
 
-  it('bounds a thread read by latest only when asked', async () => {
+  it('bounds a recap thread read by latest only when asked', async () => {
     const replies = jest.fn().mockResolvedValue({ messages: [] });
     const client = makeWebClient({ conversations: { replies } });
-    await getThreadMessages(client, 'C1', '2.0', 50);
-    expect(replies).toHaveBeenLastCalledWith({ channel: 'C1', ts: '2.0', limit: 50, inclusive: true });
-    await getThreadMessages(client, 'C1', '2.0', 50, '9.000001');
-    expect(replies).toHaveBeenLastCalledWith({ channel: 'C1', ts: '2.0', limit: 50, inclusive: true, latest: '9.000001' });
+    await getThreadReplies(client, 'C1', '2.0');
+    expect(replies).toHaveBeenLastCalledWith({ channel: 'C1', ts: '2.0', limit: 999, inclusive: true });
+    await getThreadReplies(client, 'C1', '2.0', { latestTs: '9.000001' });
+    expect(replies).toHaveBeenLastCalledWith({ channel: 'C1', ts: '2.0', limit: 999, inclusive: true, latest: '9.000001' });
+  });
+
+  it('builds a fail-fast client for optional reads and recognises its rate-limit error', () => {
+    const client = createBestEffortClient('xoxb-test') as unknown as { rejectRateLimitedCalls: boolean; retryConfig: { retries: number } };
+    expect(client.rejectRateLimitedCalls).toBe(true);
+    expect(client.retryConfig.retries).toBe(0);
+    expect(isRateLimitedError(Object.assign(new Error('x'), { code: 'slack_webapi_rate_limited_error' }))).toBe(true);
+    expect(isRateLimitedError(new Error('x'))).toBe(false);
   });
 
   it('passes both inclusive bounds for a frozen single-message window', async () => {

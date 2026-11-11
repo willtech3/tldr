@@ -536,7 +536,7 @@ describe('runSummarization thread replies', () => {
     const generate = jest.spyOn(llm, 'generateSummary').mockResolvedValue('They ship Monday.');
 
     const outcome = await runSummarization({
-      config: makeConfig(), client, llm,
+      config: makeConfig(), client, llm, threadClient: client,
       request: { correlationId: 'cid', userId: 'U1', channelId: 'C1', originChannelId: 'D1', threadTs: '1.0', messageCount: 50, customStyle: null },
     });
 

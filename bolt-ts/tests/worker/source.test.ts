@@ -135,7 +135,40 @@ describe('loadSourceMessages', () => {
     const messages = await loadSourceMessages(client, 'C1', 50);
     expect(messages.filter((m) => m.parentTs !== undefined)).toHaveLength(MAX_THREAD_REPLIES_TOTAL);
     const shown = messages.filter((m) => m.parentTs === undefined).map((m) => m.repliesShown);
-    expect(shown.filter((count) => count === 0)).toHaveLength(3);
+    expect(shown).toEqual(Array(10).fill(40));
+  });
+
+  it('reads short threads whole even when long threads could use the entire allowance', async () => {
+    const big = Array.from({ length: 7 }, (_, i) => ({ ts: `${100 + i}.000000`, user: 'U1', text: `big${i}`, reply_count: 80 }));
+    const small = Array.from({ length: 13 }, (_, i) => ({ ts: `${200 + i}.000000`, user: 'U1', text: `small${i}`, reply_count: 2 }));
+    const threads = Object.fromEntries([...big, ...small].map((parent, i) => [
+      parent.ts, Array.from({ length: parent.reply_count }, (_, j) => reply(parent.ts, `${10_000 + i * 100 + j}.000000`, `r${i}-${j}`)),
+    ]));
+    const { client } = makeClient([...big, ...small], threads);
+    const messages = await loadSourceMessages(client, 'C1', 50);
+    const parents = messages.filter((m) => m.parentTs === undefined);
+    expect(parents.filter((m) => m.text.startsWith('small')).map((m) => m.repliesShown)).toEqual(Array(13).fill(2));
+    expect(parents.filter((m) => m.text.startsWith('big')).every((m) => (m.repliesShown ?? 0) >= 53)).toBe(true);
+    expect(messages.filter((m) => m.parentTs !== undefined).length).toBeLessThanOrEqual(MAX_THREAD_REPLIES_TOTAL);
+  });
+
+  it('stops asking for threads once Slack rate-limits a read, and still returns the channel messages', async () => {
+    const history = Array.from({ length: 12 }, (_, i) => ({ ts: `${100 + i}.000000`, user: 'U1', text: `t${i}`, reply_count: 2 }));
+    const limited = Object.assign(new Error('rate limited'), { code: 'slack_webapi_rate_limited_error' });
+    const { client, replies } = makeClient(history, Object.fromEntries(history.map((parent) => [parent.ts, limited])));
+    const messages = await loadSourceMessages(client, 'C1', 50);
+    expect(replies).toHaveBeenCalledTimes(5);
+    expect(messages).toHaveLength(12);
+    expect(messages.every((m) => m.repliesShown === 0 && m.repliesOmitted === 2)).toBe(true);
+  });
+
+  it('reads threads through the dedicated thread client when one is supplied', async () => {
+    const history = [{ ts: '100.000000', user: 'U1', text: 'parent', reply_count: 1 }];
+    const main = makeClient(history);
+    const side = makeClient(history, { '100.000000': [reply('100.000000', '110.000000', 'answer')] });
+    const messages = await loadSourceMessages(main.client, 'C1', 50, undefined, side.client);
+    expect(main.replies).not.toHaveBeenCalled();
+    expect(messages.map((m) => m.text)).toEqual(['parent', 'answer']);
   });
 
   it('bounds thread replies to a frozen summary window', async () => {
@@ -159,5 +192,38 @@ describe('very long threads', () => {
     const messages = await loadSourceMessages(client, 'C1', 50);
     expect(messages[messages.length - 1].text).toBe('reply 299');
     expect(messages[0]).toMatchObject({ repliesShown: 60, repliesOmitted: 240 });
+  });
+
+  it('follows has_more when Slack returns a short page', async () => {
+    const all = Array.from({ length: 30 }, (_, i) => reply('100.000000', `${1000 + i}.000000`, `reply ${i}`));
+    const parent = { ts: '100.000000', user: 'U1', text: 'parent', reply_count: 30 };
+    const replies = jest.fn(async ({ cursor }: { cursor?: string }) => cursor
+      ? { messages: all.slice(10), has_more: false }
+      : { messages: [parent, ...all.slice(0, 10)], has_more: true, response_metadata: { next_cursor: 'next' } });
+    const client = {
+      conversations: { history: jest.fn().mockResolvedValue({ messages: [parent] }), replies },
+      auth: { test: jest.fn().mockResolvedValue({ user_id: 'UBOT' }) },
+    } as unknown as WebClient;
+    const messages = await loadSourceMessages(client, 'C1', 50);
+    expect(replies).toHaveBeenCalledTimes(2);
+    expect(replies.mock.calls[1][0]).toMatchObject({ cursor: 'next' });
+    expect(messages.slice(1).map((m) => m.text)).toEqual(all.map((m) => m.text));
+    expect(messages[0]).toMatchObject({ repliesShown: 30, repliesOmitted: 0 });
+  });
+
+  it('reports the unread remainder when a thread outruns the page allowance', async () => {
+    const parent = { ts: '100.000000', user: 'U1', text: 'parent', reply_count: 5000 };
+    let next = 0;
+    const replies = jest.fn(async () => ({
+      messages: Array.from({ length: 10 }, () => reply('100.000000', `${1000 + next++}.000000`, 'r')),
+      has_more: true, response_metadata: { next_cursor: 'more' },
+    }));
+    const client = {
+      conversations: { history: jest.fn().mockResolvedValue({ messages: [parent] }), replies },
+      auth: { test: jest.fn().mockResolvedValue({ user_id: 'UBOT' }) },
+    } as unknown as WebClient;
+    const messages = await loadSourceMessages(client, 'C1', 50);
+    expect(replies).toHaveBeenCalledTimes(3);
+    expect(messages[0]).toMatchObject({ repliesShown: 30, repliesOmitted: 4970 });
   });
 });
