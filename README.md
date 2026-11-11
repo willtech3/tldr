@@ -7,6 +7,7 @@ TLDR is a serverless Slack bot that turns a wall of unread messages into a conci
 ## ✨ Key Features
 
 - **AI App Experience** – Native Slack AI App split-view integration with suggested prompts, context tracking, and one-tap ⚡ Summarize now buttons.
+- **Thread-Aware Recaps** – Reads the replies inside threads, where decisions actually land, and reports each thread's outcome.
 - **AI-Generated Summaries** – Uses Anthropic Claude Opus 4.8 to distill channel messages into digestible summaries with links, image highlights, and receipts (message permalinks).
 - **Custom Styles** – Preset personas (Roast, Receipts, Executive brief, Haiku) or write your own; per-thread or one-off.
 - **Summarize Thread Shortcut** – Right-click any message → *Summarize Thread* for a private, in-channel thread recap.
@@ -60,6 +61,15 @@ leaves the selected source unchanged.
 Each summary leads with a concise recap and links claims to useful source
 messages. Empty sections and repeated image inventories are omitted. The
 header shows the number of messages actually included and their date span.
+
+Recaps read **inside threads**, not just the channel's top level. Replies are
+pulled in under their parent message, so a recap reports where a thread landed
+("QA wasn't done, so the launch moved to Monday") instead of only how it opened
+("Ship Friday? 🧵"). The header counts them separately — e.g. *18 messages + 45
+thread replies*. `last N` still counts channel-level messages. Per recap TLDR
+reads the 20 busiest threads, up to 60 replies each (the opening and the ending
+of longer ones) and 400 replies in total; anything left out is flagged to the
+model so it never guesses what an unread thread said.
 
 Anything that *isn't* a command is just conversation. Ask "explain the RFC
 linked above" or "draft a short reply I can post" and TLDR answers in the same

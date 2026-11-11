@@ -30,6 +30,16 @@ export interface RecentMessage {
   files: SlackFile[];
   blocks?: unknown;
   attachments?: unknown;
+  /** Slack's `thread_ts`: equals `ts` on a thread parent, the parent's ts on a reply. */
+  threadTs?: string;
+  /** Replies Slack reports under this thread parent. */
+  replyCount?: number;
+  /** Set on a thread reply that was pulled into a channel recap: its parent's ts. */
+  parentTs?: string;
+  /** On a thread parent: how many of its replies follow it in the recap input. */
+  repliesShown?: number;
+  /** On a thread parent: replies that exist but were left out (caps or a failed fetch). */
+  repliesOmitted?: number;
 }
 
 export interface SlackFile {
@@ -52,6 +62,8 @@ interface RawHistoryMessage {
   text?: string;
   bot_id?: string;
   subtype?: string;
+  thread_ts?: string;
+  reply_count?: number;
   files?: Array<{
     url_private_download?: string;
     url_private?: string;
@@ -109,12 +121,16 @@ export async function getRecentMessages(
   return messages.map(toRecentMessage);
 }
 
-/** Fetch up to `limit` messages of a thread (parent included, oldest first). */
+/**
+ * Fetch up to `limit` messages of a thread (parent included, oldest first).
+ * `latestTs` keeps a frozen summary window from picking up newer replies.
+ */
 export async function getThreadMessages(
   client: WebClient,
   channelId: string,
   threadTs: string,
-  limit = 200
+  limit = 200,
+  latestTs?: string
 ): Promise<RecentMessage[]> {
   let response;
   try {
@@ -123,6 +139,7 @@ export async function getThreadMessages(
       ts: threadTs,
       limit: Math.min(Math.max(limit, 1), 1000),
       inclusive: true,
+      ...(latestTs !== undefined ? { latest: latestTs } : {}),
     });
   } catch (err) {
     if (isNotInChannelApiError(err)) {
@@ -146,6 +163,8 @@ function toRecentMessage(raw: RawHistoryMessage): RecentMessage {
     })),
     blocks: raw.blocks,
     attachments: raw.attachments,
+    ...(typeof raw.thread_ts === 'string' ? { threadTs: raw.thread_ts } : {}),
+    ...(typeof raw.reply_count === 'number' && raw.reply_count > 0 ? { replyCount: raw.reply_count } : {}),
   };
 }
 

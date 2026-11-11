@@ -2,7 +2,8 @@
  * Compose the "Slack messages → Anthropic prompt" pipeline.
  *
  *  1. Fetch the channel name and the unique senders' display names.
- *  2. Format each message as `[ts] author: text`.
+ *  2. Format each message as `[ts] author: text`; thread replies are indented
+ *     under their parent with a `↳` marker.
  *  3. Extract shared links, drop Slack permalinks/files.
  *  4. Pick up to 12 receipt messages (preferring ones with files/links), fetch
  *     their permalinks.
@@ -33,6 +34,19 @@ export const INLINE_IMAGE_MAX_BYTES = 4.5 * 1024 * 1024; // 4.5 MiB (kept under 
 export const MAX_IMAGES_TOTAL = 12;
 const MAX_RECEIPTS = 12;
 const MAX_SNIPPET_CHARS = 160;
+
+/** Prefix on a thread reply line; the system prompt explains it to the model. */
+export const THREAD_REPLY_MARKER = '  ↳ ';
+
+/** Tell the model about replies it was not given, so it reports the thread instead of guessing. */
+function threadNote(msg: RecentMessage): string {
+  const omitted = msg.repliesOmitted ?? 0;
+  if (omitted <= 0) {
+    return '';
+  }
+  const more = (msg.repliesShown ?? 0) > 0 ? 'more ' : '';
+  return ` [thread: ${omitted} ${more}repl${omitted === 1 ? 'y' : 'ies'} not shown]`;
+}
 
 export interface SummarizePromptData {
   prompt: PromptPayload;
@@ -71,7 +85,7 @@ export async function buildSummarizePromptData(
   const formattedMessages = messages.map((msg) => {
     const author = msg.user ? userNames.get(msg.user) ?? msg.user : 'Unknown User';
     const attachment = msg.files.length > 0 ? ` [${msg.files.length} attachment${msg.files.length === 1 ? '' : 's'}]` : '';
-    return `[${msg.ts}] ${author}: ${msg.text}${attachment}`;
+    return `${msg.parentTs ? THREAD_REPLY_MARKER : ''}[${msg.ts}] ${author}: ${msg.text}${attachment}${threadNote(msg)}`;
   });
 
   const linksShared = extractLinksFromMessages(messages);
@@ -156,8 +170,10 @@ export function buildSummaryCoverage(messages: RecentMessage[]): SummaryCoverage
     /^\d{1,12}(?:\.\d{1,6})?$/.test(ts) && Number.isFinite(new Date(Number(ts) * 1000).getTime())
   );
   timestamps.sort((a, b) => Number(a) - Number(b));
+  const replies = messages.filter((message) => message.parentTs !== undefined).length;
   return {
-    messageCount: messages.length,
+    messageCount: messages.length - replies,
+    ...(replies > 0 ? { threadReplyCount: replies } : {}),
     oldestTs: allValid ? timestamps[0] : null,
     latestTs: allValid ? timestamps[timestamps.length - 1] : null,
   };
@@ -300,7 +316,9 @@ function pickReceiptSeeds(
   }
   // A shared image/link must not crowd every text-only source out of the
   // prompt. Sample both groups across the window, then fill remaining slots.
-  const attachments = messages.filter((message) => message.files.length > 0 || extractLinksFromMessage(message).length > 0);
+  // Thread parents count too: "the thread where this was decided" is the link people want.
+  const attachments = messages.filter((message) =>
+    message.files.length > 0 || extractLinksFromMessage(message).length > 0 || (message.repliesShown ?? 0) > 0);
   const textOnly = messages.filter((message) => message.text.trim().length > 0 && !attachments.includes(message));
   const selected = new Map<string, RecentMessage>();
   for (const group of [attachments, textOnly]) {

@@ -1,7 +1,7 @@
 /**
  * End-to-end streaming summarisation for assistant threads.
  *
- *  - Fetch messages, build prompt with images and link/receipt context.
+ *  - Fetch messages and their thread replies, build prompt with images and link/receipt context.
  *  - Open an Anthropic Messages streaming request (Claude Opus 4.8 by default).
  *  - For each text delta, chunk and append to the Slack streaming message via
  *    `chat.appendStream`.
@@ -25,8 +25,6 @@ import { MARKDOWN_BLOCK_CHAR_LIMIT, sanitizeGeneratedSlackMrkdwn } from '../slac
 import {
   BotNotInChannelError,
   appendStream,
-  getBotUserId,
-  getRecentMessages,
   startStream,
   stopStream,
 } from '../slack/client';
@@ -34,6 +32,7 @@ import type { SummarizeOutcome, SummaryCoverage, SummaryWindow } from '../types'
 import { summaryStyleLabel } from '../styles';
 import { takeStreamChunk } from './chunks';
 import { applySafetyNetSections, buildSummarizePromptData } from './prompt_builder';
+import { loadSourceMessages } from './source';
 import { buildCoverageText, buildSummaryActionButtons, buildSummaryMetadata } from './deliver';
 
 export const CANONICAL_FAILURE_MESSAGE =
@@ -105,14 +104,9 @@ export async function streamSummaryToAssistantThread(
   let streamTs: string | null = null;
 
   try {
-    const messages = await getRecentMessages(args.client, args.sourceChannelId, args.messageCount, args.window);
-
-    // Filter out bot's own messages so it doesn't summarize itself — and
-    // treat a bot-only channel as empty rather than summarizing nothing.
-    const botUserId = await getBotUserId(args.client);
-    const userMessages = botUserId
-      ? messages.filter((m) => m.user !== botUserId)
-      : messages;
+    // Channel messages plus their thread replies, minus the bot's own posts —
+    // a bot-only channel counts as empty rather than summarizing nothing.
+    const userMessages = await loadSourceMessages(args.client, args.sourceChannelId, args.messageCount, args.window);
     if (userMessages.length === 0) {
       await args.client.chat.postMessage({
         channel: args.assistantChannelId,

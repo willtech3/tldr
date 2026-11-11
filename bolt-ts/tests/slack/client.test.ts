@@ -8,6 +8,7 @@ import {
   getChannelName,
   getMessagePermalink,
   getRecentMessages,
+  getThreadMessages,
   getUserDisplayName,
   isMessageNotInStreamingStateError,
   pickFileDownloadUrl,
@@ -36,6 +37,26 @@ describe('Slack client wrappers', () => {
       expect(history).toHaveBeenCalledWith({ channel: 'C1', limit });
     }
   );
+
+  it('surfaces thread metadata on history messages and omits it when absent', async () => {
+    const history = jest.fn().mockResolvedValue({ messages: [
+      { ts: '2.0', user: 'U1', text: 'parent', thread_ts: '2.0', reply_count: 3 },
+      { ts: '1.0', user: 'U1', text: 'plain', reply_count: 0 },
+    ] });
+    const [parent, plain] = await getRecentMessages(makeWebClient({ conversations: { history } }), 'C1', 10);
+    expect(parent).toMatchObject({ threadTs: '2.0', replyCount: 3 });
+    expect(plain).not.toHaveProperty('replyCount');
+    expect(plain).not.toHaveProperty('threadTs');
+  });
+
+  it('bounds a thread read by latest only when asked', async () => {
+    const replies = jest.fn().mockResolvedValue({ messages: [] });
+    const client = makeWebClient({ conversations: { replies } });
+    await getThreadMessages(client, 'C1', '2.0', 50);
+    expect(replies).toHaveBeenLastCalledWith({ channel: 'C1', ts: '2.0', limit: 50, inclusive: true });
+    await getThreadMessages(client, 'C1', '2.0', 50, '9.000001');
+    expect(replies).toHaveBeenLastCalledWith({ channel: 'C1', ts: '2.0', limit: 50, inclusive: true, latest: '9.000001' });
+  });
 
   it('passes both inclusive bounds for a frozen single-message window', async () => {
     const history = jest.fn().mockResolvedValue({ messages: [] });
