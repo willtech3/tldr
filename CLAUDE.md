@@ -53,6 +53,17 @@ just qa
 This runs (in order): `bolt-build`, `bolt-bundle`, `bolt-lint`, `bolt-test`,
 `tf-fmt`, `tf-validate`. Commits should only be made after this succeeds locally.
 
+## Starting Work
+
+Work in the primary checkout. A worktree isn't needed.
+
+```bash
+git switch main && git pull --ff-only   # start from current origin/main
+git switch -c <topic-branch>             # one ordinary branch per PR
+```
+
+Open a PR to `main`, merge it once CI is green, then switch back to `main`, pull, and delete the topic branch both locally and on the remote. `main` is the only long-lived branch. Older Rust, CDK and OpenAI-era branches were evaluated and removed on 2026-11-15; issue #143 lists each one with its SHA. Don't revive that architecture.
+
 ## Architecture
 
 ### Single-Service Bolt Lambda
@@ -71,10 +82,14 @@ worker split has been removed.
 - `src/loading_messages.ts` — Rotating progress strings shown via `setStatus({ loading_messages })` while a summary streams.
 - `src/security.ts` — Rate limiting, channel-membership check, style validation.
 - `src/thread_state.ts` — Persists thread state via Slack message metadata.
-- `src/slack/` — Web client wrappers, `chat.*Stream` helpers, the generated-text sanitiser (`sanitize.ts`, the single implementation — import from here rather than duplicating the mention regexes), image fetch.
+- `src/styles.ts` — Preset summary styles (roast, receipts, haiku, executive brief) shared by suggested prompts, action buttons, and the style modal.
+- `src/followups.ts` — Post-summary touches: retitles the thread after its source channel; builds the per-channel source prompts.
+- `src/summary_latest.ts` / `src/summary_window.ts` — Action values for fresh-read / "what's new" requests, and validation of the saved message-window bounds that follow-up buttons reuse.
+- `src/types.ts` — Shared types (`ThreadContext`, `SummaryWindow`, `SummaryCoverage`, `SummarizeOutcome`, …).
+- `src/slack/` — Web client wrappers, `chat.*Stream` helpers, the generated-text sanitiser (`sanitize.ts`, the single implementation — import from here rather than duplicating the mention regexes), image fetch, and `summary_body.ts` (recovers the displayed recap from a posted summary's blocks for Share and Shorter).
 - `src/ai/` — Anthropic Messages API client (`@anthropic-ai/sdk`), XML-structured prompt builder, image helpers.
 - `src/worker/` — Inline summarisation pipeline: source loader (`source.ts` — `loadSourceMessages`: channel history + thread replies, bot posts dropped, oldest first; the one place both summary paths read Slack from), chunker, link extractor, prompt builder, deliver buttons, streaming orchestrator, top-level `runSummarization`. Also `chat.ts` (`runGeneralChat`), the text-in/text-out chat engine behind non-command assistant messages and channel `@TLDR` questions. A bare `@TLDR` (or `catch up` / `roast` / `receipts`) posts an ephemeral channel recap instead of chatting.
-- `tests/` — Jest tests mirroring the `src/` layout. Known gaps: no tests yet for `app.ts` or `handlers/style.ts`; `handlers/assistant.ts` and `handlers/run_summary.ts` are covered at the pure-helper level only (message routing / copy builders — the Bolt wiring in `userMessage`, `threadStarted`, and `threadContextChanged` is untested); `index.test.ts` covers only `isSlackTimeoutRetry`. Add coverage when touching those modules.
+- `tests/` — Jest tests mirroring the `src/` layout. Known gaps: no tests yet for `app.ts`; `handlers/assistant.ts` is covered at the pure-helper level only (message routing / prompt builders — the Bolt wiring in `userMessage`, `threadStarted`, and `threadContextChanged` is untested); `index.test.ts` covers only `isSlackTimeoutRetry`. Add coverage when touching those modules.
 
 ### Key Design Patterns
 - **Single Lambda** — One Node.js function hosts both the Slack signal layer and the Anthropic streaming worker.
